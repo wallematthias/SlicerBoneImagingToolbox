@@ -69,6 +69,7 @@ This Slicer extension is a GUI wrapper around the main pipeline repository:
 After loading a saved remodelling image, the module exposes the same review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
 When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
 The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation fraction, and resorption fraction.
+Mask segmentation can be generated with adaptive, global Gaussian-threshold, or Laplace-Hamming binarization.
 
 ## Results Layout
 

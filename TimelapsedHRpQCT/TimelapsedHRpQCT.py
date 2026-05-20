@@ -31,7 +31,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.1.5"
+MODULE_VERSION = "0.1.6"
 
 
 def _suppress_simpleitk_warnings():
@@ -376,6 +376,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._mask_method_defaults = {
             "adaptive": (100.0, 300.0),
             "global": (100.0, 300.0),
+            "laplace_hamming": (15564.0, 70.0),
         }
         self._analysis_method = "grayscale_and_binary"
         self._analysis_erosion_voxels = 1
@@ -504,7 +505,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         maskForm = qt.QFormLayout(maskBox)
 
         self.maskMethod = qt.QComboBox()
-        self.maskMethod.addItems(["adaptive", "global"])
+        self.maskMethod.addItems(["adaptive", "global", "laplace_hamming"])
         self.maskMethod.currentTextChanged.connect(self._on_mask_method_changed)
         _cap_width(self.maskMethod, 220)
         self.maskLow = ctk.ctkDoubleSpinBox()
@@ -521,9 +522,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskHigh.value = 300.0
         _cap_width(self.maskLow, 220)
         _cap_width(self.maskHigh, 220)
+        self.maskLowLabel = qt.QLabel("Mask lower threshold")
+        self.maskHighLabel = qt.QLabel("Mask higher threshold")
         maskForm.addRow("Mask method", self.maskMethod)
-        maskForm.addRow("Mask lower threshold", self.maskLow)
-        maskForm.addRow("Mask higher threshold", self.maskHigh)
+        maskForm.addRow(self.maskLowLabel, self.maskLow)
+        maskForm.addRow(self.maskHighLabel, self.maskHigh)
 
         self.resultsRootPath = ctk.ctkPathLineEdit()
         self.resultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
@@ -1293,9 +1296,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             adaptive_high = float(seg_cfg.get("adaptive_high_threshold", 300.0))
             global_low = float(seg_cfg.get("trab_threshold", 100.0))
             global_high = float(seg_cfg.get("cort_threshold", 300.0))
+            laplace_hamming_threshold = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
+            laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
             self._mask_method_defaults = {
                 "adaptive": (adaptive_low, adaptive_high),
                 "global": (global_low, global_high),
+                "laplace_hamming": (laplace_hamming_threshold, laplace_hamming_min_size),
             }
 
             tl_cfg = cfg.get("timelapsed_registration") or {}
@@ -1358,6 +1364,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         method = str(method_name).strip().lower()
         if method not in self._mask_method_defaults:
             return
+        if method == "laplace_hamming":
+            self.maskLowLabel.text = "LH threshold"
+            self.maskHighLabel.text = "Min component voxels"
+        elif method == "global":
+            self.maskLowLabel.text = "Trab threshold"
+            self.maskHighLabel.text = "Cort threshold"
+        else:
+            self.maskLowLabel.text = "Adaptive low threshold"
+            self.maskHighLabel.text = "Adaptive high threshold"
         low, high = self._mask_method_defaults[method]
         self.maskLow.value = float(low)
         self.maskHigh.value = float(high)
@@ -1428,6 +1443,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     "cort_threshold": float(self.maskHigh.value),
                     "adaptive_low_threshold": float(self.maskLow.value),
                     "adaptive_high_threshold": float(self.maskHigh.value),
+                    "laplace_hamming_threshold": float(self.maskLow.value),
+                    "laplace_hamming_min_size_voxels": int(self.maskHigh.value),
                 }
             },
             "timelapsed_registration": {

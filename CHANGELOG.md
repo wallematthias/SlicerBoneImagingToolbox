@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.1.6] - 2026-05-20
+
+### Added
+
+- Added `laplace_hamming` as a mask segmentation method option, with LH threshold and minimum component size controls mapped into the core pipeline config.
+
 ## [0.1.5] - 2026-05-20
 
 ### Changed
