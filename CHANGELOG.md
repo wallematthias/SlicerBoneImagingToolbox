@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.1.3] - 2026-05-20
+
+### Fixed
+
+- Dataset/results root changes now rehydrate pipeline progress from existing artifact indexes and output files, so reopening a processed data root shows completed parse, mask, registration, and analysis stages.
+
 ## [0.1.2] - 2026-05-20
 
 ### Added

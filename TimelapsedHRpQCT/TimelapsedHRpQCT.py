@@ -31,7 +31,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.1.2"
+MODULE_VERSION = "0.1.3"
 
 
 def _suppress_simpleitk_warnings():
@@ -1046,7 +1046,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         elif done == len(order):
             text = "Current step: complete"
         else:
-            text = "Current step: idle"
+            pending = [k for k in order if self._stage_states.get(k) != "done"]
+            text = (
+                f"Current step: waiting for {label_map.get(pending[0], pending[0])}"
+                if pending
+                else "Current step: idle"
+            )
         if hasattr(self, "currentStepLabel") and self.currentStepLabel is not None:
             self.currentStepLabel.text = text
 
@@ -1073,6 +1078,123 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception:
             return ""
 
+    def _path_exists(self, path):
+        try:
+            return path is not None and Path(path).exists()
+        except Exception:
+            return False
+
+    def _record_image_exists(self, record):
+        return self._path_exists(getattr(record, "image_path", None))
+
+    def _imported_stack_masks_complete(self, record):
+        mask_paths = getattr(record, "mask_paths", {}) or {}
+        required_roles = ("full", "trab", "cort")
+        if not all(self._path_exists(mask_paths.get(role)) for role in required_roles):
+            return False
+        seg_path = getattr(record, "seg_path", None)
+        return self._path_exists(seg_path)
+
+    def _fused_session_complete(self, record):
+        if not self._record_image_exists(record):
+            return False
+        metadata_path = getattr(record, "metadata_path", None)
+        if not self._path_exists(metadata_path):
+            return False
+        mask_paths = getattr(record, "mask_paths", {}) or {}
+        return self._path_exists(mask_paths.get("full"))
+
+    def _analysis_outputs_complete(self, imported, fused_records):
+        groups = {}
+        for record in fused_records:
+            if not self._fused_session_complete(record):
+                continue
+            groups.setdefault(
+                (str(getattr(record, "subject_id", "")), str(getattr(record, "site", "radius"))),
+                [],
+            ).append(record)
+
+        processable_groups = [
+            (subject_id, site)
+            for (subject_id, site), records in groups.items()
+            if subject_id and len(records) >= 2
+        ]
+        if not processable_groups:
+            return False
+
+        try:
+            from timelapsedhrpqct.dataset.derivative_paths import (
+                pairwise_remodelling_csv_path,
+                trajectory_metrics_csv_path,
+            )
+        except Exception as exc:
+            self._show(f"[progress] could not import analysis path helpers: {exc}")
+            return False
+
+        for subject_id, site in processable_groups:
+            if not pairwise_remodelling_csv_path(imported, subject_id, site).exists():
+                return False
+            if not trajectory_metrics_csv_path(imported, subject_id, site).exists():
+                return False
+        return True
+
+    def _infer_stage_statuses_from_artifacts(self):
+        statuses = {
+            "parse": "pending",
+            "masks": "pending",
+            "registration": "pending",
+            "analysis": "pending",
+        }
+        imported = self._imported_dataset_root()
+        if imported is None or not imported.exists():
+            return statuses
+
+        try:
+            from timelapsedhrpqct.dataset.artifacts import (
+                iter_filled_session_records,
+                iter_fused_session_records,
+                iter_imported_stack_records,
+            )
+        except Exception as exc:
+            self._show(f"[progress] artifact status lookup unavailable: {exc}")
+            return statuses
+
+        try:
+            imported_records = list(iter_imported_stack_records(imported))
+            fused_records = list(iter_fused_session_records(imported))
+            filled_records = list(iter_filled_session_records(imported))
+        except Exception as exc:
+            self._show(f"[progress] artifact status lookup failed: {exc}")
+            return statuses
+
+        existing_imported = [record for record in imported_records if self._record_image_exists(record)]
+        if existing_imported:
+            statuses["parse"] = "done"
+            if all(self._imported_stack_masks_complete(record) for record in existing_imported):
+                statuses["masks"] = "done"
+
+        existing_fused = [record for record in fused_records if self._fused_session_complete(record)]
+        existing_filled = [
+            record for record in filled_records
+            if self._record_image_exists(record)
+            and self._path_exists(getattr(record, "full_mask_path", None))
+            and self._path_exists(getattr(record, "metadata_path", None))
+        ]
+        if existing_fused or existing_filled:
+            statuses["registration"] = "done"
+
+        if self._analysis_outputs_complete(imported, fused_records):
+            statuses["analysis"] = "done"
+
+        self._show(
+            "[progress] artifact scan: "
+            f"imported={len(existing_imported)}/{len(imported_records)}, "
+            f"fused={len(existing_fused)}/{len(fused_records)}, "
+            f"filled={len(existing_filled)}/{len(filled_records)}, "
+            f"analysis={'done' if statuses['analysis'] == 'done' else 'pending'}"
+        )
+        return statuses
+
     def _reset_progress_for_dataset_root(self):
         dataset_text = self._path_text(self.inputPath)
         results_text = self._path_text(self.resultsRootPath) if hasattr(self, "resultsRootPath") else ""
@@ -1098,8 +1220,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_patient_list()
 
         self._set_stage_status("dataset", "done" if dataset_text else "pending")
+        artifact_statuses = self._infer_stage_statuses_from_artifacts()
         for stage in ("parse", "masks", "registration", "analysis"):
-            self._set_stage_status(stage, "pending")
+            self._set_stage_status(stage, artifact_statuses.get(stage, "pending"))
         self._update_progress_ui()
 
     def _on_dataset_or_results_root_changed(self, *_args):
