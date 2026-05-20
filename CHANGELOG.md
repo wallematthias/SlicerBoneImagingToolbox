@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.1.5] - 2026-05-20
+
+### Changed
+
+- Cohort row export now keeps the compact row format: subject/site, compartment, timepoint pair, formation fraction, and resorption fraction.
+
 ## [0.1.4] - 2026-05-20
 
 ### Changed

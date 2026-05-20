@@ -31,7 +31,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.1.4"
+MODULE_VERSION = "0.1.5"
 
 
 def _suppress_simpleitk_warnings():
@@ -3833,9 +3833,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         continue
                     cohort_rows.append(
                         {
-                            **row,
                             "subject_id": subject_id,
                             "site": site,
+                            "compartment": compartment,
+                            "t0": row.get("t0"),
+                            "t1": row.get("t1"),
                             "pair_key": pair_key,
                             "formation_frac_bv0": float(row.get("formation_frac_bv0", "nan")),
                             "resorption_frac_bv0": float(row.get("resorption_frac_bv0", "nan")),
