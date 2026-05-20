@@ -31,7 +31,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.1.3"
+MODULE_VERSION = "0.1.4"
 
 
 def _suppress_simpleitk_warnings():
@@ -779,7 +779,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummarySavedStateLabel.wordWrap = True
         self.seriesSummaryUpdateBtn = qt.QPushButton("Load saved cohort summary")
         self.seriesSummaryUpdateBtn.clicked.connect(self._refresh_saved_cohort_summary)
-        self.seriesSummaryExportBtn = qt.QPushButton("Export study summary")
+        self.seriesSummaryExportBtn = qt.QPushButton("Export cohort rows")
         self.seriesSummaryExportBtn.clicked.connect(self._on_export_study_summary)
         self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
         self.seriesSummaryTable = qt.QTableWidget()
@@ -3760,33 +3760,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_series_summary_saved_state("Select at least one comparison pair.")
             return
         try:
-            from timelapsedhrpqct.dataset.derivative_paths import (
-                pairwise_remodelling_csv_path,
+            cohort_rows = self._read_saved_pairwise_cohort_rows(
+                imported,
+                selected_pairs=set(selected_pairs),
             )
-            cohort_rows = []
-            subject_keys = list(self._patient_keys)
-            for subject_id, site in subject_keys:
-                pairwise_path = pairwise_remodelling_csv_path(imported, subject_id, site)
-                if not pairwise_path.exists():
-                    continue
-                rows = list(csv.DictReader(pairwise_path.open("r", encoding="utf-8")))
-                for row in rows:
-                    compartment = str(row.get("compartment", "")).strip()
-                    if not compartment:
-                        continue
-                    pair_key = f"{row.get('t0')}->{row.get('t1')}"
-                    if pair_key not in selected_pairs:
-                        continue
-                    cohort_rows.append(
-                        {
-                            "subject_id": subject_id,
-                            "site": site,
-                            "compartment": compartment,
-                            "pair_key": pair_key,
-                            "formation_frac_bv0": float(row.get("formation_frac_bv0", "nan")),
-                            "resorption_frac_bv0": float(row.get("resorption_frac_bv0", "nan")),
-                        }
-                    )
         except Exception as exc:
             self._latest_study_summary_rows = []
             self._set_series_summary_labels(None)
@@ -3833,6 +3810,39 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _on_update_series_summary(self):
         self._refresh_saved_cohort_summary()
 
+    def _read_saved_pairwise_cohort_rows(self, imported, selected_pairs=None):
+        from timelapsedhrpqct.dataset.derivative_paths import (
+            pairwise_remodelling_csv_path,
+        )
+
+        cohort_rows = []
+        selected_pairs = set(selected_pairs or [])
+        if not self._patient_keys:
+            self._refresh_patient_list()
+        for subject_id, site in list(self._patient_keys):
+            pairwise_path = pairwise_remodelling_csv_path(imported, subject_id, site)
+            if not pairwise_path.exists():
+                continue
+            with pairwise_path.open("r", encoding="utf-8", newline="") as f:
+                for row in csv.DictReader(f):
+                    compartment = str(row.get("compartment", "")).strip()
+                    if not compartment:
+                        continue
+                    pair_key = f"{row.get('t0')}->{row.get('t1')}"
+                    if selected_pairs and pair_key not in selected_pairs:
+                        continue
+                    cohort_rows.append(
+                        {
+                            **row,
+                            "subject_id": subject_id,
+                            "site": site,
+                            "pair_key": pair_key,
+                            "formation_frac_bv0": float(row.get("formation_frac_bv0", "nan")),
+                            "resorption_frac_bv0": float(row.get("resorption_frac_bv0", "nan")),
+                        }
+                    )
+        return cohort_rows
+
     def _csv_fieldnames(self, rows):
         fields = []
         seen = set()
@@ -3878,37 +3888,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         wb.save(str(path))
 
     def _on_export_study_summary(self):
-        if self._latest_series_summary is None:
-            self._refresh_saved_cohort_summary()
-        summary = self._latest_series_summary or {}
-        summary_rows = list(summary.get("rows") or [])
-        cohort_rows = list(summary.get("cohort_rows") or self._latest_study_summary_rows or [])
-        if not summary_rows and not cohort_rows:
-            self._set_series_summary_saved_state("Load a saved cohort summary before exporting.")
+        imported = self._imported_dataset_root()
+        if imported is None:
+            self._set_series_summary_saved_state("Results root not available.")
+            return
+        try:
+            export_cohort_rows = self._read_saved_pairwise_cohort_rows(imported)
+        except Exception as exc:
+            self._set_series_summary_saved_state(f"Could not read cohort rows: {exc}")
+            return
+        if not export_cohort_rows:
+            self._set_series_summary_saved_state("No saved cohort rows found to export.")
             return
 
-        selected_pairs = ", ".join(summary.get("trajectory_selected_adjacent_pairs") or [])
-        export_summary_rows = [
-            {
-                **row,
-                "selected_adjacent_pairs": selected_pairs,
-            }
-            for row in summary_rows
-        ]
-        export_cohort_rows = [
-            {
-                **row,
-                "selected_adjacent_pairs": selected_pairs,
-            }
-            for row in cohort_rows
-        ]
-
-        imported = self._imported_dataset_root()
         default_dir = imported if imported is not None else Path.home()
-        default_path = default_dir / "study_summary.csv"
+        default_path = default_dir / "cohort_rows.csv"
         result = qt.QFileDialog.getSaveFileName(
             slicer.util.mainWindow(),
-            "Export Study Summary",
+            "Export Cohort Rows",
             str(default_path),
             "CSV files (*.csv);;Excel workbook (*.xlsx)",
         )
@@ -3926,12 +3923,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             csv_path = selected_path
         else:
             csv_path = selected_path.with_suffix(".csv")
-        cohort_csv_path = csv_path.with_name(f"{csv_path.stem}_cohort_rows.csv")
 
         try:
-            self._write_csv_rows(csv_path, export_summary_rows)
-            if export_cohort_rows:
-                self._write_csv_rows(cohort_csv_path, export_cohort_rows)
+            self._write_csv_rows(csv_path, export_cohort_rows)
         except Exception as exc:
             self._set_series_summary_saved_state(f"CSV export failed: {exc}")
             return
@@ -3942,7 +3936,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._write_xlsx_rows(
                     selected_path,
                     [
-                        ("summary", export_summary_rows),
                         ("cohort_rows", export_cohort_rows),
                     ],
                 )
@@ -3950,15 +3943,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception as exc:
                 xlsx_message = f" XLSX skipped ({exc})."
 
-        cohort_message = f" Cohort rows: {cohort_csv_path}" if export_cohort_rows else ""
         self._set_series_summary_saved_state(
-            f"Exported CSV: {csv_path}.{cohort_message}{xlsx_message}"
+            f"Exported cohort rows CSV: {csv_path}.{xlsx_message}"
         )
-        self._show(f"[export] study summary CSV written to {csv_path}")
-        if export_cohort_rows:
-            self._show(f"[export] study cohort rows CSV written to {cohort_csv_path}")
+        self._show(f"[export] study cohort rows CSV written to {csv_path}")
         if selected_path.suffix.lower() == ".xlsx" and xlsx_message.startswith(" XLSX:"):
-            self._show(f"[export] study summary XLSX written to {selected_path}")
+            self._show(f"[export] study cohort rows XLSX written to {selected_path}")
 
     def _on_save_analysis_scenario(self):
         patient_key = self._current_patient_key()

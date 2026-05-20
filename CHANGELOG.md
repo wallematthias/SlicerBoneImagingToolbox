@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.1.4] - 2026-05-20
+
+### Changed
+
+- The series summary export now writes only the cohort row table, preserving all available saved pairwise remodelling rows instead of writing a separate aggregate summary CSV.
+
 ## [0.1.3] - 2026-05-20
 
 ### Fixed
