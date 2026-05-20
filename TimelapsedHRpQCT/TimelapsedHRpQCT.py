@@ -371,6 +371,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._run_includes_analysis = False
         self._last_parse_mode_used = None
         self._updating_parse_table = False
+        self._manual_parse_active = False
         self._temp_input_root = None
         self._mask_method_defaults = {
             "adaptive": (100.0, 300.0),
@@ -382,6 +383,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._updating_analysis_controls = False
         self._series_summary_pair_checks = {}
         self._latest_series_summary = None
+        self._latest_study_summary_rows = []
+        self._last_dataset_root_text = ""
+        self._last_results_root_text = ""
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -426,6 +430,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.inputPath.setCurrentPath("")
         _cap_width(self.inputPath, 360)
         form.addRow("Dataset root", self.inputPath)
+        self._connect_path_changed(self.inputPath, self._on_dataset_or_results_root_changed)
 
         parseBtn = qt.QPushButton("Parse input")
         parseBtn.clicked.connect(self._on_parse)
@@ -468,6 +473,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         parseBox = ctk.ctkCollapsibleButton()
         parseBox.text = "Parse Details"
         parseBox.collapsed = True
+        self.parseBox = parseBox
         parseLayout = qt.QVBoxLayout(parseBox)
         parseLayout.addWidget(self.parseTable)
 
@@ -524,6 +530,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.resultsRootPath.setCurrentPath("")
         _cap_width(self.resultsRootPath, 360)
         maskForm.addRow("Results folder (optional)", self.resultsRootPath)
+        self._connect_path_changed(self.resultsRootPath, self._on_dataset_or_results_root_changed)
 
         self.copyRawInputsCheck = qt.QCheckBox()
         self.copyRawInputsCheck.checked = False
@@ -772,6 +779,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummarySavedStateLabel.wordWrap = True
         self.seriesSummaryUpdateBtn = qt.QPushButton("Load saved cohort summary")
         self.seriesSummaryUpdateBtn.clicked.connect(self._refresh_saved_cohort_summary)
+        self.seriesSummaryExportBtn = qt.QPushButton("Export study summary")
+        self.seriesSummaryExportBtn.clicked.connect(self._on_export_study_summary)
         self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
         self.seriesSummaryTable = qt.QTableWidget()
         self.seriesSummaryTable.setColumnCount(4)
@@ -787,6 +796,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryForm.addRow("Comparison pairs", self.seriesSummaryPairsList)
         self.seriesSummaryForm.addRow(self.seriesSummarySavedStateLabel)
         self.seriesSummaryForm.addRow(self.seriesSummaryUpdateBtn)
+        self.seriesSummaryForm.addRow(self.seriesSummaryExportBtn)
         self.seriesSummaryForm.addRow("Mask summaries", self.seriesSummaryTable)
         self.seriesSummaryForm.addRow(self.seriesBasisLabel)
 
@@ -1039,6 +1049,69 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             text = "Current step: idle"
         if hasattr(self, "currentStepLabel") and self.currentStepLabel is not None:
             self.currentStepLabel.text = text
+
+    def _connect_path_changed(self, widget, callback):
+        for signal_name in ("currentPathChanged", "pathChanged"):
+            signal = getattr(widget, signal_name, None)
+            if signal is None:
+                continue
+            try:
+                signal.connect(callback)
+                return
+            except Exception:
+                pass
+        for signature in ("currentPathChanged(QString)", "pathChanged(QString)"):
+            try:
+                widget.connect(signature, callback)
+                return
+            except Exception:
+                pass
+
+    def _path_text(self, widget):
+        try:
+            return str(widget.currentPath or "").strip()
+        except Exception:
+            return ""
+
+    def _reset_progress_for_dataset_root(self):
+        dataset_text = self._path_text(self.inputPath)
+        results_text = self._path_text(self.resultsRootPath) if hasattr(self, "resultsRootPath") else ""
+        self._last_dataset_root_text = dataset_text
+        self._last_results_root_text = results_text
+
+        self._last_parsed_sessions = []
+        self._parsed_baseline_rows = []
+        self._last_parse_mode_used = None
+        self._manual_parse_active = False
+        self._patient_keys = []
+        self._remodelling_comparison_items = []
+        self._interactive_preview_cache = {}
+        self._latest_series_summary = None
+        self._latest_study_summary_rows = []
+        self._series_summary_pair_checks = {}
+        self.parseTable.setRowCount(0)
+        self.parseSummaryLabel.text = "Parse summary: not run"
+        self.parseSummaryLabel.styleSheet = ""
+        self._rebuild_series_summary_pair_selector([])
+        self._set_series_summary_labels(None)
+        self._refresh_processing_subjects()
+        self._refresh_patient_list()
+
+        self._set_stage_status("dataset", "done" if dataset_text else "pending")
+        for stage in ("parse", "masks", "registration", "analysis"):
+            self._set_stage_status(stage, "pending")
+        self._update_progress_ui()
+
+    def _on_dataset_or_results_root_changed(self, *_args):
+        dataset_text = self._path_text(self.inputPath)
+        results_text = self._path_text(self.resultsRootPath) if hasattr(self, "resultsRootPath") else ""
+        if (
+            dataset_text == self._last_dataset_root_text
+            and results_text == self._last_results_root_text
+        ):
+            self._set_stage_status("dataset", "done" if dataset_text else "pending")
+            return
+        self._reset_progress_for_dataset_root()
 
     def _on_apply_preset(self):
         preset = str(self.presetCombo.currentText or "Default").strip().lower()
@@ -1326,6 +1399,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.remodellingApplyPreviewBtn,
             self.remodellingAutoUpdateCheck,
             self.seriesSummaryUpdateBtn,
+            self.seriesSummaryExportBtn,
             self.saveAnalysisScenarioBtn,
         ]
         for widget in widgets:
@@ -1368,6 +1442,94 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "There was no active process to cancel.",
             )
 
+    def _manual_role_from_filename(self, path):
+        stem = Path(path).stem
+        upper = stem.upper()
+        suffix_roles = [
+            ("_TRAB_MASK", "trab"),
+            ("_CORT_MASK", "cort"),
+            ("_FULL_MASK", "full"),
+            ("_REGMASK", "regmask"),
+            ("_SEG", "seg"),
+        ]
+        for suffix, role in suffix_roles:
+            if upper.endswith(suffix):
+                return stem[: -len(suffix)], role
+        return stem, None
+
+    def _manual_sessions_from_input_files(self, root):
+        try:
+            from timelapsedhrpqct.dataset.models import RawSession
+        except Exception:
+            return []
+
+        root = Path(root)
+        aim_paths = sorted(
+            path for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() == ".aim"
+        )
+        if not aim_paths:
+            return []
+
+        grouped = {}
+        for path in aim_paths:
+            base, role = self._manual_role_from_filename(path)
+            entry = grouped.setdefault(
+                base,
+                {
+                    "image": None,
+                    "masks": {},
+                    "seg": None,
+                },
+            )
+            if role == "seg":
+                entry["seg"] = path
+            elif role:
+                entry["masks"][role] = path
+            elif entry["image"] is None:
+                entry["image"] = path
+            else:
+                grouped[str(path.stem) + "_" + str(len(grouped))] = {
+                    "image": path,
+                    "masks": {},
+                    "seg": None,
+                }
+
+        sessions = []
+        for idx, (base, entry) in enumerate(sorted(grouped.items()), start=1):
+            image_path = entry.get("image")
+            if image_path is None:
+                continue
+            sessions.append(
+                RawSession(
+                    subject_id="MANUAL",
+                    session_id=f"T{idx}",
+                    raw_image_path=Path(image_path),
+                    source_session_id=str(base),
+                    site="radius",
+                    stack_index=None,
+                    raw_mask_paths=dict(entry.get("masks") or {}),
+                    raw_seg_path=entry.get("seg"),
+                )
+            )
+
+        if sessions:
+            return sessions
+
+        return [
+            RawSession(
+                subject_id="MANUAL",
+                session_id=f"T{idx}",
+                raw_image_path=path,
+                source_session_id=path.stem,
+                site="radius",
+                stack_index=None,
+                raw_mask_paths={},
+                raw_seg_path=None,
+            )
+            for idx, path in enumerate(aim_paths, start=1)
+        ]
+
     def _on_parse(self):
         if not self.logic.is_pipeline_available():
             slicer.util.errorDisplay("Please install timelapsed-hrpqct first.")
@@ -1389,29 +1551,43 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             parse_mode=self._selected_parse_mode(),
         )
         if err:
-            self.parseTable.setRowCount(0)
-            self.parseSummaryLabel.text = "Parse summary: failed"
+            manual_sessions = self._manual_sessions_from_input_files(root)
+            if manual_sessions:
+                self._manual_parse_active = True
+                self._last_parsed_sessions = list(manual_sessions)
+                self._parsed_baseline_rows = []
+                self._populate_parse_table(manual_sessions)
+                try:
+                    self.parseBox.collapsed = False
+                except Exception:
+                    pass
+                self.parseSummaryLabel.text = (
+                    "Parse summary: manual correction needed "
+                    f"({len(manual_sessions)} AIM image row(s) prepared)."
+                )
+            else:
+                self._manual_parse_active = False
+                self.parseTable.setRowCount(0)
+                self._last_parsed_sessions = []
+                self._parsed_baseline_rows = []
+                self.parseSummaryLabel.text = "Parse summary: failed"
             self.parseSummaryLabel.styleSheet = "color: #cc5500;"
-            self._last_parsed_sessions = []
-            self._parsed_baseline_rows = []
             self._refresh_processing_subjects()
             self._set_stage_status("parse", "error")
-            msg = (
-                "Could not parse file naming. Check that filenames include subject/session and use expected tokens."
-                "<br><br><b>Examples</b>:"
-                "<br><code>SUBJ001_DT_T1.AIM</code>"
-                "<br><code>SUBJ001_DT_STACK01_T1.AIM</code>"
-                "<br><code>SUBJ001_DT_T1_TRAB_MASK.AIM</code>"
-                "<br><code>SUBJ001_DT_T1_CORT_MASK.AIM</code>"
-                "<br><code>SUBJ001_DT_T1_REGMASK.AIM</code>"
-                "<br><code>SUBJ001_DT_T1_ROI1.AIM</code>"
-                f"<br><br><small>{err}</small>"
+            detail = (
+                "Could not parse filenames automatically. "
+                "Use Parse Details to correct Subject, Site, Session, and Stack values, "
+                "then run the pipeline from the corrected table."
+                if manual_sessions
+                else "Could not parse filenames automatically and no AIM files were found for manual correction."
             )
-            self._set_user_message("error", "Parse failed", msg)
-            slicer.util.warningDisplay(msg)
+            self._set_user_message("error", "Parse needs correction", detail)
+            self._show("[parse] automatic parse failed:")
+            self._show(str(err))
             return
 
         self._last_parse_mode_used = mode_used
+        self._manual_parse_active = False
         self._show(f"[parse] discovered {len(sessions)} sessions under {root}")
         self._last_parsed_sessions = list(sessions)
         self._parsed_baseline_rows = [
@@ -1611,6 +1787,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     pass
 
     def _has_parse_overrides(self):
+        if self._manual_parse_active:
+            return True
         if not self._last_parsed_sessions or not self._parsed_baseline_rows:
             return False
         table_rows = int(self.parseTable.rowCount)
@@ -3448,11 +3626,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _refresh_saved_cohort_summary(self):
         imported = self._imported_dataset_root()
         if imported is None:
+            self._latest_study_summary_rows = []
             self._set_series_summary_labels(None)
             self._set_series_summary_saved_state("Results root not available.")
             return
         selected_pairs = self._selected_series_adjacent_pairs()
         if not selected_pairs:
+            self._latest_study_summary_rows = []
             self._set_series_summary_labels(None)
             self._set_series_summary_saved_state("Select at least one comparison pair.")
             return
@@ -3485,11 +3665,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         }
                     )
         except Exception as exc:
+            self._latest_study_summary_rows = []
             self._set_series_summary_labels(None)
             self._set_series_summary_saved_state(f"Could not read cohort analysis: {exc}")
             return
 
         if not cohort_rows:
+            self._latest_study_summary_rows = []
             self._set_series_summary_labels(None)
             self._set_series_summary_saved_state("No saved cohort rows found for the selected pairs.")
             return
@@ -3517,7 +3699,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         summary = {
             "rows": summary_rows,
             "trajectory_selected_adjacent_pairs": list(selected_pairs),
+            "cohort_rows": cohort_rows,
         }
+        self._latest_study_summary_rows = cohort_rows
         self._set_series_summary_labels(summary)
         self._set_series_summary_saved_state(
             "Showing saved cohort means from existing pairwise analysis outputs for all available masks."
@@ -3525,6 +3709,133 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _on_update_series_summary(self):
         self._refresh_saved_cohort_summary()
+
+    def _csv_fieldnames(self, rows):
+        fields = []
+        seen = set()
+        for row in rows:
+            for key in row.keys():
+                if key not in seen:
+                    fields.append(key)
+                    seen.add(key)
+        return fields
+
+    def _write_csv_rows(self, path, rows):
+        rows = list(rows)
+        if not rows:
+            return
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=self._csv_fieldnames(rows))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def _write_xlsx_rows(self, path, sheets):
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        default_sheet = wb.active
+        wb.remove(default_sheet)
+        for title, rows in sheets:
+            rows = list(rows)
+            if not rows:
+                continue
+            ws = wb.create_sheet(title=title[:31])
+            fieldnames = self._csv_fieldnames(rows)
+            ws.append(fieldnames)
+            for row in rows:
+                ws.append([row.get(field) for field in fieldnames])
+        if not wb.sheetnames:
+            ws = wb.create_sheet(title="summary")
+            ws.append(["message"])
+            ws.append(["No rows available"])
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(str(path))
+
+    def _on_export_study_summary(self):
+        if self._latest_series_summary is None:
+            self._refresh_saved_cohort_summary()
+        summary = self._latest_series_summary or {}
+        summary_rows = list(summary.get("rows") or [])
+        cohort_rows = list(summary.get("cohort_rows") or self._latest_study_summary_rows or [])
+        if not summary_rows and not cohort_rows:
+            self._set_series_summary_saved_state("Load a saved cohort summary before exporting.")
+            return
+
+        selected_pairs = ", ".join(summary.get("trajectory_selected_adjacent_pairs") or [])
+        export_summary_rows = [
+            {
+                **row,
+                "selected_adjacent_pairs": selected_pairs,
+            }
+            for row in summary_rows
+        ]
+        export_cohort_rows = [
+            {
+                **row,
+                "selected_adjacent_pairs": selected_pairs,
+            }
+            for row in cohort_rows
+        ]
+
+        imported = self._imported_dataset_root()
+        default_dir = imported if imported is not None else Path.home()
+        default_path = default_dir / "study_summary.csv"
+        result = qt.QFileDialog.getSaveFileName(
+            slicer.util.mainWindow(),
+            "Export Study Summary",
+            str(default_path),
+            "CSV files (*.csv);;Excel workbook (*.xlsx)",
+        )
+        if isinstance(result, (tuple, list)):
+            selected = result[0] if result else ""
+        else:
+            selected = result
+        if not str(selected).strip():
+            return
+
+        selected_path = Path(str(selected))
+        if selected_path.suffix.lower() == ".xlsx":
+            csv_path = selected_path.with_suffix(".csv")
+        elif selected_path.suffix:
+            csv_path = selected_path
+        else:
+            csv_path = selected_path.with_suffix(".csv")
+        cohort_csv_path = csv_path.with_name(f"{csv_path.stem}_cohort_rows.csv")
+
+        try:
+            self._write_csv_rows(csv_path, export_summary_rows)
+            if export_cohort_rows:
+                self._write_csv_rows(cohort_csv_path, export_cohort_rows)
+        except Exception as exc:
+            self._set_series_summary_saved_state(f"CSV export failed: {exc}")
+            return
+
+        xlsx_message = ""
+        if selected_path.suffix.lower() == ".xlsx":
+            try:
+                self._write_xlsx_rows(
+                    selected_path,
+                    [
+                        ("summary", export_summary_rows),
+                        ("cohort_rows", export_cohort_rows),
+                    ],
+                )
+                xlsx_message = f" XLSX: {selected_path}"
+            except Exception as exc:
+                xlsx_message = f" XLSX skipped ({exc})."
+
+        cohort_message = f" Cohort rows: {cohort_csv_path}" if export_cohort_rows else ""
+        self._set_series_summary_saved_state(
+            f"Exported CSV: {csv_path}.{cohort_message}{xlsx_message}"
+        )
+        self._show(f"[export] study summary CSV written to {csv_path}")
+        if export_cohort_rows:
+            self._show(f"[export] study cohort rows CSV written to {cohort_csv_path}")
+        if selected_path.suffix.lower() == ".xlsx" and xlsx_message.startswith(" XLSX:"):
+            self._show(f"[export] study summary XLSX written to {selected_path}")
 
     def _on_save_analysis_scenario(self):
         patient_key = self._current_patient_key()
