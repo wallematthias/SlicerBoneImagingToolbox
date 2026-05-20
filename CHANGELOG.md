@@ -2,6 +2,18 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.1.2] - 2026-05-20
+
+### Added
+
+- Study-level summary export from the series summary panel, with CSV output and optional XLSX output when workbook support is available.
+- README documentation for interactive remodelling review controls and live preview behavior.
+
+### Fixed
+
+- Progress state now refreshes immediately when the dataset or results root changes.
+- Parse failures now stay in the module UI/log and provide editable manual fallback rows for anonymized or unusual AIM filenames.
+
 ## [0.1.1] - 2026-04-08
 
 ### Added

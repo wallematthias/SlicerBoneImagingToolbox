@@ -31,7 +31,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.1.1"
+MODULE_VERSION = "0.1.2"
 
 
 def _suppress_simpleitk_warnings():
