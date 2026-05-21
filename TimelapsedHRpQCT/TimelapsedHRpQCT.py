@@ -1454,6 +1454,33 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if pair_mode not in {"adjacent", "baseline", "all_pairs"}:
             pair_mode = "adjacent"
 
+        mask_method = str(self.maskMethod.currentText or "adaptive")
+        mask_low = float(self.maskLow.value)
+        mask_high = float(self.maskHigh.value)
+        segmentation_cfg = {"method": mask_method}
+        if mask_method == "seg_gauss":
+            segmentation_cfg.update(
+                {
+                    "trab_threshold": mask_low,
+                    "cort_threshold": mask_low,
+                    "gaussian_sigma": mask_high,
+                }
+            )
+        elif mask_method == "laplace_hamming":
+            segmentation_cfg.update(
+                {
+                    "laplace_hamming_threshold": mask_low,
+                    "laplace_hamming_min_size_voxels": int(mask_high),
+                }
+            )
+        else:
+            segmentation_cfg.update(
+                {
+                    "adaptive_low_threshold": mask_low,
+                    "adaptive_high_threshold": mask_high,
+                }
+            )
+
         return {
             "import": {
                 # Do not fail when z-slices are not perfectly divisible by stack depth.
@@ -1461,17 +1488,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "on_incomplete_stack": "keep_last",
             },
             "masks": {
-                "segmentation": {
-                    "method": self.maskMethod.currentText,
-                    "trab_threshold": float(self.maskLow.value),
-                    "cort_threshold": float(self.maskHigh.value),
-                    "adaptive_low_threshold": float(self.maskLow.value),
-                    "adaptive_high_threshold": float(self.maskHigh.value),
-                    "seg_gauss_threshold": float(self.maskLow.value),
-                    "seg_gauss_sigma": float(self.maskHigh.value),
-                    "laplace_hamming_threshold": float(self.maskLow.value),
-                    "laplace_hamming_min_size_voxels": int(self.maskHigh.value),
-                }
+                "segmentation": segmentation_cfg
             },
             "timelapsed_registration": {
                 "metric": self.regMetric.currentText,
