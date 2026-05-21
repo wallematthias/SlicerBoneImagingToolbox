@@ -3511,6 +3511,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         cache[compartment] = (mask_t0, mask_t1)
         return cache[compartment]
 
+    def _compute_pair_remodelling_preview_compat(self, compute_pair_remodelling_preview, **kwargs):
+        import inspect
+
+        try:
+            params = inspect.signature(compute_pair_remodelling_preview).parameters
+        except Exception:
+            params = {}
+        if "marrow_mask_dilation_voxels" not in params:
+            kwargs.pop("marrow_mask_dilation_voxels", None)
+            if bool(self.analysisRestrictBoneSupportCheck.checked) and int(self.analysisMarrowMaskDilation.value) > 0:
+                self._show(
+                    "[preview] installed timelapsed-hrpqct does not support marrow mask dilation yet; "
+                    "update the core package to apply this option."
+                )
+        return compute_pair_remodelling_preview(**kwargs)
+
     def _compute_pair_metric_rows(self, preview_inputs):
         from timelapsedhrpqct.analysis import (
             build_series_common_masks,
@@ -3531,7 +3547,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 int(self._analysis_erosion_voxels),
                 full_mask_dilation_voxels=int(self.analysisFullMaskDilation.value),
             )[compartment]
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=preview_inputs["image_arr_t0"],
                 image_arr_t1=preview_inputs["image_arr_t1"],
                 seg_arr_t0=preview_inputs["seg_arr_t0"],
@@ -3568,7 +3585,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         try:
             preview_inputs = self._get_interactive_preview_inputs(source_path)
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=preview_inputs["image_arr_t0"],
                 image_arr_t1=preview_inputs["image_arr_t1"],
                 seg_arr_t0=preview_inputs["seg_arr_t0"],
@@ -3817,7 +3835,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     support1 = dilate_mask_xy(support1, int(self.analysisFullMaskDilation.value))
                 valid_mask = erode_mask(support0 & support1, int(self._analysis_erosion_voxels))
 
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=preview_inputs["image_arr_t0"],
                 image_arr_t1=preview_inputs["image_arr_t1"],
                 seg_arr_t0=preview_inputs["seg_arr_t0"],
@@ -3920,7 +3939,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 support0 = dilate_mask_xy(support0, int(self.analysisFullMaskDilation.value))
                 support1 = dilate_mask_xy(support1, int(self.analysisFullMaskDilation.value))
             valid_mask = erode_mask(support0 & support1, int(self._analysis_erosion_voxels))
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=t0["image_arr"],
                 image_arr_t1=t1["image_arr"],
                 seg_arr_t0=t0["seg_arr"],
