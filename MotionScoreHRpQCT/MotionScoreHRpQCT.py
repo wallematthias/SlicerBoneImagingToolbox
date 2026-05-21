@@ -29,8 +29,10 @@ from slicer.ScriptedLoadableModule import (
 )
 
 
-MODULE_VERSION = "0.1.3"
+MODULE_VERSION = "0.1.4"
 DEFAULT_LICENSE_API = "https://motionscore-license-api.matthias-walle.workers.dev"
+DEFAULT_MODEL_BUNDLE_URL = ""
+DEFAULT_REGISTRATION_URL = ""
 LICENSE_HTTP_USER_AGENT = "MotionScoreSlicer/0.1 (+3D-Slicer; Python urllib)"
 CORE_PYPI_PACKAGE = "motionscorehrpqct"
 CORE_PIP_CONSTRAINTS = ("numpy<2.0",)
@@ -211,7 +213,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         super().setup()
 
         self.licenseBox = ctk.ctkCollapsibleButton()
-        self.licenseBox.text = "License"
+        self.licenseBox.text = "Registration and Models"
         self.licenseBox.collapsed = True
         self.layout.addWidget(self.licenseBox)
 
@@ -223,10 +225,25 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modelsPathEdit.filters = ctk.ctkPathLineEdit.Dirs
         self.modelsPathEdit.settingKey = "MotionScore/InternalModelsRoot"
         self.modelsPathEdit.currentPath = str(self._default_models_path())
-        self.modelsPathEdit.enabled = False
+        self.modelsPathEdit.enabled = True
+        licenseForm.addRow("Local models folder", self.modelsPathEdit)
+
+        self.modelBundleUrlEdit = qt.QLineEdit()
+        self.modelBundleUrlEdit.setText(self._settings().value("MotionScore/ModelBundleUrl", DEFAULT_MODEL_BUNDLE_URL))
+        self.modelBundleUrlEdit.setPlaceholderText("Optional HTTPS URL to a .tar.gz model bundle")
+        licenseForm.addRow("Model bundle URL", self.modelBundleUrlEdit)
+
+        self.registrationUrlEdit = qt.QLineEdit()
+        self.registrationUrlEdit.setText(self._settings().value("MotionScore/RegistrationUrl", DEFAULT_REGISTRATION_URL))
+        self.registrationUrlEdit.setPlaceholderText("Optional registration form or project page URL")
+        licenseForm.addRow("Registration URL", self.registrationUrlEdit)
 
         self.licenseApiEdit = qt.QLineEdit()
         self.licenseApiEdit.setText(self._settings().value("MotionScore/LicenseApiBase", DEFAULT_LICENSE_API))
+
+        legacyLabel = qt.QLabel("Optional contact / legacy online license fields")
+        legacyLabel.setStyleSheet("font-weight: 600; color: #555555;")
+        licenseForm.addRow(legacyLabel)
 
         self.licenseNameEdit = qt.QLineEdit()
         self.licenseNameEdit.setText(self._settings().value("MotionScore/LicenseName", ""))
@@ -242,25 +259,35 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.licenseKeyEdit = qt.QLineEdit()
         self.licenseKeyEdit.setText(self._settings().value("MotionScore/LicenseKey", ""))
-        licenseForm.addRow("License Key", self.licenseKeyEdit)
+        licenseForm.addRow("Legacy license key", self.licenseKeyEdit)
 
         self.modelVersionEdit = qt.QLineEdit()
         self.modelVersionEdit.setText(self._settings().value("MotionScore/ModelVersion", "v1"))
 
-        self.quickSetupButton = qt.QPushButton("One-Click Setup")
+        self.quickSetupButton = qt.QPushButton("Setup / Refresh Local Models")
         licenseLayout.addWidget(self.quickSetupButton)
+
+        self.downloadModelBundleButton = qt.QPushButton("Download Model Bundle")
+        licenseLayout.addWidget(self.downloadModelBundleButton)
+
+        self.importModelBundleButton = qt.QPushButton("Import Model Bundle...")
+        licenseLayout.addWidget(self.importModelBundleButton)
+
+        self.openRegistrationButton = qt.QPushButton("Open Registration Page")
+        licenseLayout.addWidget(self.openRegistrationButton)
 
         self.forceReinstallButton = qt.QPushButton("Force Reinstall Package")
         licenseLayout.addWidget(self.forceReinstallButton)
 
         self.licenseFlowHelpLabel = qt.QLabel(
-            "Fill Name/Institution/Email, click One-Click Setup. "
-            "It installs/updates core package, requests key, activates, and downloads models automatically."
+            "Recommended: use a public or lab-hosted model bundle and optional registration page. "
+            "This avoids a metered license API while still allowing release download counts and voluntary registration. "
+            "The legacy online license fields below remain available if that service is restored."
         )
         self.licenseFlowHelpLabel.setWordWrap(True)
         licenseLayout.addWidget(self.licenseFlowHelpLabel)
 
-        self.licenseStatusLabel = qt.QLabel("License: not activated")
+        self.licenseStatusLabel = qt.QLabel("Models: not checked")
         self.licenseStatusLabel.setWordWrap(True)
         licenseLayout.addWidget(self.licenseStatusLabel)
 
@@ -459,7 +486,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.additionalOptionsBox.collapsed = True
         additionalLayout = qt.QVBoxLayout(self.additionalOptionsBox)
 
-        self.setupStatusLabel = qt.QLabel("Install: checking... | License: checking...")
+        self.setupStatusLabel = qt.QLabel("Install: checking... | Registration: optional")
         self.setupStatusLabel.setWordWrap(True)
         additionalLayout.addWidget(self.setupStatusLabel)
 
@@ -608,6 +635,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.exportButton.clicked.connect(self.onExport)
         self.importButton.clicked.connect(self.onImportFinalGrades)
         self.quickSetupButton.clicked.connect(self.onQuickSetup)
+        self.downloadModelBundleButton.clicked.connect(self.onDownloadModelBundle)
+        self.importModelBundleButton.clicked.connect(self.onImportModelBundle)
+        self.openRegistrationButton.clicked.connect(self.onOpenRegistrationPage)
         self.forceReinstallButton.clicked.connect(self.onForceReinstallPackage)
         self.backButton.clicked.connect(self.onBackToPreviousScan)
         self.clearButton.clicked.connect(self.onClearGrades)
@@ -623,6 +653,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.trainingModeCheck.toggled.connect(self.onTrainingModeToggled)
         self.reviewerEdit.editingFinished.connect(self._persist_reviewer_setting)
         self.licenseApiEdit.editingFinished.connect(self._persist_license_settings)
+        self.modelBundleUrlEdit.editingFinished.connect(self._persist_license_settings)
+        self.registrationUrlEdit.editingFinished.connect(self._persist_license_settings)
         self.licenseNameEdit.editingFinished.connect(self._persist_license_settings)
         self.licenseInstitutionEdit.editingFinished.connect(self._persist_license_settings)
         self.licenseEmailEdit.editingFinished.connect(self._persist_license_settings)
@@ -683,6 +715,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _persist_license_settings(self):
         s = self._settings()
         s.setValue("MotionScore/LicenseApiBase", self.licenseApiEdit.text.strip())
+        s.setValue("MotionScore/ModelBundleUrl", self.modelBundleUrlEdit.text.strip())
+        s.setValue("MotionScore/RegistrationUrl", self.registrationUrlEdit.text.strip())
         s.setValue("MotionScore/LicenseName", self.licenseNameEdit.text.strip())
         s.setValue("MotionScore/LicenseInstitution", self.licenseInstitutionEdit.text.strip())
         s.setValue("MotionScore/LicenseEmail", self.licenseEmailEdit.text.strip())
@@ -1278,8 +1312,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not hasattr(self, "setupStatusLabel"):
             return
         install_txt = "ready" if (self._core_package_ready() and self._has_local_models()) else "setup"
-        license_txt = "active" if self._license_ready() else "activate"
-        self.setupStatusLabel.setText(f"Install: {install_txt} | License: {license_txt}")
+        registration_txt = "optional"
+        self.setupStatusLabel.setText(f"Install: {install_txt} | Registration: {registration_txt}")
 
     def _training_mode_enabled(self):
         checked_attr = self.trainingModeCheck.checked
@@ -1297,6 +1331,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.backButton.enabled = bool(enabled and self._grade_history)
         self.clearButton.enabled = enabled
         self.quickSetupButton.enabled = enabled
+        self.downloadModelBundleButton.enabled = enabled
+        self.importModelBundleButton.enabled = enabled
+        self.openRegistrationButton.enabled = enabled
         self.forceReinstallButton.enabled = enabled
         self.trainingModeCheck.enabled = enabled
         self.runModeCombo.enabled = enabled
@@ -1389,45 +1426,103 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         """
         Friendly setup flow:
         1) Install core package from PyPI (if missing)
-        2) Request key (if missing)
-        3) Activate (if token missing)
-        4) Download models (if not available)
+        2) Refresh local model profiles
+        3) Download a configured public/lab model bundle if no local models exist
         """
         self._persist_license_settings()
 
-        if (
-            self._core_package_ready()
-            and self._license_ready()
-            and self._license_session_matches_form()
-            and self._has_local_models()
-        ):
-            self._set_license_status("Setup already complete (package, license, models).")
+        if self._core_package_ready() and self._has_local_models():
+            self._set_license_status("Setup already complete (package and local models).")
             self._log("[setup] skipped: already ready\n")
+            self._refresh_model_profiles()
             return
 
         if not self._ensure_core_package():
             return
 
-        # If user changed email/key, invalidate prior activation session.
-        if self._license_ready() and not self._license_session_matches_form():
-            self._log("[license] detected email/key change; clearing previous activation session\n")
-            self._clear_license_session()
-
-        # Empty key means user explicitly wants a signup (new/reissued key).
-        if not self.licenseKeyEdit.text.strip():
-            if not self.onLicenseSignup():
-                return
-
-        if not self._license_ready():
-            if not self.onLicenseActivate():
-                return
-
         if not self._has_local_models():
-            if not self.onLicenseFetchModels():
+            bundle_url = self.modelBundleUrlEdit.text.strip()
+            if bundle_url:
+                if not self.onDownloadModelBundle():
+                    return
+            else:
+                self._set_license_status(
+                    "Core package ready. Add local DNN_*.pt files or set a model bundle URL."
+                )
+                self._log("[setup] waiting for local model files or model bundle URL\n")
+                self._refresh_model_profiles()
                 return
 
-        self._set_license_status("One-click setup complete.")
-        self._log("[setup] complete: package, license, and local models ready\n")
+        self._set_license_status("Setup complete (package and local models ready).")
+        self._log("[setup] complete: package and local models ready\n")
+        self._refresh_model_profiles()
+
+    def onOpenRegistrationPage(self):
+        url = self.registrationUrlEdit.text.strip()
+        if not url:
+            slicer.util.infoDisplay(
+                "No registration URL is configured yet.\n\n"
+                "A good no-cost option is a GitHub issue form or project page linked from the model release."
+            )
+            return
+        qt.QDesktopServices.openUrl(qt.QUrl(url))
+
+    def onImportModelBundle(self):
+        result = qt.QFileDialog.getOpenFileName(
+            slicer.util.mainWindow(),
+            "Import MotionScore model bundle",
+            str(Path.home()),
+            "Model bundles (*.tar.gz *.tgz);;All files (*)",
+        )
+        if isinstance(result, (tuple, list)):
+            result = result[0] if result else ""
+        if not result:
+            return False
+        bundle_path = Path(result)
+        models_dir = self._models_dir()
+        if models_dir is None:
+            slicer.util.errorDisplay("Could not resolve local models folder.")
+            return False
+        try:
+            self._safe_extract_tar_gz_bytes(bundle_path.read_bytes(), models_dir)
+            self._set_license_status(f"Imported model bundle into {models_dir}.")
+            self._log(f"[models] imported bundle: {bundle_path} -> {models_dir}\n")
+            self._refresh_model_profiles()
+            self._update_setup_status()
+            return True
+        except Exception as exc:
+            self._set_license_status(f"Model bundle import failed: {exc}")
+            slicer.util.errorDisplay(f"Model bundle import failed:\n{exc}")
+            return False
+
+    def onDownloadModelBundle(self):
+        url = self.modelBundleUrlEdit.text.strip()
+        if not url:
+            slicer.util.errorDisplay("Enter a model bundle URL first.")
+            return False
+        models_dir = self._models_dir()
+        if models_dir is None:
+            slicer.util.errorDisplay("Could not resolve local models folder.")
+            return False
+        try:
+            self._set_license_status("Downloading model bundle...")
+            req = urllib_request.Request(
+                url=url,
+                method="GET",
+                headers={"user-agent": LICENSE_HTTP_USER_AGENT},
+            )
+            with urllib_request.urlopen(req, timeout=180) as resp:
+                bundle = resp.read()
+            self._safe_extract_tar_gz_bytes(bundle, models_dir)
+            self._set_license_status(f"Downloaded model bundle into {models_dir}.")
+            self._log(f"[models] downloaded bundle: {url} -> {models_dir}\n")
+            self._refresh_model_profiles()
+            self._update_setup_status()
+            return True
+        except Exception as exc:
+            self._set_license_status(f"Model bundle download failed: {exc}")
+            slicer.util.errorDisplay(f"Model bundle download failed:\n{exc}")
+            return False
 
     def onLoadDataset(self):
         self.refreshReview()
@@ -1455,13 +1550,13 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return
             has_models = self._has_local_models(models_dir)
             if not has_models:
-                self._log("[setup] no local model files found; running one-click setup.\n")
+                self._log("[setup] no local model files found; running local model setup.\n")
                 self.onQuickSetup()
                 has_models = self._has_local_models(models_dir)
                 if not has_models:
                     slicer.util.errorDisplay(
                         "No model files available yet.\n"
-                        "Please complete setup (request key, activate, download models), then try again."
+                        "Import a model bundle, set a model bundle URL, or place DNN_*.pt files in the local models folder."
                     )
                     return
 

@@ -44,6 +44,7 @@ The Slicer modules remain workflow wrappers around core Python packages:
   - Runs MotionScore predictions.
   - Supports rapid reviewer grading and review-table export.
   - Keeps model inference and retraining logic in the MotionScore core package.
+  - Supports local or downloaded model bundles without requiring a hosted license API.
 - **Scanco I/O**: Focused AIM import/export utility.
   - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, or HU.
   - Preserves AIM metadata on imported Slicer volumes so edited data can be exported without a reference AIM.
@@ -92,10 +93,16 @@ The Slicer modules remain workflow wrappers around core Python packages:
 
 ## Interactive Remodelling Review
 
-After loading a saved remodelling image, the module exposes the same review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
+The Timelapsed module includes study profiles for ETH/UofC, UCSF, Shriners, and the core standard defaults.
+Applying a profile updates the visible analysis controls and passes the selected core profile to new runs.
+After loading a saved remodelling image, the module exposes the key review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
 When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
 The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation fraction, and resorption fraction.
-Mask segmentation can be generated with adaptive, global Gaussian-threshold, or Laplace-Hamming binarization.
+Mask segmentation can be generated with adaptive, seg_gauss, or Laplace-Hamming binarization.
+
+## MotionScore Model Access
+
+Motion Scoring no longer depends on a hosted license request service. The recommended model distribution path is a local or lab-hosted `.tar.gz` model bundle, optionally linked from a registration page or GitHub release. This keeps the workflow usable without paid infrastructure while still allowing aggregate download counts and voluntary user registration.
 
 ## Scanco AIM I/O
 

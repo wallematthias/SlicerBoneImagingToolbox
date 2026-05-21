@@ -31,7 +31,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.1.6"
+MODULE_VERSION = "0.2.0"
 
 
 def _suppress_simpleitk_warnings():
@@ -375,7 +375,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._temp_input_root = None
         self._mask_method_defaults = {
             "adaptive": (100.0, 300.0),
-            "global": (100.0, 300.0),
+            "seg_gauss": (225.0, 1.2),
             "laplace_hamming": (15564.0, 70.0),
         }
         self._analysis_method = "grayscale_and_binary"
@@ -478,14 +478,27 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         parseLayout = qt.QVBoxLayout(parseBox)
         parseLayout.addWidget(self.parseTable)
 
-        quickBox = qt.QGroupBox("Quick Presets")
+        quickBox = qt.QGroupBox("Study Profile")
         quickForm = qt.QFormLayout(quickBox)
         quickForm.setVerticalSpacing(8)
+        self.studyProfileCombo = qt.QComboBox()
+        for label, value in [
+            ("ETH / UofC standard", "eth-uofc"),
+            ("UCSF", "ucsf"),
+            ("Shriners", "shriners"),
+            ("Core standard", "standard"),
+        ]:
+            self.studyProfileCombo.addItem(label, value)
+        _cap_width(self.studyProfileCombo, 240)
+        self.applyProfileBtn = qt.QPushButton("Apply profile")
+        self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
         self.presetCombo = qt.QComboBox()
         self.presetCombo.addItems(["Default", "Fast preview", "High quality"])
         _cap_width(self.presetCombo, 240)
         self.applyPresetBtn = qt.QPushButton("Apply preset")
         self.applyPresetBtn.clicked.connect(self._on_apply_preset)
+        quickForm.addRow("Profile", self.studyProfileCombo)
+        quickForm.addRow(self.applyProfileBtn)
         quickForm.addRow("Preset", self.presetCombo)
         quickForm.addRow(self.applyPresetBtn)
 
@@ -505,7 +518,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         maskForm = qt.QFormLayout(maskBox)
 
         self.maskMethod = qt.QComboBox()
-        self.maskMethod.addItems(["adaptive", "global", "laplace_hamming"])
+        self.maskMethod.addItems(["adaptive", "seg_gauss", "laplace_hamming"])
         self.maskMethod.currentTextChanged.connect(self._on_mask_method_changed)
         _cap_width(self.maskMethod, 220)
         self.maskLow = ctk.ctkDoubleSpinBox()
@@ -890,7 +903,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         loadForm.addRow("Comparison", self.remodellingComparisonCombo)
         loadForm.addRow(self.loadDataBtn)
 
-        previewBox = qt.QGroupBox("Advanced Preview Display")
+        previewBox = qt.QGroupBox("Interactive Preview")
         previewForm = qt.QFormLayout(previewBox)
         previewForm.setVerticalSpacing(8)
         self.remodellingFullSegCombo = qt.QComboBox()
@@ -904,38 +917,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         segRowLayout.setContentsMargins(0, 0, 0, 0)
         segRowLayout.addWidget(self.remodellingFullSegCombo, 1)
         segRowLayout.addWidget(self.remodellingRefreshBtn)
-        self.remodellingAxisCombo = qt.QComboBox()
-        self.remodellingAxisCombo.addItems(["x", "y", "z"])
-        self.remodellingAxisCombo.currentIndex = 0
-        self.remodellingThicknessSpin = qt.QSpinBox()
-        self.remodellingThicknessSpin.minimum = 1
-        self.remodellingThicknessSpin.maximum = 512
-        self.remodellingThicknessSpin.value = 15
-        self.remodellingDetailSlider = ctk.ctkSliderWidget()
-        self.remodellingDetailSlider.minimum = 0
-        self.remodellingDetailSlider.maximum = 100
-        self.remodellingDetailSlider.singleStep = 1
-        self.remodellingDetailSlider.decimals = 0
-        self.remodellingDetailSlider.value = 50
         self.remodellingAutoUpdateCheck = qt.QCheckBox()
         self.remodellingAutoUpdateCheck.checked = True
         self.remodellingApplyInteractiveBtn = qt.QPushButton("Update remodelling image")
-        self.remodellingApplyPreviewBtn = qt.QPushButton("Render 3D preview")
-        _cap_width(self.remodellingAxisCombo, 180)
-        _cap_width(self.remodellingThicknessSpin, 180)
-        _cap_width(self.remodellingDetailSlider, 260)
         _cap_width(self.remodellingAutoUpdateCheck, 180)
         _cap_width(self.remodellingApplyInteractiveBtn, 220)
-        _cap_width(self.remodellingApplyPreviewBtn, 220)
         self.remodellingApplyInteractiveBtn.clicked.connect(self._on_apply_interactive_remodelling)
-        self.remodellingApplyPreviewBtn.clicked.connect(self._on_update_remodelling_preview)
         previewForm.addRow("Full segmentation", segRow)
-        previewForm.addRow("Axis", self.remodellingAxisCombo)
-        previewForm.addRow("Thickness (vox)", self.remodellingThicknessSpin)
-        previewForm.addRow("3D detail (0-100)", self.remodellingDetailSlider)
         previewForm.addRow("Auto update", self.remodellingAutoUpdateCheck)
         previewForm.addRow(self.remodellingApplyInteractiveBtn)
-        previewForm.addRow(self.remodellingApplyPreviewBtn)
         settingsLayout.addWidget(previewBox)
 
         self.logText = qt.QPlainTextEdit()
@@ -1282,6 +1272,107 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisCluster.value = 12
         self._set_user_message("info", "Preset applied: Default", _summary())
 
+    def _selected_config_profile(self):
+        if not hasattr(self, "studyProfileCombo"):
+            return "eth-uofc"
+        data = self.studyProfileCombo.currentData
+        return str(data or "eth-uofc")
+
+    def _profile_cli_args(self):
+        profile = self._selected_config_profile()
+        return ["--profile", profile] if profile else []
+
+    def _apply_config_dict_to_controls(self, cfg, *, source_label):
+        seg_cfg = ((cfg.get("masks") or {}).get("segmentation") or {})
+        method = str(seg_cfg.get("method", self.maskMethod.currentText) or self.maskMethod.currentText)
+        if method == "global":
+            method = "seg_gauss"
+        mask_idx = self.maskMethod.findText(method)
+        if mask_idx < 0 and method == "seg_gauss":
+            mask_idx = self.maskMethod.findText("seg_gauss")
+        if mask_idx >= 0:
+            self.maskMethod.setCurrentIndex(mask_idx)
+
+        adaptive_low = float(seg_cfg.get("adaptive_low_threshold", 100.0))
+        adaptive_high = float(seg_cfg.get("adaptive_high_threshold", 300.0))
+        seg_gauss_threshold = float(seg_cfg.get("seg_gauss_threshold", seg_cfg.get("trab_threshold", 100.0)))
+        seg_gauss_sigma = float(seg_cfg.get("seg_gauss_sigma", seg_cfg.get("cort_threshold", 1.2)))
+        laplace_hamming_threshold = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
+        laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
+        self._mask_method_defaults = {
+            "adaptive": (adaptive_low, adaptive_high),
+            "seg_gauss": (seg_gauss_threshold, seg_gauss_sigma),
+            "laplace_hamming": (laplace_hamming_threshold, laplace_hamming_min_size),
+        }
+
+        tl_cfg = cfg.get("timelapsed_registration") or {}
+        ms_cfg = cfg.get("multistack_correction") or {}
+        self.tlSampling.value = float(tl_cfg.get("sampling_percentage", float(self.tlSampling.value)))
+        self.tlRes.value = int(tl_cfg.get("number_of_resolutions", int(self.tlRes.value)))
+        self.tlIter.value = int(tl_cfg.get("number_of_iterations", int(self.tlIter.value)))
+        self.msSampling.value = float(ms_cfg.get("sampling_percentage", float(self.msSampling.value)))
+        self.msRes.value = int(ms_cfg.get("number_of_resolutions", int(self.msRes.value)))
+        self.msIter.value = int(ms_cfg.get("number_of_iterations", int(self.msIter.value)))
+        self.msOverlapBuffer.value = int(
+            ms_cfg.get("overlap_crop_buffer_voxels", int(self.msOverlapBuffer.value))
+        )
+        init_vox = ms_cfg.get("initial_translation_voxels", [0.0, 0.0, -20.0])
+        if isinstance(init_vox, (list, tuple)) and len(init_vox) >= 3:
+            self.msInitTx.value = float(init_vox[0])
+            self.msInitTy.value = float(init_vox[1])
+            self.msInitTz.value = float(init_vox[2])
+
+        analysis_cfg = cfg.get("analysis") or {}
+        self._analysis_method = str(analysis_cfg.get("method", self._analysis_method))
+        idx = self.analysisMethodCombo.findData(self._analysis_method)
+        if idx >= 0:
+            self.analysisMethodCombo.setCurrentIndex(idx)
+        pair_idx = self.analysisPairModeCombo.findData(str(analysis_cfg.get("pair_mode", "adjacent")))
+        if pair_idx >= 0:
+            self.analysisPairModeCombo.setCurrentIndex(pair_idx)
+        thresholds = analysis_cfg.get("thresholds") or [float(self.analysisThreshold.value)]
+        clusters = analysis_cfg.get("cluster_sizes") or [int(self.analysisCluster.value)]
+        if thresholds:
+            self._set_analysis_threshold_value(float(thresholds[0]), queue_update=False)
+        if clusters:
+            self._set_analysis_cluster_value(int(clusters[0]), queue_update=False)
+        self.analysisGaussianFilterCheck.checked = bool(
+            analysis_cfg.get("gaussian_filter", bool(self.analysisGaussianFilterCheck.checked))
+        )
+        self.analysisGaussianSigma.value = float(
+            analysis_cfg.get("gaussian_sigma", float(self.analysisGaussianSigma.value))
+        )
+        self.analysisFullMaskDilation.value = int(
+            analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))
+        )
+        self.analysisMarrowMaskErosion.value = int(
+            analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value))
+        )
+        self._analysis_erosion_voxels = int(
+            ((analysis_cfg.get("valid_region") or {}).get("erosion_voxels", self._analysis_erosion_voxels))
+        )
+        self._on_mask_method_changed(self.maskMethod.currentText)
+        self._on_analysis_method_changed()
+        if source_label and hasattr(self, "userMessageLabel"):
+            self._set_user_message("info", "Profile applied", source_label)
+
+    def _on_apply_study_profile(self):
+        if not self.logic.is_pipeline_available():
+            self._set_user_message("warn", "Pipeline not installed", "Install or update timelapsed-hrpqct first.")
+            return
+        try:
+            from dataclasses import asdict
+            from timelapsedhrpqct.config.loader import load_config
+
+            profile = self._selected_config_profile()
+            cfg = asdict(load_config(None, profile=profile))
+            self._apply_config_dict_to_controls(
+                cfg,
+                source_label=f"Using built-in profile <b>{profile}</b> for new runs and analysis reruns.",
+            )
+        except Exception as exc:
+            slicer.util.warningDisplay(f"Could not apply profile:\n{exc}")
+
     def _load_defaults_from_pipeline_config(self):
         if not self.logic.is_pipeline_available():
             return
@@ -1291,61 +1382,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             with open(self.logic.default_config_path(), "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-            seg_cfg = ((cfg.get("masks") or {}).get("segmentation") or {})
-            adaptive_low = float(seg_cfg.get("adaptive_low_threshold", 100.0))
-            adaptive_high = float(seg_cfg.get("adaptive_high_threshold", 300.0))
-            global_low = float(seg_cfg.get("trab_threshold", 100.0))
-            global_high = float(seg_cfg.get("cort_threshold", 300.0))
-            laplace_hamming_threshold = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
-            laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
-            self._mask_method_defaults = {
-                "adaptive": (adaptive_low, adaptive_high),
-                "global": (global_low, global_high),
-                "laplace_hamming": (laplace_hamming_threshold, laplace_hamming_min_size),
-            }
-
-            tl_cfg = cfg.get("timelapsed_registration") or {}
-            ms_cfg = cfg.get("multistack_correction") or {}
-            self.tlSampling.value = float(tl_cfg.get("sampling_percentage", float(self.tlSampling.value)))
-            self.tlRes.value = int(tl_cfg.get("number_of_resolutions", int(self.tlRes.value)))
-            self.tlIter.value = int(tl_cfg.get("number_of_iterations", int(self.tlIter.value)))
-            self.msSampling.value = float(ms_cfg.get("sampling_percentage", float(self.msSampling.value)))
-            self.msRes.value = int(ms_cfg.get("number_of_resolutions", int(self.msRes.value)))
-            self.msIter.value = int(ms_cfg.get("number_of_iterations", int(self.msIter.value)))
-            self.msOverlapBuffer.value = int(
-                ms_cfg.get("overlap_crop_buffer_voxels", int(self.msOverlapBuffer.value))
-            )
-            init_vox = ms_cfg.get("initial_translation_voxels", [0.0, 0.0, -20.0])
-            if isinstance(init_vox, (list, tuple)) and len(init_vox) >= 3:
-                self.msInitTx.value = float(init_vox[0])
-                self.msInitTy.value = float(init_vox[1])
-                self.msInitTz.value = float(init_vox[2])
-            analysis_cfg = cfg.get("analysis") or {}
-            self._analysis_method = str(analysis_cfg.get("method", self._analysis_method))
-            analysis_pair_mode = str(analysis_cfg.get("pair_mode", "adjacent"))
-            self._analysis_erosion_voxels = int(
-                ((analysis_cfg.get("valid_region") or {}).get("erosion_voxels", self._analysis_erosion_voxels))
-            )
-            idx = self.analysisMethodCombo.findData(self._analysis_method)
-            if idx >= 0:
-                self.analysisMethodCombo.setCurrentIndex(idx)
-            pair_idx = self.analysisPairModeCombo.findData(analysis_pair_mode)
-            if pair_idx >= 0:
-                self.analysisPairModeCombo.setCurrentIndex(pair_idx)
-            self.analysisGaussianFilterCheck.checked = bool(
-                analysis_cfg.get("gaussian_filter", bool(self.analysisGaussianFilterCheck.checked))
-            )
-            self.analysisGaussianSigma.value = float(
-                analysis_cfg.get("gaussian_sigma", float(self.analysisGaussianSigma.value))
-            )
-            self.analysisFullMaskDilation.value = int(
-                analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))
-            )
-            self.analysisMarrowMaskErosion.value = int(
-                analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value))
-            )
-            self._on_mask_method_changed(self.maskMethod.currentText)
-            self._on_analysis_method_changed()
+            self._apply_config_dict_to_controls(cfg, source_label="Loaded defaults from timelapsed-hrpqct.")
         except Exception as exc:
             self._show(f"[settings] could not load defaults from pipeline config: {exc}")
 
@@ -1367,9 +1404,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if method == "laplace_hamming":
             self.maskLowLabel.text = "LH threshold"
             self.maskHighLabel.text = "Min component voxels"
-        elif method == "global":
-            self.maskLowLabel.text = "Trab threshold"
-            self.maskHighLabel.text = "Cort threshold"
+        elif method == "seg_gauss":
+            self.maskLowLabel.text = "Seg threshold"
+            self.maskHighLabel.text = "Gaussian sigma"
         else:
             self.maskLowLabel.text = "Adaptive low threshold"
             self.maskHighLabel.text = "Adaptive high threshold"
@@ -1443,6 +1480,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     "cort_threshold": float(self.maskHigh.value),
                     "adaptive_low_threshold": float(self.maskLow.value),
                     "adaptive_high_threshold": float(self.maskHigh.value),
+                    "seg_gauss_threshold": float(self.maskLow.value),
+                    "seg_gauss_sigma": float(self.maskHigh.value),
                     "laplace_hamming_threshold": float(self.maskLow.value),
                     "laplace_hamming_min_size_voxels": int(self.maskHigh.value),
                 }
@@ -1536,7 +1575,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.analysisGaussianFilterCheck,
             self.analysisGaussianSigma,
             self.remodellingApplyInteractiveBtn,
-            self.remodellingApplyPreviewBtn,
             self.remodellingAutoUpdateCheck,
             self.seriesSummaryUpdateBtn,
             self.seriesSummaryExportBtn,
@@ -2201,10 +2239,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     str(imported),
                     *self._raw_ingest_cli_flags(raw_ingest_mode),
                     *self._raw_discovery_cli_flags(),
+                    *self._profile_cli_args(),
                     "--config",
                     cfg,
                 ],
-                ["generate-masks", str(imported), "--config", cfg],
+                ["generate-masks", str(imported), *self._profile_cli_args(), "--config", cfg],
             ],
             stages=["masks", "masks"],
         )
@@ -2254,6 +2293,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "--skip-mask-generation",
                 *self._raw_ingest_cli_flags(raw_ingest_mode),
                 *self._raw_discovery_cli_flags(),
+                *self._profile_cli_args(),
                 "--config",
                 cfg,
             ]
@@ -2289,6 +2329,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             str(float(self.analysisThreshold.value)),
             "--clusters",
             str(int(self.analysisCluster.value)),
+            *self._profile_cli_args(),
             "--config",
             cfg,
         ])
@@ -2353,6 +2394,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 mode,
                 *self._raw_ingest_cli_flags(raw_ingest_mode),
                 *self._raw_discovery_cli_flags(),
+                *self._profile_cli_args(),
                 "--config",
                 cfg,
             ]
@@ -3477,7 +3519,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 preview_seg.SetAttribute("TimelapsedHRpQCT.RemodellingInteractiveCacheKey", str(interactive_cache_key))
             self._apply_preview_surface_detail(preview_seg, detail=detail)
 
-        self._set_3d_background_black()
         self._refresh_remodelling_full_selector()
         return full_seg, preview_seg
 
@@ -3545,9 +3586,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 spacing_xyz=cache_entry["spacing_xyz"],
                 origin_xyz=cache_entry["origin_xyz"],
                 folder_item_id=folder_id,
-                preview_axis=self.remodellingAxisCombo.currentText,
-                preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                detail=int(self.remodellingDetailSlider.value),
+                preview_axis="x",
+                preview_thickness_vox=15,
+                detail=50,
                 create_full=False,
                 create_preview=True,
                 source_path=source,
@@ -3560,9 +3601,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 segmentation_name=base_name,
                 labelmap_path=source,
                 folder_item_id=folder_id,
-                preview_axis=self.remodellingAxisCombo.currentText,
-                preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                detail=int(self.remodellingDetailSlider.value),
+                preview_axis="x",
+                preview_thickness_vox=15,
+                detail=50,
                 create_full=False,
                 create_preview=True,
             )
@@ -3638,9 +3679,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 spacing_xyz=preview_inputs["spacing_xyz"],
                 origin_xyz=preview_inputs["origin_xyz"],
                 folder_item_id=folder_id,
-                preview_axis=self.remodellingAxisCombo.currentText,
-                preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                detail=int(self.remodellingDetailSlider.value),
+                preview_axis="x",
+                preview_thickness_vox=15,
+                detail=50,
                 create_full=True,
                 create_preview=False,
                 source_path=source_path,
@@ -4472,9 +4513,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         seg_name,
                         Path(p),
                         folder_item_id=folder_id,
-                        preview_axis=self.remodellingAxisCombo.currentText,
-                        preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                        detail=int(self.remodellingDetailSlider.value),
+                        preview_axis="x",
+                        preview_thickness_vox=15,
+                        detail=50,
                         create_full=True,
                         create_preview=False,
                     )
