@@ -520,6 +520,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.studyProfileCombo, 240)
         self.applyProfileBtn = qt.QPushButton("Apply profile")
         self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
+        self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)
         quickForm.addRow("Profile", self.studyProfileCombo)
         quickForm.addRow(self.applyProfileBtn)
 
@@ -2234,7 +2235,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         imported = self._require_results_root("Could not resolve imported dataset path.")
         if imported is None:
             return
-        self._clear_existing_stack_segmentations(imported, scoped_subject)
+        self._clear_stale_stack_segmentations(imported, scoped_subject, str(self.maskMethod.currentText or ""))
         self._set_stage_status("masks", "pending")
         self._is_full_pipeline_run = False
         self._run_includes_analysis = False
@@ -2256,7 +2257,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             stages=["masks", "masks"],
         )
 
-    def _clear_existing_stack_segmentations(self, imported_root, subject_id=None):
+    def _clear_stale_stack_segmentations(self, imported_root, subject_id=None, current_method=""):
         root = Path(imported_root)
         if subject_id:
             subject_roots = [root / f"sub-{subject_id}"]
@@ -2266,16 +2267,33 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for subject_root in subject_roots:
             if not subject_root.exists():
                 continue
-            for pattern in ("site-*/ses-*/stacks/*_seg.nii.gz", "site-*/ses-*/stacks/*_seg.mha"):
-                for seg_path in subject_root.glob(pattern):
+            for metadata_path in subject_root.glob("site-*/ses-*/stacks/*.json"):
+                try:
+                    with metadata_path.open("r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+                    previous_method = str(
+                        ((metadata.get("mask_generation") or {}).get("segmentation_method") or "")
+                    )
+                except Exception:
+                    previous_method = ""
+                if previous_method == str(current_method):
+                    continue
+                stem = metadata_path.with_suffix("")
+                candidates = [
+                    stem.with_name(f"{stem.name}_seg.nii.gz"),
+                    stem.with_name(f"{stem.name}_seg.mha"),
+                ]
+                for seg_path in candidates:
+                    if not seg_path.exists():
+                        continue
                     try:
                         seg_path.unlink()
                         removed += 1
                     except Exception as exc:
-                        self._show(f"[masks] could not remove existing segmentation {seg_path}: {exc}")
+                        self._show(f"[masks] could not remove stale segmentation {seg_path}: {exc}")
         if removed:
             self._show(
-                f"[masks] removed {removed} existing stack segmentation file(s) so Generate Masks uses current settings."
+                f"[masks] removed {removed} stale stack segmentation file(s) because the selected mask method changed."
             )
 
     def _on_run_timelapse(self):
