@@ -2,7 +2,8 @@ set(MODULE_NAME ScancoIO)
 
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
-  aim_io.py
+  ScancoIOLib/__init__.py
+  ScancoIOLib/aim_io.py
 )
 
 set(MODULE_PYTHON_RESOURCES

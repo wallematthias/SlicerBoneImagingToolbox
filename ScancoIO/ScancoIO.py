@@ -73,7 +73,7 @@ def _parse_table_value(text):
 
 
 def _aim_io_module():
-    import aim_io
+    from ScancoIOLib import aim_io
 
     required = ("is_aimio_available", "read_aim", "write_aim", "log_to_dict")
     if not all(hasattr(aim_io, name) for name in required):
