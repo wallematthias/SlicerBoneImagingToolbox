@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 import ctk
+import numpy as np
 import qt
 import slicer
 import SimpleITK as sitk
@@ -15,6 +16,7 @@ from slicer.ScriptedLoadableModule import (
 
 
 MODULE_VERSION = "0.2.0"
+AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 
 SITE_PRESETS = {
     "radius": {
@@ -154,6 +156,30 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 raise RuntimeError("Could not save selected Slicer volume for processing.")
             return sitk.ReadImage(str(path))
 
+    def _laplace_hamming_native_image(self, volume_node, reference_image):
+        source_path = volume_node.GetAttribute(AIM_SOURCE_ATTRIBUTE) if volume_node is not None else None
+        if not source_path:
+            raise ValueError(
+                "Laplace-Hamming segmentation needs the original AIM source. "
+                "Load the image with the Scanco I/O module first so native scanner values are attached."
+            )
+        source_path = Path(source_path)
+        if not source_path.exists():
+            raise FileNotFoundError(f"Original AIM source for Laplace-Hamming does not exist: {source_path}")
+
+        from timelapsedhrpqct.io.aim import read_aim
+
+        native_image, _metadata = read_aim(source_path, scaling="native")
+        native_arr = sitk.GetArrayFromImage(native_image).astype(np.int16, copy=False)
+        image = sitk.GetImageFromArray(native_arr)
+        if image.GetSize() != reference_image.GetSize():
+            raise ValueError(
+                "Original AIM source size does not match the selected Slicer volume. "
+                f"AIM size={image.GetSize()}, selected volume size={reference_image.GetSize()}."
+            )
+        image.CopyInformation(reference_image)
+        return image, source_path
+
     def _sitk_to_labelmap(self, image, name, reference_node):
         with tempfile.TemporaryDirectory(prefix="hrpqct_seg_out_") as temp_dir:
             path = Path(temp_dir) / f"{name}.nrrd"
@@ -194,6 +220,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             InnerContourParams,
             OuterContourParams,
             SegmentationParams,
+            generate_seg_from_existing_masks,
             generate_masks_from_image,
         )
 
@@ -212,15 +239,46 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         outer_params.update(params.get("outer", {}))
         inner_params["site"] = str(site)
 
+        segmentation_params_for_masks = dict(segmentation_params)
+        if str(method) == "laplace_hamming":
+            # Match the main TimelapsedHRpQCT pipeline: contours are generated
+            # from the selected density image, while the LH bone segmentation is
+            # generated from native Scanco AIM values using the same masks.
+            segmentation_params_for_masks["enabled"] = False
+
+        contour_params = ContourGenerationParams(
+            outer=OuterContourParams(**outer_params),
+            inner=InnerContourParams(**inner_params),
+            segmentation=SegmentationParams(**segmentation_params_for_masks),
+        )
+        segmentation_only_params = ContourGenerationParams(
+            outer=OuterContourParams(**outer_params),
+            inner=InnerContourParams(**inner_params),
+            segmentation=SegmentationParams(**segmentation_params),
+        )
+
         generated = generate_masks_from_image(
             image,
-            ContourGenerationParams(
-                outer=OuterContourParams(**outer_params),
-                inner=InnerContourParams(**inner_params),
-                segmentation=SegmentationParams(**segmentation_params),
-            ),
+            contour_params,
             verbose=False,
         )
+        if str(method) == "laplace_hamming":
+            lh_image, source_path = self._laplace_hamming_native_image(volume_node, image)
+            generated.seg = generate_seg_from_existing_masks(
+                image=lh_image,
+                full_mask=generated.full,
+                trab_mask=generated.trab,
+                cort_mask=generated.cort,
+                params=segmentation_only_params,
+                verbose=False,
+            )
+            generated.metadata["segmentation_method"] = "laplace_hamming"
+            generated.metadata["segmentation_input_unit"] = "scanco_native_int16"
+            generated.metadata["segmentation_input_path"] = str(source_path)
+            generated.metadata["segmentation_input_reader"] = "timelapsedhrpqct.io.aim_native_int16"
+            generated.metadata["voxel_counts"]["seg"] = int(
+                sitk.GetArrayFromImage(generated.seg).astype(bool, copy=False).sum()
+            )
 
         prefix = output_prefix.strip() if output_prefix else volume_node.GetName()
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
