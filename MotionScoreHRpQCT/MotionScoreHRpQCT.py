@@ -1254,7 +1254,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
             return False
 
-    def onForceReinstallPackage(self):
+    def _force_reinstall_core_package(self):
         try:
             self._set_license_status("Reinstalling MotionScore core package from PyPI...")
             self._pip_install(
@@ -1267,6 +1267,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 raise RuntimeError(f"Package reinstall completed but import check failed. {detail}".strip())
             self._set_license_status("Core package reinstall complete.")
             self._log(f"[setup] core package force-reinstalled: {CORE_PYPI_PACKAGE}\n")
+            return True
         except Exception as exc:
             self._set_license_status(f"Core package reinstall failed: {exc}")
             slicer.util.errorDisplay(
@@ -1274,8 +1275,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 f"Package: {CORE_PYPI_PACKAGE}\n"
                 f"Error: {exc}"
             )
+            return False
         finally:
             self._update_setup_status()
+
+    def onForceReinstallPackage(self):
+        return self._force_reinstall_core_package()
 
     def _update_setup_status(self):
         if not hasattr(self, "setupStatusLabel"):
@@ -1390,18 +1395,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def onQuickSetup(self):
         """
         Friendly setup flow:
-        1) Install/upgrade core package from PyPI
+        1) Force reinstall/upgrade core package from PyPI
         2) Download and register the configured model catalog entry
         """
         self._persist_license_settings()
 
-        if self._core_package_ready() and self._has_local_models():
-            self._set_license_status("Setup already complete (package and local models).")
-            self._log("[setup] skipped: already ready\n")
-            self._refresh_model_profiles()
-            return
-
-        if not self._ensure_core_package():
+        if not self._force_reinstall_core_package():
             return
 
         if not self._has_local_models():
@@ -1409,8 +1408,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return
             return
 
-        self._set_license_status("Setup complete (package and local models ready).")
-        self._log("[setup] complete: package and local models ready\n")
+        self._set_license_status("Setup complete (package reinstalled and local models ready).")
+        self._log("[setup] complete: package force-reinstalled and local models ready\n")
         self._refresh_model_profiles()
 
     def onDownloadModelBundle(self):
