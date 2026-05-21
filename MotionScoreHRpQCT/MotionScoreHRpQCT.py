@@ -179,7 +179,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     RUN_MODE_AI = "AI Assisted"
     RUN_MODE_MANUAL = "Manual Grading Only"
     REVIEW_SCOPE_PENDING = "Pending only"
-    REVIEW_SCOPE_ALL = "Low-confidence scans (re-review)"
+    REVIEW_SCOPE_ALL = "All scans"
+    REVIEW_SCOPE_LOW_CONFIDENCE = "Low-confidence scans (re-review)"
     CLEAR_ALL_OPERATORS = "All operators"
 
     def __init__(self, parent=None):
@@ -327,7 +328,13 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         reviewLayout.addRow("Selected Scan", self.scanCombo)
 
         self.reviewScopeCombo = qt.QComboBox()
-        self.reviewScopeCombo.addItems([self.REVIEW_SCOPE_PENDING, self.REVIEW_SCOPE_ALL])
+        self.reviewScopeCombo.addItems(
+            [
+                self.REVIEW_SCOPE_PENDING,
+                self.REVIEW_SCOPE_ALL,
+                self.REVIEW_SCOPE_LOW_CONFIDENCE,
+            ]
+        )
         reviewLayout.addRow("Review Scope", self.reviewScopeCombo)
 
         self.reviewQueueLabel = qt.QLabel("Queue: shown=0 | pending=0 | reviewed=0/0")
@@ -1702,6 +1709,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _scan_ids_for_scope(self):
         scope = self._combo_text(self.reviewScopeCombo)
         if scope == self.REVIEW_SCOPE_ALL:
+            return list(self._all_scan_ids)
+        if scope == self.REVIEW_SCOPE_LOW_CONFIDENCE:
             return self._low_confidence_scan_ids()
         return self._pending_scan_ids()
 
