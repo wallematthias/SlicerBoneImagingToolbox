@@ -3132,11 +3132,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             display.RemoveAllViewNodeIDs()
 
         label_style = {
-            1: ("resorption", (0.98, 0.15, 0.68), 1.0, 1.0),  # bright pink
-            2: ("quiescent", (0.45, 0.45, 0.45), 0.35, 0.0),  # baseline support/no-change label
-            3: ("formation", (1.00, 0.45, 0.00), 1.0, 1.0),   # bright orange
-            4: ("formation", (1.00, 0.45, 0.00), 1.0, 1.0),   # legacy 5-label support
-            5: ("quiescent", (0.45, 0.45, 0.45), 0.35, 0.0),  # legacy baseline support label
+            1: ("resorption", (1.00, 0.28, 0.78), 1.0, 1.0),  # light pink-purple
+            2: ("quiescent", (0.72, 0.72, 0.72), 0.45, 0.0),  # baseline support/no-change label
+            3: ("formation", (1.00, 0.62, 0.12), 1.0, 1.0),   # light orange
+            4: ("formation", (1.00, 0.62, 0.12), 1.0, 1.0),   # legacy 5-label support
+            5: ("quiescent", (0.72, 0.72, 0.72), 0.45, 0.0),  # legacy baseline support label
         }
         seg = seg_node.GetSegmentation()
         ids = vtk.vtkStringArray()
