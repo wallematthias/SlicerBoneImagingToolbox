@@ -405,6 +405,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._remodelling_comparison_items = []
         self._sh_tree_hooks_installed = False
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         self._last_parse_mode_used = None
         self._updating_parse_table = False
@@ -1146,10 +1147,53 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _show(self, text):
         message = text.rstrip()
+        self._update_stage_from_pipeline_output(message)
         if hasattr(self, "logText") and self.logText is not None:
             self.logText.appendPlainText(message)
         else:
             print(message)
+
+    def _update_stage_from_pipeline_output(self, message):
+        if not getattr(self, "_is_full_pipeline_run", False):
+            return
+        text = str(message or "").strip().lower()
+        if not text:
+            return
+
+        def mark_running(stage):
+            order = ["masks", "registration", "analysis"]
+            if stage not in order:
+                return
+            for previous in order[: order.index(stage)]:
+                if self._stage_states.get(previous) not in {"done", "error"}:
+                    self._set_stage_status(previous, "done")
+            if self._stage_states.get(stage) != "error":
+                self._set_stage_status(stage, "running")
+                self._active_stage = stage
+
+        if (
+            "mask generation for" in text
+            or "generate-masks" in text
+            or "reading stack image" in text
+            or "segmentation method" in text
+        ):
+            if not getattr(self, "_run_skips_mask_generation", False):
+                mark_running("masks")
+            return
+
+        if (
+            "register:" in text
+            or "timelapse registration" in text
+            or "stackcorrect:" in text
+            or "stack correction for" in text
+            or "transform:" in text
+            or "[apply]" in text
+        ):
+            mark_running("registration")
+            return
+
+        if "[analysis]" in text or "analyse:" in text:
+            mark_running("analysis")
 
     def _set_user_message(self, level, title, body):
         palette = {
@@ -2529,6 +2573,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._clear_stale_stack_segmentations(imported, scoped_subject, str(self.maskMethod.currentText or ""))
         self._set_stage_status("masks", "pending")
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         self._run_sequence(
             [
@@ -2619,6 +2664,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("analysis", "pending")
         self._active_stage = "registration"
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = True
         cfg = self.logic.create_override_config(self._settings_override())
         self._run(
@@ -2657,6 +2703,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("analysis", "pending")
         self._active_stage = "analysis"
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         cfg = self.logic.create_override_config(self._settings_override())
         self._run([
@@ -2802,8 +2849,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         for s in ("masks", "registration", "analysis"):
             self._set_stage_status(s, "pending")
-        self._active_stage = "registration"
+        if skip_mask_generation:
+            self._set_stage_status("masks", "done")
+            self._active_stage = "registration"
+        else:
+            self._active_stage = "masks"
         self._is_full_pipeline_run = True
+        self._run_skips_mask_generation = skip_mask_generation
         self._run_includes_analysis = True
         run_args = [
             "run",
@@ -2841,6 +2893,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._queued_stages = []
             self._active_stage = None
             self._is_full_pipeline_run = False
+            self._run_skips_mask_generation = False
             self._run_includes_analysis = False
             self._refresh_patient_list()
             return
@@ -2861,6 +2914,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._set_stage_status(s, "done")
         self._active_stage = None
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         self.logic.cleanup_temp_files(remove_fallback=False)
         self._refresh_patient_list()
