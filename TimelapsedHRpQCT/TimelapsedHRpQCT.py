@@ -431,21 +431,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception:
                 pass
 
-        def _with_help(widget, text):
-            row = qt.QWidget()
-            layout = qt.QHBoxLayout(row)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(6)
-            layout.addWidget(widget)
-            help_label = qt.QLabel("?")
-            help_label.toolTip = str(text)
-            help_label.setStyleSheet(
-                "QLabel { color:#666666; border:1px solid #bdbdbd; border-radius:7px; "
-                "padding-left:4px; padding-right:4px; font-weight:600; }"
-            )
-            layout.addWidget(help_label)
-            layout.addStretch(1)
-            return row
+        def _label(text, help_text):
+            label = qt.QLabel(str(text))
+            label.toolTip = str(help_text)
+            return label
 
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
@@ -463,7 +452,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self.installBtn)
         row.addWidget(self.checkBtn)
-        depForm.addRow("Status", self.pipelineStatusLabel)
+        depForm.addRow(_label("Status", "Installed timelapsed-hrpqct package status inside Slicer Python."), self.pipelineStatusLabel)
         depForm.addRow(rowWidget)
         self.layout.addWidget(depBox)
 
@@ -474,7 +463,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.inputPath.filters = ctk.ctkPathLineEdit.Dirs
         self.inputPath.setCurrentPath("")
         _cap_width(self.inputPath, 360)
-        form.addRow("Dataset root", self.inputPath)
+        form.addRow(_label("Dataset root", "Folder containing raw AIM data or an existing TimelapsedHRpQCT results dataset."), self.inputPath)
         self._connect_path_changed(self.inputPath, self._on_dataset_or_results_root_changed)
 
         parseBtn = qt.QPushButton("Parse input")
@@ -491,9 +480,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.parseSummaryLabel = qt.QLabel("Parse summary: not run")
         self.parseSummaryLabel.wordWrap = True
+        self.parseSummaryLabel.toolTip = "Summary of subjects, sites, sessions, and stacks discovered during parsing."
         form.addRow(self.parseSummaryLabel)
         self.userMessageLabel = qt.QLabel("")
         self.userMessageLabel.wordWrap = True
+        self.userMessageLabel.toolTip = "Important validation messages for the current dataset or settings."
         self.userMessageLabel.setStyleSheet(
             "QLabel { background:#fff6db; border:1px solid #f0c36d; padding:8px; border-radius:4px; }"
         )
@@ -537,7 +528,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.applyProfileBtn = qt.QPushButton("Apply profile")
         self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
         self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)
-        quickForm.addRow("Profile", self.studyProfileCombo)
+        quickForm.addRow(_label("Profile", "Preset study settings for segmentation and remodelling analysis."), self.studyProfileCombo)
         quickForm.addRow(self.applyProfileBtn)
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
@@ -573,9 +564,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskHigh.value = 300.0
         _cap_width(self.maskLow, 220)
         _cap_width(self.maskHigh, 220)
-        self.maskLowLabel = qt.QLabel("Mask lower threshold")
-        self.maskHighLabel = qt.QLabel("Mask higher threshold")
-        maskForm.addRow("Mask method", self.maskMethod)
+        self.maskLowLabel = _label("Mask lower threshold", "Lower method-specific threshold used when generating masks.")
+        self.maskHighLabel = _label("Mask higher threshold", "Upper method-specific threshold or smoothing parameter used when generating masks.")
+        maskForm.addRow(_label("Mask method", "Method used when automatic mask/segmentation generation is enabled."), self.maskMethod)
         maskForm.addRow(self.maskLowLabel, self.maskLow)
         maskForm.addRow(self.maskHighLabel, self.maskHigh)
         self.doNotGenerateMasksCheck = qt.QCheckBox()
@@ -587,13 +578,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         self.doNotGenerateMasksCheck.toolTip = skip_masks_tip
         _cap_width(self.doNotGenerateMasksCheck, 220)
-        maskForm.addRow("Do not generate masks", _with_help(self.doNotGenerateMasksCheck, skip_masks_tip))
+        maskForm.addRow(_label("Do not generate masks", skip_masks_tip), self.doNotGenerateMasksCheck)
 
         self.resultsRootPath = ctk.ctkPathLineEdit()
         self.resultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.resultsRootPath.setCurrentPath("")
         _cap_width(self.resultsRootPath, 360)
-        maskForm.addRow("Results folder (optional)", self.resultsRootPath)
+        maskForm.addRow(_label("Results folder (optional)", "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root."), self.resultsRootPath)
         self._connect_path_changed(self.resultsRootPath, self._on_dataset_or_results_root_changed)
 
         self.copyRawInputsCheck = qt.QCheckBox()
@@ -616,9 +607,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.copyRawInputsCheck, 220)
         _cap_width(self.restructureRawCheck, 220)
         _cap_width(self.parseModeCombo, 220)
-        maskForm.addRow("Copy raw inputs", self.copyRawInputsCheck)
-        maskForm.addRow("Restructure raw inputs", self.restructureRawCheck)
-        maskForm.addRow("Parse mode", self.parseModeCombo)
+        maskForm.addRow(_label("Copy raw inputs", "Copy raw AIM files into sourcedata/hrpqct during import."), self.copyRawInputsCheck)
+        maskForm.addRow(_label("Restructure raw inputs", "Move raw AIM files into the results root sub-*/site-*/ses-* layout during import."), self.restructureRawCheck)
+        maskForm.addRow(_label("Parse mode", "Input parsing mode. Auto tries filenames first, then AIM headers."), self.parseModeCombo)
 
         registrationBox = qt.QGroupBox("Registration")
         registrationForm = qt.QFormLayout(registrationBox)
@@ -627,11 +618,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         tlHeader = qt.QLabel("Timelapse registration")
         tlHeader.setStyleSheet("font-weight: 600; color: #3f3f3f; padding-top: 2px;")
+        tlHeader.toolTip = "Settings for registration across longitudinal sessions."
         registrationForm.addRow(tlHeader)
 
         self.regMetric = qt.QComboBox(); self.regMetric.addItems(["mattes", "correlation"])
         _cap_width(self.regMetric, 220)
-        registrationForm.addRow("Registration metric", self.regMetric)
+        registrationForm.addRow(_label("Registration metric", "Similarity metric for timelapse and multistack registration. Options: mattes or correlation."), self.regMetric)
         self.tlSampling = ctk.ctkDoubleSpinBox()
         self.tlSampling.minimum = 0.00001
         self.tlSampling.maximum = 1.0
@@ -639,14 +631,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.tlSampling.singleStep = 0.0001
         self.tlSampling.value = 0.001
         _cap_width(self.tlSampling, 220)
-        registrationForm.addRow("Timelapse sampling", self.tlSampling)
+        registrationForm.addRow(_label("Timelapse sampling", "Random voxel sampling fraction for timelapse registration. Lower is faster; higher may be more robust."), self.tlSampling)
 
         self.tlRes = qt.QSpinBox(); self.tlRes.minimum = 1; self.tlRes.maximum = 10; self.tlRes.value = 6
         self.tlIter = qt.QSpinBox(); self.tlIter.minimum = 1; self.tlIter.maximum = 5000; self.tlIter.value = 250
         _cap_width(self.tlRes, 220)
         _cap_width(self.tlIter, 220)
-        registrationForm.addRow("Timelapse resolutions", self.tlRes)
-        registrationForm.addRow("Timelapse iterations", self.tlIter)
+        registrationForm.addRow(_label("Timelapse resolutions", "Number of image pyramid levels used for pairwise timelapse registration."), self.tlRes)
+        registrationForm.addRow(_label("Timelapse iterations", "Maximum optimizer iterations per registration level."), self.tlIter)
 
         self.msRes = qt.QSpinBox(); self.msRes.minimum = 1; self.msRes.maximum = 10; self.msRes.value = 4
         self.msIter = qt.QSpinBox(); self.msIter.minimum = 1; self.msIter.maximum = 5000; self.msIter.value = 250
@@ -671,6 +663,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         msHeader = qt.QLabel("Multistack correction registration")
         msHeader.setStyleSheet("font-weight: 600; color: #3f3f3f; padding-top: 8px;")
+        msHeader.toolTip = "Settings for correcting multiple overlapping stacks within a scan."
         registrationForm.addRow(msHeader)
         self.msInitTx = ctk.ctkDoubleSpinBox()
         self.msInitTy = ctk.ctkDoubleSpinBox()
@@ -690,6 +683,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for label_text, widget in (("X", self.msInitTx), ("Y", self.msInitTy), ("Z", self.msInitTz)):
             lbl = qt.QLabel(label_text)
             lbl.setMinimumWidth(10)
+            lbl.toolTip = "Initial multistack translation component in voxels."
             initTranslationLayout.addWidget(lbl)
             initTranslationLayout.addWidget(widget)
         _cap_width(self.msSampling, 220)
@@ -700,12 +694,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.msInitTx, 90)
         _cap_width(self.msInitTy, 90)
         _cap_width(self.msInitTz, 90)
-        registrationForm.addRow("Use multistack correction", self.useMultistackCheck)
-        registrationForm.addRow("Multistack correction sampling", self.msSampling)
-        registrationForm.addRow("Multistack correction resolutions", self.msRes)
-        registrationForm.addRow("Multistack correction iterations", self.msIter)
-        registrationForm.addRow("Multistack overlap crop buffer (voxels)", self.msOverlapBuffer)
-        registrationForm.addRow("Multistack initial translation (voxels)", initTranslationRow)
+        registrationForm.addRow(_label("Use multistack correction", "Enable correction/registration for scans acquired as multiple overlapping stacks."), self.useMultistackCheck)
+        registrationForm.addRow(_label("Multistack correction sampling", "Random voxel sampling fraction for multistack correction registration."), self.msSampling)
+        registrationForm.addRow(_label("Multistack correction resolutions", "Number of image pyramid levels used for multistack correction."), self.msRes)
+        registrationForm.addRow(_label("Multistack correction iterations", "Maximum optimizer iterations per multistack correction level."), self.msIter)
+        registrationForm.addRow(_label("Multistack overlap crop buffer (voxels)", "Extra z-slices included around overlap regions for multistack registration."), self.msOverlapBuffer)
+        registrationForm.addRow(_label("Multistack initial translation (voxels)", "Initial X/Y/Z translation offset for multistack registration."), initTranslationRow)
+
+        advancedAnalysisBox = qt.QGroupBox("Advanced analysis")
+        advancedAnalysisForm = qt.QFormLayout(advancedAnalysisBox)
 
         analysisBox = qt.QGroupBox("Remodelling Analysis")
         analysisForm = qt.QFormLayout(analysisBox)
@@ -787,9 +784,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.analysisFullMaskDilation, 220)
         _cap_width(self.analysisBoneSupportDilation, 220)
         _cap_width(self.analysisMarrowMaskErosion, 220)
-        self.analysisHintLabel = qt.QLabel(
-            "Hover ? icons for option details."
-        )
+        self.analysisHintLabel = qt.QLabel("Hover labels for option details.")
         self.analysisHintLabel.wordWrap = True
         self.analysisHintLabel.styleSheet = "color: #666666;"
         self.analysisStatusLabel = qt.QLabel("Ready")
@@ -797,6 +792,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisPairMetricsMaskLabel = qt.QLabel("Mask: N/A")
         self.analysisFormationFractionLabel = qt.QLabel("Formation fraction: N/A")
         self.analysisResorptionFractionLabel = qt.QLabel("Resorption fraction: N/A")
+        self.analysisPairMetricsMaskLabel.toolTip = "Compartment/mask used for the displayed pair metrics."
+        self.analysisFormationFractionLabel.toolTip = "Formation fraction for the currently loaded/previewed comparison."
+        self.analysisResorptionFractionLabel.toolTip = "Resorption fraction for the currently loaded/previewed comparison."
+        self.runAnalysisBtn = qt.QPushButton("Update all")
+        self.runAnalysisBtn.toolTip = (
+            "Rerun remodelling analysis for all processed samples using the current analysis options."
+        )
+        self.saveAnalysisScenarioBtn = qt.QPushButton("Save current analysis...")
+        self.saveAnalysisScenarioBtn.toolTip = (
+            "Save the currently loaded remodelling comparison and current analysis options as a scenario."
+        )
+        _cap_width(self.runAnalysisBtn, 180)
+        _cap_width(self.saveAnalysisScenarioBtn, 180)
         thresholdRow = qt.QWidget()
         thresholdLayout = qt.QHBoxLayout(thresholdRow)
         thresholdLayout.setContentsMargins(0, 0, 0, 0)
@@ -816,24 +824,32 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         pairMetricsLayout.addWidget(self.analysisPairMetricsMaskLabel)
         pairMetricsLayout.addWidget(self.analysisFormationFractionLabel)
         pairMetricsLayout.addWidget(self.analysisResorptionFractionLabel)
-        analysisForm.addRow("Threshold", thresholdRow)
-        analysisForm.addRow("Cluster size", clusterRow)
-        analysisForm.addRow(
-            "Restrict changes to bone support",
-            _with_help(self.analysisRestrictBoneSupportCheck, restrict_tip),
-        )
-        analysisForm.addRow(
-            "Require binary reclassification",
-            _with_help(self.analysisBinaryReclassificationCheck, binary_tip),
-        )
-        analysisForm.addRow("Pair mode", self.analysisPairModeCombo)
-        analysisForm.addRow("Full mask dilation (vox)", self.analysisFullMaskDilation)
-        analysisForm.addRow("Bone support dilation (vox)", self.analysisBoneSupportDilation)
-        analysisForm.addRow("Gaussian filter", self.analysisGaussianFilterCheck)
-        analysisForm.addRow("Gaussian sigma (vox)", self.analysisGaussianSigma)
-        analysisForm.addRow("Pair metrics", pairMetricsRow)
-        analysisForm.addRow("Preview status", self.analysisStatusLabel)
+        analysisActionsRow = qt.QWidget()
+        analysisActionsLayout = qt.QHBoxLayout(analysisActionsRow)
+        analysisActionsLayout.setContentsMargins(0, 0, 0, 0)
+        analysisActionsLayout.setSpacing(8)
+        analysisActionsLayout.addWidget(self.runAnalysisBtn)
+        analysisActionsLayout.addWidget(self.saveAnalysisScenarioBtn)
+        analysisActionsLayout.addStretch(1)
+        analysisForm.addRow(_label("Threshold", "Absolute density-change threshold for formation/resorption detection."), thresholdRow)
+        analysisForm.addRow(_label("Cluster size", "Minimum connected event size retained in remodelling maps. Use 0 to disable cluster filtering."), clusterRow)
+        analysisForm.addRow(_label("Restrict changes to bone support", restrict_tip), self.analysisRestrictBoneSupportCheck)
+        analysisForm.addRow(_label("Require binary reclassification", binary_tip), self.analysisBinaryReclassificationCheck)
+        analysisForm.addRow(_label("Pair mode", "Which session comparisons to analyze: adjacent, baseline, or all pairs."), self.analysisPairModeCombo)
+        analysisForm.addRow(_label("Bone support dilation (vox)", "Dilation of baseline/follow-up bone support when restricting changes to bone support."), self.analysisBoneSupportDilation)
+        analysisForm.addRow(_label("Gaussian filter remodelling sites", "Smooth grayscale images before subtraction for remodelling-site detection."), self.analysisGaussianFilterCheck)
+        analysisForm.addRow(_label("Analysis actions", "Update all processed analyses or save the current loaded comparison as a scenario."), analysisActionsRow)
+        analysisForm.addRow(_label("Pair metrics", "Formation and resorption fractions for the currently loaded/previewed comparison."), pairMetricsRow)
+        analysisForm.addRow(_label("Preview status", "Status of the interactive remodelling preview update."), self.analysisStatusLabel)
         analysisForm.addRow(self.analysisHintLabel)
+        advancedAnalysisForm.addRow(
+            _label("Full mask dilation (vox)", "Dilation applied to full masks before common-region construction."),
+            self.analysisFullMaskDilation,
+        )
+        advancedAnalysisForm.addRow(
+            _label("Gaussian sigma (vox)", "Sigma in voxels when Gaussian remodelling-site filtering is enabled."),
+            self.analysisGaussianSigma,
+        )
         self.analysisThresholdSlider.valueChanged.connect(
             lambda value: self._set_analysis_threshold_value(value, from_slider=True, queue_update=False)
         )
@@ -870,16 +886,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryPairsList.setMaximumHeight(140)
         self.seriesSummaryPairsHintLabel = qt.QLabel("Select saved comparison pairs to include in the cohort summary.")
         self.seriesSummaryPairsHintLabel.wordWrap = True
+        self.seriesSummaryPairsHintLabel.toolTip = "Saved comparison pairs available for cohort-level export."
         self.seriesSummarySavedStateLabel = qt.QLabel("Saved summary status: N/A")
         self.seriesSummarySavedStateLabel.wordWrap = True
+        self.seriesSummarySavedStateLabel.toolTip = "Status of the saved cohort summary table."
         self.seriesSummaryUpdateBtn = qt.QPushButton("Load saved cohort summary")
         self.seriesSummaryUpdateBtn.clicked.connect(self._refresh_saved_cohort_summary)
-        self.seriesSummaryExportBtn = qt.QPushButton("Export tabulated results")
+        self.seriesSummaryExportBtn = qt.QPushButton("Export CSV")
         self.seriesSummaryExportBtn.toolTip = (
             "Export saved pairwise remodelling result rows for the processed cohort."
         )
         self.seriesSummaryExportBtn.clicked.connect(self._on_export_study_summary)
         self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
+        self.seriesBasisLabel.toolTip = "Comparison pairs currently included in cohort summary calculations."
         self.seriesSummaryTable = qt.QTableWidget()
         self.seriesSummaryTable.setColumnCount(4)
         self.seriesSummaryTable.setHorizontalHeaderLabels(
@@ -891,22 +910,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryTable.horizontalHeader().setStretchLastSection(True)
         self.seriesSummaryTable.setMinimumHeight(120)
         self.seriesSummaryForm.addRow(self.seriesSummaryPairsHintLabel)
-        self.seriesSummaryForm.addRow("Comparison pairs", self.seriesSummaryPairsList)
+        self.seriesSummaryForm.addRow(_label("Comparison pairs", "Saved adjacent comparison pairs included when computing cohort summary rows."), self.seriesSummaryPairsList)
         self.seriesSummaryForm.addRow(self.seriesSummarySavedStateLabel)
         self.seriesSummaryForm.addRow(self.seriesSummaryUpdateBtn)
         self.seriesSummaryForm.addRow(self.seriesSummaryExportBtn)
-        self.seriesSummaryForm.addRow("Mask summaries", self.seriesSummaryTable)
+        self.seriesSummaryForm.addRow(_label("Mask summaries", "Mean saved formation/resorption fractions by mask/compartment."), self.seriesSummaryTable)
         self.seriesSummaryForm.addRow(self.seriesBasisLabel)
 
-        self.saveAnalysisScenarioBtn = qt.QPushButton("Save current analysis...")
-        self.saveAnalysisScenarioBtn.toolTip = (
-            "Save the currently loaded remodelling comparison and current analysis options as a scenario."
-        )
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
 
         settingsLayout.addWidget(quickBox)
         settingsLayout.addWidget(maskBox)
         settingsLayout.addWidget(registrationBox)
+        settingsLayout.addWidget(advancedAnalysisBox)
         analysisSectionLayout.addWidget(analysisBox)
 
         actionLayout = qt.QGridLayout()
@@ -918,10 +934,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Run the complete workflow. By default this includes mask generation; "
             "enable 'Do not generate masks' in Advanced Settings to use existing/provided masks."
         )
-        self.runAnalysisBtn = qt.QPushButton("Update analysis")
-        self.runAnalysisBtn.toolTip = (
-            "Rerun only the remodelling analysis for processed data using the current analysis options."
-        )
         self.cancelRunBtn = qt.QPushButton("✕ Cancel")
         self.cancelRunBtn.clicked.connect(self._on_cancel_run)
         self.cancelRunBtn.enabled = False
@@ -929,9 +941,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         buttons = [
             self.runMasksBtn,
             self.runTimelapseBtn,
-            self.runAnalysisBtn,
             self.seriesSummaryExportBtn,
-            self.saveAnalysisScenarioBtn,
             self.cancelRunBtn,
         ]
         for b in buttons:
@@ -939,9 +949,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.cancelRunBtn, 90)
         actionLayout.addWidget(self.runTimelapseBtn, 0, 0)
         actionLayout.addWidget(self.seriesSummaryExportBtn, 0, 1)
-        actionLayout.addWidget(self.runAnalysisBtn, 1, 0)
-        actionLayout.addWidget(self.saveAnalysisScenarioBtn, 1, 1)
-        actionLayout.addWidget(self.cancelRunBtn, 2, 0)
+        actionLayout.addWidget(self.cancelRunBtn, 0, 2)
 
         self.runMasksBtn.clicked.connect(self._on_run_masks)
         self.runTimelapseBtn.clicked.connect(self._on_run_full_pipeline)
@@ -955,9 +963,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.progressBar.maximum = 5
         self.progressBar.value = 0
         self.currentStepLabel = qt.QLabel("Current step: idle")
-        statusForm.addRow("Processing subject", self.processingSubjectCombo)
-        statusForm.addRow("Progress", self.progressBar)
-        statusForm.addRow("Current", self.currentStepLabel)
+        self.currentStepLabel.toolTip = "Currently running pipeline command or idle state."
+        statusForm.addRow(_label("Processing subject", "Subject selected for pipeline runs. All subjects processes the cohort."), self.processingSubjectCombo)
+        statusForm.addRow(_label("Progress", "Current pipeline stage progress."), self.progressBar)
+        statusForm.addRow(_label("Current", "Currently running pipeline step."), self.currentStepLabel)
         self.stageLabels = {}
         for key, title in [
             ("dataset", "Dataset"),
@@ -968,8 +977,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         ]:
             lbl = qt.QLabel("")
             lbl.wordWrap = True
+            lbl.toolTip = f"Status for the {title.lower()} pipeline stage."
             self.stageLabels[key] = lbl
-            statusForm.addRow(title, lbl)
+            statusForm.addRow(_label(title, f"Status for the {title.lower()} pipeline stage."), lbl)
 
         loadBox = ctk.ctkCollapsibleButton()
         loadBox.text = "Load Processed Data"
@@ -988,9 +998,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.loadDataBtn.clicked.connect(self._on_load_selected)
         self.patientCombo.currentIndexChanged.connect(self._refresh_remodelling_comparison_list)
         self.loadTypeCombo.currentIndexChanged.connect(self._refresh_remodelling_comparison_list)
-        loadForm.addRow("Patient", self.patientCombo)
-        loadForm.addRow("Data type", self.loadTypeCombo)
-        loadForm.addRow("Comparison", self.remodellingComparisonCombo)
+        loadForm.addRow(_label("Patient", "Processed subject/site available for loading into Slicer."), self.patientCombo)
+        loadForm.addRow(_label("Data type", "Processed output type to load into Slicer."), self.loadTypeCombo)
+        loadForm.addRow(_label("Comparison", "Pairwise remodelling comparison to load when loading remodelling images."), self.remodellingComparisonCombo)
         loadForm.addRow(self.loadDataBtn)
 
         previewBox = qt.QGroupBox("Interactive Preview")
@@ -1013,8 +1023,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.remodellingAutoUpdateCheck, 180)
         _cap_width(self.remodellingApplyInteractiveBtn, 220)
         self.remodellingApplyInteractiveBtn.clicked.connect(self._on_apply_interactive_remodelling)
-        previewForm.addRow("Full segmentation", segRow)
-        previewForm.addRow("Auto update", self.remodellingAutoUpdateCheck)
+        previewForm.addRow(_label("Full segmentation", "Loaded remodelling segmentation used for interactive preview updates."), segRow)
+        previewForm.addRow(_label("Auto update", "Automatically update the loaded remodelling image when analysis controls change."), self.remodellingAutoUpdateCheck)
         previewForm.addRow(self.remodellingApplyInteractiveBtn)
         settingsLayout.addWidget(previewBox)
 
@@ -1557,7 +1567,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         if method == "laplace_hamming":
             self.maskLowLabel.text = "LH threshold"
+            self.maskLowLabel.toolTip = "Laplace-Hamming value threshold used to classify bone during mask generation."
             self.maskHighLabel.text = "Min component voxels"
+            self.maskHighLabel.toolTip = "Minimum connected component size retained by Laplace-Hamming segmentation."
             self.maskLow.minimum = 0.0
             self.maskLow.maximum = 100000.0
             self.maskLow.decimals = 1
@@ -1568,7 +1580,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.maskHigh.singleStep = 1.0
         elif method == "seg_gauss":
             self.maskLowLabel.text = "Seg threshold"
+            self.maskLowLabel.toolTip = "Density threshold used after Gaussian smoothing for standard segmentation."
             self.maskHighLabel.text = "Gaussian sigma"
+            self.maskHighLabel.toolTip = "Gaussian smoothing sigma in voxels for standard segmentation."
             self.maskLow.minimum = 0.0
             self.maskLow.maximum = 5000.0
             self.maskLow.decimals = 1
@@ -1579,7 +1593,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.maskHigh.singleStep = 0.1
         else:
             self.maskLowLabel.text = "Adaptive low threshold"
+            self.maskLowLabel.toolTip = "Lower adaptive segmentation threshold."
             self.maskHighLabel.text = "Adaptive high threshold"
+            self.maskHighLabel.toolTip = "Upper adaptive segmentation threshold."
             self.maskLow.minimum = -1000.0
             self.maskLow.maximum = 5000.0
             self.maskLow.decimals = 1
