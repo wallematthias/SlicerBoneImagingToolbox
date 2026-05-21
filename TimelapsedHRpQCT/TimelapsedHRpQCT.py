@@ -529,12 +529,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ("Core standard", "standard"),
         ]:
             self.studyProfileCombo.addItem(label, value)
-        _cap_width(self.studyProfileCombo, 240)
+        _cap_width(self.studyProfileCombo, 220)
         self.applyProfileBtn = qt.QPushButton("Apply profile")
+        _cap_width(self.applyProfileBtn, 105)
         self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
         self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)
-        quickForm.addRow(_label("Profile", "Preset study settings for segmentation and remodelling analysis."), self.studyProfileCombo)
-        quickForm.addRow(self.applyProfileBtn)
+        profileRow = qt.QWidget()
+        profileLayout = qt.QHBoxLayout(profileRow)
+        profileLayout.setContentsMargins(0, 0, 0, 0)
+        profileLayout.setSpacing(6)
+        profileLayout.addWidget(self.studyProfileCombo, 1)
+        profileLayout.addWidget(self.applyProfileBtn)
+        quickForm.addRow(_label("Profile", "Preset study settings for segmentation and remodelling analysis."), profileRow)
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
@@ -1487,6 +1493,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             _ok, detail = self.logic.pipeline_status()
             self._set_user_message("warn", "Pipeline needs update", detail)
             return
+        applied = False
         try:
             from dataclasses import asdict
             from timelapsedhrpqct.config.loader import load_config
@@ -1508,10 +1515,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 cfg,
                 source_label=f"Using built-in profile <b>{profile}</b> for new runs and analysis reruns.",
             )
+            applied = True
         except Exception as exc:
             slicer.util.warningDisplay(f"Could not apply profile:\n{exc}")
         finally:
             self._suppress_interactive_preview_updates = False
+        if applied:
+            self._queue_interactive_preview_update()
 
     def _load_defaults_from_pipeline_config(self):
         if not self.logic.is_pipeline_available():
@@ -4140,6 +4150,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.warningDisplay("Selected remodelling segmentation is missing source metadata.")
             return
 
+        view_state = self._capture_slice_view_state()
         self._set_interactive_preview_busy(True, "Updating remodelling preview...")
         try:
             preview_inputs = self._get_interactive_preview_inputs(source_path)
@@ -4210,6 +4221,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 idx = self.remodellingFullSegCombo.findData(new_full.GetID())
                 if idx >= 0:
                     self.remodellingFullSegCombo.setCurrentIndex(idx)
+            self._restore_slice_view_state(view_state)
         except Exception as exc:
             self._set_interactive_preview_busy(False, "Update failed")
             slicer.util.warningDisplay(f"Interactive remodelling display update failed:\n{exc}")
@@ -4228,6 +4240,46 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"gauss={'on' if self.analysisGaussianFilterCheck.checked else 'off'}, "
             f"sigma={float(self.analysisGaussianSigma.value):g})."
         )
+
+    def _capture_slice_view_state(self):
+        state = {}
+        try:
+            lm = slicer.app.layoutManager()
+            if lm is None:
+                return state
+            for name in ("Red", "Yellow", "Green"):
+                widget = lm.sliceWidget(name)
+                node = widget.mrmlSliceNode() if widget is not None else None
+                if node is None:
+                    continue
+                entry = {"field_of_view": tuple(float(v) for v in node.GetFieldOfView())}
+                if hasattr(node, "GetSliceOffset"):
+                    entry["slice_offset"] = float(node.GetSliceOffset())
+                state[name] = entry
+        except Exception:
+            return state
+        return state
+
+    def _restore_slice_view_state(self, state):
+        if not state:
+            return
+        try:
+            lm = slicer.app.layoutManager()
+            if lm is None:
+                return
+            for name, entry in state.items():
+                widget = lm.sliceWidget(name)
+                node = widget.mrmlSliceNode() if widget is not None else None
+                if node is None:
+                    continue
+                fov = entry.get("field_of_view")
+                if fov is not None and len(fov) >= 3:
+                    node.SetFieldOfView(float(fov[0]), float(fov[1]), float(fov[2]))
+                if "slice_offset" in entry and hasattr(node, "SetSliceOffset"):
+                    node.SetSliceOffset(float(entry["slice_offset"]))
+            self._ensure_slice_scale_bars()
+        except Exception:
+            pass
 
     def _compute_series_summary_for_current_subject(self):
         patient_key = self._current_patient_key()
