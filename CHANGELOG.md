@@ -17,6 +17,7 @@ All notable changes to this extension are documented in this file.
 
 - Updated extension metadata and README language from a single Timelapsed wrapper toward the HR-pQCT Toolbox identity while keeping the existing repository URL.
 - Simplified Timelapsed remodelling review controls by removing the 3D preview rendering controls.
+- Removed separate Timelapsed quick presets so study profile is the single preset/profile control.
 
 ## [0.1.6] - 2026-05-20
 

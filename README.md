@@ -65,14 +65,20 @@ The Slicer modules remain workflow wrappers around core Python packages:
 ### Option B: Developer mode (current fallback)
 
 1. Open 3D Slicer.
-2. Go to `Edit -> Application Settings -> Modules`.
-3. Add module path:
+2. Go to `View -> Python Interactor`.
+3. Run:
+   ```python
+   exec(open("<repo>/TimelapsedHRpQCTSlicer/scripts/link_local_toolbox_modules.py").read())
+   ```
+4. Restart Slicer.
+5. Open modules from the `HR-pQCT` category.
+
+Manual alternative: go to `Edit -> Application Settings -> Modules` and add all module paths:
+
    - `<repo>/TimelapsedHRpQCTSlicer/TimelapsedHRpQCT`
    - `<repo>/TimelapsedHRpQCTSlicer/MotionScoreHRpQCT`
    - `<repo>/TimelapsedHRpQCTSlicer/ScancoIO`
    - `<repo>/TimelapsedHRpQCTSlicer/HRpQCTSegmentation`
-4. Restart Slicer.
-5. Open modules from the `HR-pQCT` category.
 
 ## Tutorial
 

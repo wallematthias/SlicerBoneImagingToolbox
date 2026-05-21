@@ -492,15 +492,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.studyProfileCombo, 240)
         self.applyProfileBtn = qt.QPushButton("Apply profile")
         self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
-        self.presetCombo = qt.QComboBox()
-        self.presetCombo.addItems(["Default", "Fast preview", "High quality"])
-        _cap_width(self.presetCombo, 240)
-        self.applyPresetBtn = qt.QPushButton("Apply preset")
-        self.applyPresetBtn.clicked.connect(self._on_apply_preset)
         quickForm.addRow("Profile", self.studyProfileCombo)
         quickForm.addRow(self.applyProfileBtn)
-        quickForm.addRow("Preset", self.presetCombo)
-        quickForm.addRow(self.applyPresetBtn)
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
@@ -1228,49 +1221,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_stage_status("dataset", "done" if dataset_text else "pending")
             return
         self._reset_progress_for_dataset_root()
-
-    def _on_apply_preset(self):
-        preset = str(self.presetCombo.currentText or "Default").strip().lower()
-        if hasattr(self, "advancedSettingsBox") and self.advancedSettingsBox is not None:
-            self.advancedSettingsBox.collapsed = False
-
-        def _summary():
-            return (
-                f"Timelapse: sampling={self.tlSampling.value:.5f}, res={int(self.tlRes.value)}, iter={int(self.tlIter.value)}"
-                f"<br>Multistack: sampling={self.msSampling.value:.5f}, res={int(self.msRes.value)}, iter={int(self.msIter.value)}"
-                f"<br>Analysis: cluster={int(self.analysisCluster.value)}"
-            )
-
-        if preset == "fast preview":
-            # faster/safer defaults for quick checks
-            self.tlRes.value = 3
-            self.tlIter.value = 100
-            self.tlSampling.value = 0.001
-            self.msRes.value = 3
-            self.msIter.value = 100
-            self.msSampling.value = 0.002
-            self.analysisCluster.value = 20
-            self._set_user_message("info", "Preset applied: Fast preview", _summary())
-            return
-        if preset == "high quality":
-            self.tlRes.value = 6
-            self.tlIter.value = 400
-            self.tlSampling.value = 0.008
-            self.msRes.value = 6
-            self.msIter.value = 400
-            self.msSampling.value = 0.008
-            self.analysisCluster.value = 8
-            self._set_user_message("info", "Preset applied: High quality", _summary())
-            return
-        # Default
-        self.tlRes.value = 6
-        self.tlIter.value = 250
-        self.tlSampling.value = 0.001
-        self.msRes.value = 4
-        self.msIter.value = 250
-        self.msSampling.value = 0.005
-        self.analysisCluster.value = 12
-        self._set_user_message("info", "Preset applied: Default", _summary())
 
     def _selected_config_profile(self):
         if not hasattr(self, "studyProfileCombo"):
