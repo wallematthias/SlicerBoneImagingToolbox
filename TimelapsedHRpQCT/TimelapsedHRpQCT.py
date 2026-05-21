@@ -2732,17 +2732,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
 
         if viz_dir.exists():
-            candidates = sorted(viz_dir.glob("*_comp-full_*_remodelling.nii.gz"))
-            if not candidates:
-                candidates = sorted(viz_dir.glob("*_comp-full_*_remodelling.mha"))
-            if not candidates:
-                candidates = sorted(viz_dir.glob("*_remodelling.nii.gz"))
-            if not candidates:
-                candidates = sorted(viz_dir.glob("*_remodelling.mha"))
+            candidates = sorted(viz_dir.glob("*_remodelling.nii.gz")) + sorted(
+                viz_dir.glob("*_remodelling.mha")
+            )
 
         for path in candidates:
             ctx = self._parse_remodelling_source_context(path)
             if ctx is None:
+                continue
+            if str(ctx.get("compartment", "")).strip().lower() != "full":
                 continue
             label = f"{ctx['t0']} -> {ctx['t1']}"
             self._remodelling_comparison_items.append((label, Path(path)))
