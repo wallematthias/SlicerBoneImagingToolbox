@@ -3132,11 +3132,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             display.RemoveAllViewNodeIDs()
 
         label_style = {
-            1: ("resorption", (0.98, 0.15, 0.68), 1.0),  # bright pink
-            2: ("quiescent", (0.45, 0.45, 0.45), 0.0),   # lighter gray, keep as 2D fill
-            3: ("formation", (1.00, 0.45, 0.00), 1.0),   # bright orange
-            4: ("formation", (1.00, 0.45, 0.00), 1.0),   # legacy 5-label support
-            5: ("quiescent", (0.45, 0.45, 0.45), 0.0),   # legacy collapsed support
+            1: ("resorption", (0.98, 0.15, 0.68), 1.0, 1.0),  # bright pink
+            2: ("quiescent", (0.45, 0.45, 0.45), 0.0, 0.0),   # hidden support/no-change label
+            3: ("formation", (1.00, 0.45, 0.00), 1.0, 1.0),   # bright orange
+            4: ("formation", (1.00, 0.45, 0.00), 1.0, 1.0),   # legacy 5-label support
+            5: ("quiescent", (0.45, 0.45, 0.45), 0.0, 0.0),   # hidden legacy support label
         }
         seg = seg_node.GetSegmentation()
         ids = vtk.vtkStringArray()
@@ -3150,9 +3150,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             m = re.search(r"(\d+)", name)
             label_val = int(m.group(1)) if m else None
             if label_val in label_style:
-                disp_name, color, opacity3d = label_style[label_val]
+                disp_name, color, opacity2d, opacity3d = label_style[label_val]
                 segment.SetName(disp_name)
                 segment.SetColor(float(color[0]), float(color[1]), float(color[2]))
+                if hasattr(display, "SetSegmentOpacity2DFill"):
+                    display.SetSegmentOpacity2DFill(seg_id, float(opacity2d))
+                if hasattr(display, "SetSegmentOpacity2DOutline"):
+                    display.SetSegmentOpacity2DOutline(seg_id, 0.0)
                 if hasattr(display, "SetSegmentOpacity3D"):
                     display.SetSegmentOpacity3D(seg_id, float(opacity3d))
                 if hasattr(display, "SetSegmentVisibility"):
