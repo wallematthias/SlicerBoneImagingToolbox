@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import json
 import csv
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,15 @@ from slicer.ScriptedLoadableModule import (
 )
 
 MODULE_VERSION = "0.2.0"
+MIN_PIPELINE_VERSION = "2.0.17"
+
+
+def _version_tuple(version_text):
+    parts = []
+    for token in re.split(r"[^0-9]+", str(version_text or "")):
+        if token:
+            parts.append(int(token))
+    return tuple(parts or [0])
 
 
 def _suppress_simpleitk_warnings():
@@ -74,17 +84,33 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
             pass
 
     def is_pipeline_available(self):
+        ok, _message = self.pipeline_status()
+        return ok
+
+    def pipeline_status(self):
         try:
-            import timelapsedhrpqct  # noqa: F401
-            return True
-        except Exception:
-            return False
+            import timelapsedhrpqct
+        except Exception as exc:
+            return False, f"Not installed ({exc})"
+
+        version = str(getattr(timelapsedhrpqct, "__version__", "0"))
+        package_path = str(Path(getattr(timelapsedhrpqct, "__file__", "")).resolve())
+        if _version_tuple(version) < _version_tuple(MIN_PIPELINE_VERSION):
+            return (
+                False,
+                f"Out of date ({version}); install/update to timelapsed-hrpqct >= {MIN_PIPELINE_VERSION}. "
+                f"Imported from {package_path}",
+            )
+        return True, f"Installed ({version}) from {package_path}"
 
     def install_or_update_pipeline(self):
         # Force-refresh from PyPI so "Install / Update" always pulls latest.
         slicer.util.pip_install(
             "--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct"
         )
+        for name in list(sys.modules):
+            if name == "timelapsedhrpqct" or name.startswith("timelapsedhrpqct."):
+                sys.modules.pop(name, None)
 
     def default_config_path(self):
         import timelapsedhrpqct
@@ -1308,14 +1334,25 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _on_apply_study_profile(self):
         if not self.logic.is_pipeline_available():
-            self._set_user_message("warn", "Pipeline not installed", "Install or update timelapsed-hrpqct first.")
+            _ok, detail = self.logic.pipeline_status()
+            self._set_user_message("warn", "Pipeline needs update", detail)
             return
         try:
             from dataclasses import asdict
             from timelapsedhrpqct.config.loader import load_config
 
             profile = self._selected_config_profile()
-            cfg = asdict(load_config(None, profile=profile))
+            try:
+                cfg_obj = load_config(None, profile=profile)
+            except TypeError as exc:
+                if "profile" not in str(exc):
+                    raise
+                _ok, detail = self.logic.pipeline_status()
+                raise RuntimeError(
+                    "The installed timelapsed-hrpqct package does not support built-in profiles yet. "
+                    f"Install/update to timelapsed-hrpqct >= {MIN_PIPELINE_VERSION}. {detail}"
+                ) from exc
+            cfg = asdict(cfg_obj)
             self._apply_config_dict_to_controls(
                 cfg,
                 source_label=f"Using built-in profile <b>{profile}</b> for new runs and analysis reruns.",
@@ -2412,12 +2449,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._update_dependency_ui()
 
     def _update_dependency_ui(self):
-        available = self.logic.is_pipeline_available()
+        available, detail = self.logic.pipeline_status()
         if available:
-            self.pipelineStatusLabel.text = "Installed"
+            self.pipelineStatusLabel.text = detail
             self.pipelineStatusLabel.styleSheet = "color: #228b22;"
         else:
-            self.pipelineStatusLabel.text = "Not installed"
+            self.pipelineStatusLabel.text = detail
             self.pipelineStatusLabel.styleSheet = "color: #cc5500;"
 
     def _refresh_patient_list(self):
