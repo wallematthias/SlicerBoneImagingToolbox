@@ -71,6 +71,25 @@ def _parse_table_value(text):
         return text
 
 
+def _normalize_processing_log(metadata):
+    from aim_io import log_to_dict
+
+    if not isinstance(metadata, dict):
+        return {}
+    processing_log = metadata.get("processing_log")
+    if isinstance(processing_log, dict):
+        return processing_log
+    legacy_processing_log = metadata.get("processing_log_dict")
+    if isinstance(legacy_processing_log, dict):
+        return legacy_processing_log
+    raw_log = metadata.get("processing_log_raw")
+    if isinstance(raw_log, str) and raw_log.strip():
+        return log_to_dict(raw_log)
+    if isinstance(processing_log, str) and processing_log.strip():
+        return log_to_dict(processing_log)
+    return {}
+
+
 class ScancoIO(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
@@ -361,9 +380,11 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
     def _set_header_metadata(self, metadata):
         metadata = dict(metadata or {})
-        processing_log = metadata.pop("processing_log", {})
+        processing_log = _normalize_processing_log(metadata)
         metadata.pop("processing_log_raw", None)
-        self._set_processing_log_table(processing_log if isinstance(processing_log, dict) else {})
+        metadata.pop("processing_log", None)
+        metadata.pop("processing_log_dict", None)
+        self._set_processing_log_table(processing_log)
         self.headerEdit.setPlainText(_metadata_json(metadata))
 
     def _set_processing_log_table(self, log_dict):
