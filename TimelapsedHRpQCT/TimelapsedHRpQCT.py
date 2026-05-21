@@ -955,6 +955,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText.setMaximumHeight(260)
 
         self.layout.addLayout(form)
+        self.layout.addWidget(quickBox)
         self.layout.addWidget(parseBox)
         self.layout.addWidget(settingsBox)
         self.layout.addWidget(statusBox)
