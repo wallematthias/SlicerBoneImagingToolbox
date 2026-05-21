@@ -49,6 +49,7 @@ The Slicer modules remain workflow wrappers around core Python packages:
   - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, or HU.
   - Preserves AIM metadata on imported Slicer volumes so edited data can be exported without a reference AIM.
   - Exports edited grayscale volumes or binary masks back to `.AIM`.
+  - Uses the core `timelapsedhrpqct.io.aim` module, which wraps `aimio-py` / `py_aimio`.
 - **Contours and Segmentation**: Lightweight Slicer workflow helper for masks and contours.
   - Creates a threshold-based segmentation from an HR-pQCT volume.
   - Opens Slicer's Segment Editor for manual cleanup.
@@ -117,6 +118,8 @@ The `Scanco I/O` module is intended for simple Slicer round trips:
 1. Import an AIM image using density/BMD, native, mu, or HU scaling.
 2. Use standard Slicer tools to inspect, segment, crop, smooth, or edit the loaded volume.
 3. Export the edited scalar volume or labelmap back to AIM.
+
+The Slicer module is only the GUI layer. AIM parsing and writing are handled by `timelapsedhrpqct.io.aim`, backed by the `aimio-py` package (`py_aimio` import name), so Slicer and the command-line pipeline use the same AIM I/O path.
 
 Imported AIM metadata is stored on the loaded Slicer volume. For exports from volumes that did not originate from `Scanco I/O`, provide an imported-stack metadata JSON from the timelapsed pipeline or explicitly enable minimal metadata export.
 
