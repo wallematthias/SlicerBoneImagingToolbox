@@ -46,17 +46,6 @@ PROFILE_DISPLAY_ORDER = [
     "low-memory",
 ]
 
-PROFILE_DISPLAY_LABELS = {
-    "standard": "Standard (LH + binary)",
-    "xct1-standard": "XCT1 standard (LH + grayscale)",
-    "eth-uofc": "ETH / UofC legacy (seg_gauss)",
-    "ucsf": "UCSF (LH + bone support)",
-    "shriners": "Shriners (seg_gauss + grayscale)",
-    "multistack": "Workflow: multistack",
-    "single-stack": "Workflow: single-stack",
-    "low-memory": "Workflow: low-memory",
-}
-
 
 def _version_tuple(version_text):
     parts = []
@@ -1415,15 +1404,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         extra = sorted(profile for profile in profiles if profile not in PROFILE_DISPLAY_ORDER)
         return known + extra
 
-    def _profile_display_label(self, profile):
-        if profile in PROFILE_DISPLAY_LABELS:
-            return PROFILE_DISPLAY_LABELS[profile]
-        return str(profile).replace("-", " ").replace("_", " ").title()
-
     def _populate_study_profiles(self):
         self.studyProfileCombo.clear()
         for profile in self._available_config_profiles():
-            self.studyProfileCombo.addItem(self._profile_display_label(profile), profile)
+            self.studyProfileCombo.addItem(profile, profile)
 
     def _profile_cli_args(self):
         profile = self._selected_config_profile()
