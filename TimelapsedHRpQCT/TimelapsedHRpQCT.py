@@ -32,8 +32,30 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.2.0"
-MIN_PIPELINE_VERSION = "2.0.19"
+MODULE_VERSION = "0.2.1"
+MIN_PIPELINE_VERSION = "2.0.25"
+
+PROFILE_DISPLAY_ORDER = [
+    "standard",
+    "xct1-standard",
+    "eth-uofc",
+    "ucsf",
+    "shriners",
+    "multistack",
+    "single-stack",
+    "low-memory",
+]
+
+PROFILE_DISPLAY_LABELS = {
+    "standard": "Standard (LH + binary)",
+    "xct1-standard": "XCT1 standard (LH + grayscale)",
+    "eth-uofc": "ETH / UofC legacy (seg_gauss)",
+    "ucsf": "UCSF (LH + bone support)",
+    "shriners": "Shriners (seg_gauss + grayscale)",
+    "multistack": "Workflow: multistack",
+    "single-stack": "Workflow: single-stack",
+    "low-memory": "Workflow: low-memory",
+}
 
 
 def _version_tuple(version_text):
@@ -522,13 +544,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         quickForm = qt.QFormLayout(quickBox)
         quickForm.setVerticalSpacing(8)
         self.studyProfileCombo = qt.QComboBox()
-        for label, value in [
-            ("ETH / UofC standard", "eth-uofc"),
-            ("UCSF", "ucsf"),
-            ("Shriners", "shriners"),
-            ("Core standard", "standard"),
-        ]:
-            self.studyProfileCombo.addItem(label, value)
+        self._populate_study_profiles()
         _cap_width(self.studyProfileCombo, 220)
         self.applyProfileBtn = qt.QPushButton("Apply profile")
         _cap_width(self.applyProfileBtn, 105)
@@ -1384,9 +1400,30 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _selected_config_profile(self):
         if not hasattr(self, "studyProfileCombo"):
-            return "eth-uofc"
+            return "standard"
         data = self.studyProfileCombo.currentData
-        return str(data or "eth-uofc")
+        return str(data or "standard")
+
+    def _available_config_profiles(self):
+        try:
+            from timelapsedhrpqct.config.profiles import list_config_profiles
+
+            profiles = list_config_profiles()
+        except Exception:
+            profiles = [profile for profile in PROFILE_DISPLAY_ORDER if profile != "xct1-standard"]
+        known = [profile for profile in PROFILE_DISPLAY_ORDER if profile in profiles]
+        extra = sorted(profile for profile in profiles if profile not in PROFILE_DISPLAY_ORDER)
+        return known + extra
+
+    def _profile_display_label(self, profile):
+        if profile in PROFILE_DISPLAY_LABELS:
+            return PROFILE_DISPLAY_LABELS[profile]
+        return str(profile).replace("-", " ").replace("_", " ").title()
+
+    def _populate_study_profiles(self):
+        self.studyProfileCombo.clear()
+        for profile in self._available_config_profiles():
+            self.studyProfileCombo.addItem(self._profile_display_label(profile), profile)
 
     def _profile_cli_args(self):
         profile = self._selected_config_profile()

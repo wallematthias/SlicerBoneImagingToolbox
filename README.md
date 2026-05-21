@@ -101,7 +101,7 @@ Manual alternative: go to `Edit -> Application Settings -> Modules` and add all 
 
 ## Interactive Remodelling Review
 
-The Timelapsed module includes study profiles for ETH/UofC, UCSF, Shriners, and the core standard defaults.
+The Timelapsed module lists the profiles bundled with the installed `timelapsed-hrpqct` package, including standard, XCT1 standard, ETH/UofC, UCSF, Shriners, and workflow profiles such as multistack.
 Applying a profile updates the visible analysis controls and passes the selected core profile to new runs.
 After loading a saved remodelling image, the module exposes the key review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
 When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
