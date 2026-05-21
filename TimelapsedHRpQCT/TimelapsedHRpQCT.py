@@ -725,6 +725,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisFullMaskDilation.minimum = 0
         self.analysisFullMaskDilation.maximum = 20
         self.analysisFullMaskDilation.value = 2
+        self.analysisMarrowMaskDilation = qt.QSpinBox()
+        self.analysisMarrowMaskDilation.minimum = 0
+        self.analysisMarrowMaskDilation.maximum = 20
+        self.analysisMarrowMaskDilation.value = 2
         self.analysisMarrowMaskErosion = qt.QSpinBox()
         self.analysisMarrowMaskErosion.minimum = 0
         self.analysisMarrowMaskErosion.maximum = 20
@@ -736,12 +740,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.analysisMethodCombo, 220)
         _cap_width(self.analysisPairModeCombo, 220)
         _cap_width(self.analysisFullMaskDilation, 220)
+        _cap_width(self.analysisMarrowMaskDilation, 220)
         _cap_width(self.analysisMarrowMaskErosion, 220)
         self.analysisHintLabel = qt.QLabel(
             "Changing these analysis settings updates the loaded remodelling image. "
             "Binary + grayscale uses bone overlap for state logic, Grayscale only uses grayscale thresholds "
             "with binary overlap for quiescence when available, and Marrow shell + grayscale uses grayscale "
-            "thresholds inside the shared mask/segmentation support."
+            "thresholds inside a dilated baseline/follow-up segmentation support while displaying baseline bone."
         )
         self.analysisHintLabel.wordWrap = True
         self.analysisHintLabel.styleSheet = "color: #666666;"
@@ -774,6 +779,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         analysisForm.addRow("Method", self.analysisMethodCombo)
         analysisForm.addRow("Pair mode", self.analysisPairModeCombo)
         analysisForm.addRow("Full mask dilation (vox)", self.analysisFullMaskDilation)
+        analysisForm.addRow("Marrow mask dilation (vox)", self.analysisMarrowMaskDilation)
         analysisForm.addRow("Marrow mask erosion (vox)", self.analysisMarrowMaskErosion)
         analysisForm.addRow("Gaussian filter", self.analysisGaussianFilterCheck)
         analysisForm.addRow("Gaussian sigma (vox)", self.analysisGaussianSigma)
@@ -800,6 +806,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         self.analysisMethodCombo.currentIndexChanged.connect(self._on_analysis_method_changed)
         self.analysisFullMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
+        self.analysisMarrowMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisMarrowMaskErosion.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisGaussianFilterCheck.toggled.connect(self._on_interactive_preview_control_changed)
         self.analysisGaussianSigma.editingFinished.connect(self._on_interactive_preview_control_changed)
@@ -1303,7 +1310,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.msInitTz.value = float(init_vox[2])
 
         analysis_cfg = cfg.get("analysis") or {}
-        self._analysis_method = str(analysis_cfg.get("method", self._analysis_method))
+        self._analysis_method = self._analysis_method_from_config(analysis_cfg)
         idx = self.analysisMethodCombo.findData(self._analysis_method)
         if idx >= 0:
             self.analysisMethodCombo.setCurrentIndex(idx)
@@ -1325,8 +1332,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisFullMaskDilation.value = int(
             analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))
         )
+        change_region_cfg = analysis_cfg.get("change_region") or {}
+        self.analysisMarrowMaskDilation.value = int(
+            change_region_cfg.get(
+                "dilation_voxels",
+                analysis_cfg.get("marrow_mask_dilation_voxels", int(self.analysisMarrowMaskDilation.value)),
+            )
+        )
         self.analysisMarrowMaskErosion.value = int(
-            analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value))
+            change_region_cfg.get(
+                "erosion_voxels",
+                analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value)),
+            )
         )
         self._analysis_erosion_voxels = int(
             ((analysis_cfg.get("valid_region") or {}).get("erosion_voxels", self._analysis_erosion_voxels))
@@ -1383,8 +1400,46 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return str(data)
         return "grayscale_and_binary"
 
+    def _analysis_method_from_config(self, analysis_cfg):
+        method = str((analysis_cfg or {}).get("method", "") or "").strip()
+        if method and method != "auto":
+            return method
+        change_region = (analysis_cfg or {}).get("change_region") or {}
+        binary = (analysis_cfg or {}).get("binary_reclassification") or {}
+        if bool(binary.get("enabled", False)):
+            return "grayscale_and_binary"
+        if str(change_region.get("source", "common_mask")).strip().lower() in {"bone_union", "segmentation_union"}:
+            return "grayscale_marrow_mask"
+        return "grayscale_delta_only"
+
+    def _analysis_config_from_controls(self, pair_mode):
+        method = self._current_analysis_method()
+        use_bone_union = method == "grayscale_marrow_mask"
+        enforce_binary = method == "grayscale_and_binary"
+        return {
+            "method": method,
+            "change_detection": "grayscale_delta",
+            "change_region": {
+                "source": "bone_union" if use_bone_union else "common_mask",
+                "dilation_voxels": int(self.analysisMarrowMaskDilation.value) if use_bone_union else 0,
+                "erosion_voxels": int(self.analysisMarrowMaskErosion.value) if use_bone_union else 0,
+            },
+            "binary_reclassification": {
+                "enabled": bool(enforce_binary),
+            },
+            "pair_mode": pair_mode,
+            "compartments": ["full", "trab", "cort"],
+            "thresholds": [float(self.analysisThreshold.value)],
+            "cluster_sizes": [int(self.analysisCluster.value)],
+            "use_filled_images": False,
+            "gaussian_filter": bool(self.analysisGaussianFilterCheck.checked),
+            "gaussian_sigma": float(self.analysisGaussianSigma.value),
+            "full_mask_dilation_voxels": int(self.analysisFullMaskDilation.value),
+        }
+
     def _on_analysis_method_changed(self, *_args):
         method = self._current_analysis_method()
+        self.analysisMarrowMaskDilation.enabled = method == "grayscale_marrow_mask"
         self.analysisMarrowMaskErosion.enabled = method == "grayscale_marrow_mask"
         self._on_interactive_preview_control_changed()
 
@@ -1536,18 +1591,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     float(self.msInitTz.value),
                 ],
             },
-            "analysis": {
-                "method": self._current_analysis_method(),
-                "pair_mode": pair_mode,
-                "compartments": ["full", "trab", "cort"],
-                "thresholds": [float(self.analysisThreshold.value)],
-                "cluster_sizes": [int(self.analysisCluster.value)],
-                "use_filled_images": False,
-                "gaussian_filter": bool(self.analysisGaussianFilterCheck.checked),
-                "gaussian_sigma": float(self.analysisGaussianSigma.value),
-                "full_mask_dilation_voxels": int(self.analysisFullMaskDilation.value),
-                "marrow_mask_erosion_voxels": int(self.analysisMarrowMaskErosion.value),
-            },
+            "analysis": self._analysis_config_from_controls(pair_mode),
             "fusion": {
                 "enable_filling": False,
             },
@@ -1603,6 +1647,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.analysisCluster,
             self.analysisMethodCombo,
             self.analysisFullMaskDilation,
+            self.analysisMarrowMaskDilation,
             self.analysisMarrowMaskErosion,
             self.analysisGaussianFilterCheck,
             self.analysisGaussianSigma,
@@ -3170,6 +3215,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             and bool(metadata.get("gaussian_filter", False)) == bool(self.analysisGaussianFilterCheck.checked)
             and float(metadata.get("gaussian_sigma", 0.0)) == float(self.analysisGaussianSigma.value)
             and int(metadata.get("full_mask_dilation_voxels", 2)) == int(self.analysisFullMaskDilation.value)
+            and int(metadata.get("marrow_mask_dilation_voxels", 2)) == int(self.analysisMarrowMaskDilation.value)
             and int(metadata.get("marrow_mask_erosion_voxels", 0)) == int(self.analysisMarrowMaskErosion.value)
         )
 
@@ -3457,6 +3503,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=support_t0,
                 support_mask_t1=support_t1,
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             rows.append(
@@ -3493,6 +3540,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=preview_inputs.get("support_mask_t0"),
                 support_mask_t1=preview_inputs.get("support_mask_t1"),
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             compartment = str((preview_inputs.get("context") or {}).get("compartment", "full"))
@@ -3741,6 +3789,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=preview_inputs.get("support_mask_t0"),
                 support_mask_t1=preview_inputs.get("support_mask_t1"),
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
         except Exception as exc:
@@ -3843,6 +3892,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=t0["support_mask"],
                 support_mask_t1=t1["support_mask"],
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             if key in selected_pairs:
@@ -4187,6 +4237,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "gaussian_filter": bool(self.analysisGaussianFilterCheck.checked),
                 "gaussian_sigma": float(self.analysisGaussianSigma.value),
                 "full_mask_dilation_voxels": int(self.analysisFullMaskDilation.value),
+                "marrow_mask_dilation_voxels": int(self.analysisMarrowMaskDilation.value),
                 "marrow_mask_erosion_voxels": int(self.analysisMarrowMaskErosion.value),
                 "trajectory_selected_adjacent_pairs": self._selected_series_adjacent_pairs(),
                 "source_remodelling_path": source_path or None,
