@@ -440,6 +440,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
+        depBox.collapsed = True
+        self.dependencyBox = depBox
         depForm = qt.QFormLayout(depBox)
         depForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
         self.pipelineStatusLabel = qt.QLabel()
@@ -942,7 +944,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         settingsLayout.addWidget(advancedAnalysisBox)
         analysisSectionLayout.addWidget(analysisBox)
 
-        actionLayout = qt.QGridLayout()
+        actionBox = qt.QGroupBox("Pipeline")
+        actionBox.setStyleSheet(
+            "QGroupBox { font-weight: 600; border: 1px solid #b8c7d9; border-radius: 4px; "
+            "margin-top: 8px; padding: 8px 6px 6px 6px; } "
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
+        )
+        actionLayout = qt.QVBoxLayout(actionBox)
+        actionLayout.setContentsMargins(8, 10, 8, 8)
+        actionLayout.setSpacing(6)
         self.runMasksBtn = qt.QPushButton("Generate masks")
         self.runMasksBtn.toolTip = "Generate/recompute masks from imported stacks."
         self.runMasksBtn.visible = False
@@ -955,18 +965,35 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.cancelRunBtn.clicked.connect(self._on_cancel_run)
         self.cancelRunBtn.enabled = False
         self.cancelRunBtn.toolTip = "Cancel the currently running pipeline step."
-        _cap_width(self.runTimelapseBtn, 125)
-        _cap_width(self.seriesSummaryExportBtn, 92)
+        self.runTimelapseBtn.setMinimumHeight(34)
+        self.runTimelapseBtn.setStyleSheet(
+            "QPushButton { background:#1f6feb; color:white; border:1px solid #175cc5; "
+            "border-radius:4px; padding:7px 10px; font-weight:600; } "
+            "QPushButton:hover { background:#1a5fd0; } "
+            "QPushButton:pressed { background:#154ea8; } "
+            "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
+        )
+        self.seriesSummaryExportBtn.setStyleSheet(
+            "QPushButton { background:#f5f7fa; color:#222; border:1px solid #b8c0ca; "
+            "border-radius:4px; padding:5px 8px; } "
+            "QPushButton:hover { background:#edf2f7; }"
+        )
+        self.cancelRunBtn.setStyleSheet(
+            "QPushButton { background:#fff5f5; color:#9b1c1c; border:1px solid #e0b4b4; "
+            "border-radius:4px; padding:5px 8px; } "
+            "QPushButton:disabled { background:#eeeeee; color:#9a9a9a; border-color:#d0d0d0; }"
+        )
+        secondaryActionRow = qt.QWidget()
+        secondaryActionLayout = qt.QHBoxLayout(secondaryActionRow)
+        secondaryActionLayout.setContentsMargins(0, 0, 0, 0)
+        secondaryActionLayout.setSpacing(6)
+        secondaryActionLayout.addWidget(self.seriesSummaryExportBtn)
+        secondaryActionLayout.addWidget(self.cancelRunBtn)
+        secondaryActionLayout.addStretch(1)
+        _cap_width(self.seriesSummaryExportBtn, 96)
         _cap_width(self.cancelRunBtn, 82)
-        self.runTimelapseBtn.setMinimumWidth(110)
-        self.seriesSummaryExportBtn.setMinimumWidth(82)
-        self.cancelRunBtn.setMinimumWidth(72)
-        actionLayout.setHorizontalSpacing(6)
-        actionLayout.setContentsMargins(0, 0, 0, 0)
-        actionLayout.addWidget(self.runTimelapseBtn, 0, 0)
-        actionLayout.addWidget(self.seriesSummaryExportBtn, 0, 1)
-        actionLayout.addWidget(self.cancelRunBtn, 0, 2)
-        actionLayout.setColumnStretch(3, 1)
+        actionLayout.addWidget(self.runTimelapseBtn)
+        actionLayout.addWidget(secondaryActionRow)
 
         self.runMasksBtn.clicked.connect(self._on_run_masks)
         self.runTimelapseBtn.clicked.connect(self._on_run_full_pipeline)
@@ -1053,8 +1080,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addLayout(form)
         self.layout.addWidget(quickBox)
         self.layout.addWidget(parseBox)
+        self.layout.addWidget(actionBox)
         self.layout.addWidget(statusBox)
-        self.layout.addLayout(actionLayout)
         self.seriesSummaryBox.visible = False
         self.layout.addWidget(loadBox)
         self.layout.addWidget(analysisSectionBox)
@@ -2831,8 +2858,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.pipelineStatusLabel.toolTip = str(detail or "")
         if available:
             self.pipelineStatusLabel.styleSheet = "color: #228b22;"
+            if hasattr(self, "dependencyBox"):
+                self.dependencyBox.collapsed = True
         else:
             self.pipelineStatusLabel.styleSheet = "color: #cc5500;"
+            if hasattr(self, "dependencyBox"):
+                self.dependencyBox.collapsed = False
 
     def _refresh_patient_list(self):
         self.patientCombo.clear()
