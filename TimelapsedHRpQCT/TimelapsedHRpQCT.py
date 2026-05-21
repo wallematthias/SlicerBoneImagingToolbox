@@ -33,7 +33,7 @@ from slicer.ScriptedLoadableModule import (
 )
 
 MODULE_VERSION = "0.2.0"
-MIN_PIPELINE_VERSION = "2.0.17"
+MIN_PIPELINE_VERSION = "2.0.19"
 
 
 def _version_tuple(version_text):
