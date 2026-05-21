@@ -13,6 +13,7 @@ All notable changes to this extension are documented in this file.
 - Added Timelapsed study profile selection for ETH/UofC, UCSF, Shriners, and standard core defaults.
 - Added MotionScore local/downloaded model bundle setup as a no-hosted-license-service alternative.
 - Added editable AIM header metadata display in the Scanco I/O export panel, including a processing-log field table backed by `aimio-py` log/dict helpers.
+- Added radius/tibia/knee presets and standard Gaussian, Laplace-Hamming, and adaptive segmentation methods to the Contours and Segmentation module.
 
 ### Changed
 

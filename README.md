@@ -51,9 +51,9 @@ The Slicer modules remain workflow wrappers around core Python packages:
   - Exports edited grayscale volumes or binary masks back to `.AIM`.
   - Uses a lightweight local wrapper around `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
 - **Contours and Segmentation**: Lightweight Slicer workflow helper for masks and contours.
-  - Creates a threshold-based segmentation from an HR-pQCT volume.
-  - Opens Slicer's Segment Editor for manual cleanup.
-  - Leaves algorithmic segmentation methods in the core packages.
+  - Generates HR-pQCT full, trabecular, cortical, and binary segmentation outputs from an input volume.
+  - Provides radius, tibia, and knee contour presets plus standard Gaussian, Laplace-Hamming, and adaptive segmentation methods.
+  - Keeps expert threshold and morphology settings collapsed by default, then optionally opens Slicer's Segment Editor for cleanup.
 
 ## Installation
 
@@ -126,7 +126,7 @@ Imported AIM metadata is stored on the loaded Slicer volume. The processing log 
 
 ## Contours And Segmentation
 
-The `Contours and Segmentation` module creates an initial threshold segmentation from a selected HR-pQCT volume and then opens Slicer's Segment Editor for manual contour cleanup. This module is intentionally small; it provides Slicer workflow glue and does not move core segmentation algorithms out of their Python packages.
+The `Contours and Segmentation` module wraps the core `timelapsed-hrpqct` contour-generation code. It can generate full, trabecular, cortical, and binary segmentation outputs from a selected HR-pQCT volume using radius, tibia, or knee presets. Segmentation methods include standard Gaussian thresholding, Laplace-Hamming, and adaptive thresholding. Expert thresholds and morphology settings are available in a collapsed panel for method validation and scanner-specific tuning.
 
 ## Results Layout
 
