@@ -730,14 +730,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisFullMaskDilation.minimum = 0
         self.analysisFullMaskDilation.maximum = 20
         self.analysisFullMaskDilation.value = 2
-        self.analysisMarrowMaskDilation = qt.QSpinBox()
-        self.analysisMarrowMaskDilation.minimum = 0
-        self.analysisMarrowMaskDilation.maximum = 20
-        self.analysisMarrowMaskDilation.value = 2
+        self.analysisBoneSupportDilation = qt.QSpinBox()
+        self.analysisBoneSupportDilation.minimum = 0
+        self.analysisBoneSupportDilation.maximum = 20
+        self.analysisBoneSupportDilation.value = 0
+        self.analysisMarrowMaskDilation = self.analysisBoneSupportDilation
         self.analysisMarrowMaskErosion = qt.QSpinBox()
         self.analysisMarrowMaskErosion.minimum = 0
         self.analysisMarrowMaskErosion.maximum = 20
         self.analysisMarrowMaskErosion.value = 0
+        self.analysisMarrowMaskErosion.visible = False
         _cap_width(self.analysisThreshold, 220)
         _cap_width(self.analysisCluster, 220)
         _cap_width(self.analysisGaussianFilterCheck, 220)
@@ -747,7 +749,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.analysisBinaryReclassificationCheck, 220)
         _cap_width(self.analysisPairModeCombo, 220)
         _cap_width(self.analysisFullMaskDilation, 220)
-        _cap_width(self.analysisMarrowMaskDilation, 220)
+        _cap_width(self.analysisBoneSupportDilation, 220)
         _cap_width(self.analysisMarrowMaskErosion, 220)
         self.analysisHintLabel = qt.QLabel(
             "Changing these analysis settings updates the loaded remodelling image. Grayscale delta is always "
@@ -786,8 +788,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         analysisForm.addRow("Require binary reclassification", self.analysisBinaryReclassificationCheck)
         analysisForm.addRow("Pair mode", self.analysisPairModeCombo)
         analysisForm.addRow("Full mask dilation (vox)", self.analysisFullMaskDilation)
-        analysisForm.addRow("Marrow mask dilation (vox)", self.analysisMarrowMaskDilation)
-        analysisForm.addRow("Marrow mask erosion (vox)", self.analysisMarrowMaskErosion)
+        analysisForm.addRow("Bone support dilation (vox)", self.analysisBoneSupportDilation)
         analysisForm.addRow("Gaussian filter", self.analysisGaussianFilterCheck)
         analysisForm.addRow("Gaussian sigma (vox)", self.analysisGaussianSigma)
         analysisForm.addRow("Pair metrics", pairMetricsRow)
@@ -815,7 +816,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisRestrictBoneSupportCheck.toggled.connect(self._on_analysis_option_changed)
         self.analysisBinaryReclassificationCheck.toggled.connect(self._on_analysis_option_changed)
         self.analysisFullMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
-        self.analysisMarrowMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
+        self.analysisBoneSupportDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisMarrowMaskErosion.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisGaussianFilterCheck.toggled.connect(self._on_interactive_preview_control_changed)
         self.analysisGaussianSigma.editingFinished.connect(self._on_interactive_preview_control_changed)
@@ -3522,7 +3523,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             kwargs.pop("marrow_mask_dilation_voxels", None)
             if bool(self.analysisRestrictBoneSupportCheck.checked) and int(self.analysisMarrowMaskDilation.value) > 0:
                 self._show(
-                    "[preview] installed timelapsed-hrpqct does not support marrow mask dilation yet; "
+                    "[preview] installed timelapsed-hrpqct does not support bone support dilation yet; "
                     "update the core package to apply this option."
                 )
         return compute_pair_remodelling_preview(**kwargs)
