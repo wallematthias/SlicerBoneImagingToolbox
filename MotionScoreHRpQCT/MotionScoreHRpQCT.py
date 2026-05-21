@@ -2,7 +2,6 @@ import base64
 import binascii
 import csv
 import hashlib
-import io
 import json
 import math
 import os
@@ -11,7 +10,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import uuid
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -229,23 +227,14 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modelsPathEdit.enabled = True
         licenseForm.addRow("Local models folder", self.modelsPathEdit)
 
-        self.modelBundleUrlEdit = qt.QLineEdit()
-        self.modelBundleUrlEdit.setText(self._settings().value("MotionScore/ModelCatalogUrl", DEFAULT_MODEL_CATALOG_URL))
-        self.modelBundleUrlEdit.setPlaceholderText("Model catalog JSON URL")
-        licenseForm.addRow("Model catalog URL", self.modelBundleUrlEdit)
-
         self.modelVersionEdit = qt.QLineEdit()
         self.modelVersionEdit.setText(self._settings().value("MotionScore/ModelVersion", "v1"))
 
         self.quickSetupButton = qt.QPushButton("Install / Download Models")
         licenseLayout.addWidget(self.quickSetupButton)
 
-        self.importModelBundleButton = qt.QPushButton("Import Model Bundle...")
-        licenseLayout.addWidget(self.importModelBundleButton)
-
         self.licenseFlowHelpLabel = qt.QLabel(
-            "Models are downloaded from the public GitHub release catalog. GitHub release asset download counts "
-            "are the usage metric."
+            "Install the MotionScore package and download the default model weights."
         )
         self.licenseFlowHelpLabel.setWordWrap(True)
         licenseLayout.addWidget(self.licenseFlowHelpLabel)
@@ -598,7 +587,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.exportButton.clicked.connect(self.onExport)
         self.importButton.clicked.connect(self.onImportFinalGrades)
         self.quickSetupButton.clicked.connect(self.onQuickSetup)
-        self.importModelBundleButton.clicked.connect(self.onImportModelBundle)
         self.backButton.clicked.connect(self.onBackToPreviousScan)
         self.clearButton.clicked.connect(self.onClearGrades)
         self.loadScanButton.clicked.connect(self.onLoadSelectedScan)
@@ -612,7 +600,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.datasetPathEdit.currentPathChanged.connect(self.onDatasetPathChanged)
         self.trainingModeCheck.toggled.connect(self.onTrainingModeToggled)
         self.reviewerEdit.editingFinished.connect(self._persist_reviewer_setting)
-        self.modelBundleUrlEdit.editingFinished.connect(self._persist_license_settings)
         self.deviceCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.runModeCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.modelProfileCombo.currentTextChanged.connect(self._persist_runtime_settings)
@@ -668,7 +655,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _persist_license_settings(self):
         s = self._settings()
-        s.setValue("MotionScore/ModelCatalogUrl", self.modelBundleUrlEdit.text.strip())
         s.setValue("MotionScore/ModelVersion", self.modelVersionEdit.text.strip())
 
     def _persist_reviewer_setting(self):
@@ -1273,7 +1259,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.backButton.enabled = bool(enabled and self._grade_history)
         self.clearButton.enabled = enabled
         self.quickSetupButton.enabled = enabled
-        self.importModelBundleButton.enabled = enabled
         self.trainingModeCheck.enabled = enabled
         self.runModeCombo.enabled = enabled
         self.modelProfileCombo.enabled = enabled
@@ -1387,36 +1372,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._log("[setup] complete: package and local models ready\n")
         self._refresh_model_profiles()
 
-    def onImportModelBundle(self):
-        result = qt.QFileDialog.getOpenFileName(
-            slicer.util.mainWindow(),
-            "Import MotionScore model bundle",
-            str(Path.home()),
-            "Model bundles (*.tar.gz *.tgz);;All files (*)",
-        )
-        if isinstance(result, (tuple, list)):
-            result = result[0] if result else ""
-        if not result:
-            return False
-        bundle_path = Path(result)
-        models_dir = self._models_dir()
-        if models_dir is None:
-            slicer.util.errorDisplay("Could not resolve local models folder.")
-            return False
-        try:
-            self._safe_extract_tar_gz_bytes(bundle_path.read_bytes(), models_dir)
-            self._set_license_status(f"Imported model bundle into {models_dir}.")
-            self._log(f"[models] imported bundle: {bundle_path} -> {models_dir}\n")
-            self._refresh_model_profiles()
-            self._update_setup_status()
-            return True
-        except Exception as exc:
-            self._set_license_status(f"Model bundle import failed: {exc}")
-            slicer.util.errorDisplay(f"Model bundle import failed:\n{exc}")
-            return False
-
     def onDownloadModelBundle(self):
-        catalog = self.modelBundleUrlEdit.text.strip() or DEFAULT_MODEL_CATALOG_URL
         if not self._ensure_core_package():
             return False
         models_dir = self._models_dir()
@@ -1439,7 +1395,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "--model-root",
                 str(models_dir),
                 "--catalog",
-                catalog,
+                DEFAULT_MODEL_CATALOG_URL,
                 "--overwrite",
             ],
             on_finish=_finish_download,
@@ -1518,17 +1474,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self._start_predict_progress(selected_scope)
         self._run_cli(args, on_finish=self.refreshReview)
-
-    def _safe_extract_tar_gz_bytes(self, blob, output_dir):
-        output_dir = Path(output_dir).resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
-            members = tf.getmembers()
-            for member in members:
-                target = (output_dir / member.name).resolve()
-                if output_dir not in target.parents and target != output_dir:
-                    raise RuntimeError(f"Unsafe path in model bundle: {member.name}")
-            tf.extractall(path=output_dir)
 
     def onRefreshReview(self):
         derivatives = self._derivatives_root()
