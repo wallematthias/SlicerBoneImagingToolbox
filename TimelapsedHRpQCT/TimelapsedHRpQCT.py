@@ -3042,7 +3042,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         display.SetVisibility2D(True)
         display.SetVisibility3D(False)
         display.SetOpacity2DFill(0.35)
-        display.SetOpacity2DOutline(1.0)
+        display.SetOpacity2DOutline(0.0)
         display.SetSliceIntersectionThickness(2)
         # Ensure segmentations are shown in all slice views (not bound to a specific view).
         if hasattr(display, "RemoveAllViewNodeIDs"):
@@ -3126,7 +3126,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         display.SetVisibility2D(bool(show2d))
         display.SetVisibility3D(bool(show3d))
         display.SetOpacity2DFill(0.35)
-        display.SetOpacity2DOutline(1.0)
+        display.SetOpacity2DOutline(0.0)
         display.SetOpacity3D(1.0)
         if hasattr(display, "RemoveAllViewNodeIDs"):
             display.RemoveAllViewNodeIDs()
