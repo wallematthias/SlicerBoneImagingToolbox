@@ -1443,21 +1443,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return "grayscale_marrow_mask"
         return "grayscale_delta_only"
 
+    def _installed_core_supports_explicit_analysis_config(self):
+        try:
+            from dataclasses import fields
+            from timelapsedhrpqct.config.models import AnalysisConfig
+
+            names = {field.name for field in fields(AnalysisConfig)}
+        except Exception:
+            return False
+        return {"change_detection", "change_region", "binary_reclassification"}.issubset(names)
+
     def _analysis_config_from_controls(self, pair_mode):
         method = self._current_analysis_method()
         use_bone_union = bool(self.analysisRestrictBoneSupportCheck.checked)
         enforce_binary = bool(self.analysisBinaryReclassificationCheck.checked)
-        return {
+        base = {
             "method": method,
-            "change_detection": "grayscale_delta",
-            "change_region": {
-                "source": "bone_union" if use_bone_union else "common_mask",
-                "dilation_voxels": int(self.analysisMarrowMaskDilation.value) if use_bone_union else 0,
-                "erosion_voxels": int(self.analysisMarrowMaskErosion.value) if use_bone_union else 0,
-            },
-            "binary_reclassification": {
-                "enabled": bool(enforce_binary),
-            },
             "pair_mode": pair_mode,
             "compartments": ["full", "trab", "cort"],
             "thresholds": [float(self.analysisThreshold.value)],
@@ -1467,6 +1468,25 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "gaussian_sigma": float(self.analysisGaussianSigma.value),
             "full_mask_dilation_voxels": int(self.analysisFullMaskDilation.value),
         }
+        if self._installed_core_supports_explicit_analysis_config():
+            base.update(
+                {
+                    "change_detection": "grayscale_delta",
+                    "change_region": {
+                        "source": "bone_union" if use_bone_union else "common_mask",
+                        "dilation_voxels": int(self.analysisMarrowMaskDilation.value) if use_bone_union else 0,
+                        "erosion_voxels": int(self.analysisMarrowMaskErosion.value) if use_bone_union else 0,
+                    },
+                    "binary_reclassification": {
+                        "enabled": bool(enforce_binary),
+                    },
+                }
+            )
+        else:
+            # Older released cores warn on the explicit nested analysis keys. Keep legacy keys only.
+            base["marrow_mask_dilation_voxels"] = int(self.analysisMarrowMaskDilation.value) if use_bone_union else 0
+            base["marrow_mask_erosion_voxels"] = 0
+        return base
 
     def _on_analysis_method_changed(self, *_args):
         method = self._legacy_analysis_combo_method()
