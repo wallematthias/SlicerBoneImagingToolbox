@@ -414,6 +414,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._last_dataset_root_text = ""
         self._last_results_root_text = ""
         self._slice_scale_bars = {}
+        self._suppress_interactive_preview_updates = False
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -1502,12 +1503,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     f"Install/update to timelapsed-hrpqct >= {MIN_PIPELINE_VERSION}. {detail}"
                 ) from exc
             cfg = asdict(cfg_obj)
+            self._suppress_interactive_preview_updates = True
             self._apply_config_dict_to_controls(
                 cfg,
                 source_label=f"Using built-in profile <b>{profile}</b> for new runs and analysis reruns.",
             )
         except Exception as exc:
             slicer.util.warningDisplay(f"Could not apply profile:\n{exc}")
+        finally:
+            self._suppress_interactive_preview_updates = False
 
     def _load_defaults_from_pipeline_config(self):
         if not self.logic.is_pipeline_available():
@@ -3397,6 +3401,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return out
 
     def _on_interactive_preview_control_changed(self, *_args):
+        if getattr(self, "_suppress_interactive_preview_updates", False):
+            return
         if not self.remodellingAutoUpdateCheck.checked or self.logic.is_running():
             return
         self._interactivePreviewTimer.start()
@@ -4668,9 +4674,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return True
 
     def _center_slices_on_segmentation(self, seg_node):
-        self._center_slices_on_node(seg_node)
+        self._center_slices_on_node(seg_node, fit_to_bounds=True)
 
-    def _center_slices_on_node(self, node_to_center):
+    def _center_slices_on_node(self, node_to_center, fit_to_bounds=False):
         if node_to_center is None:
             return
         try:
@@ -4691,7 +4697,32 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 node = widget.mrmlSliceNode()
                 if node is not None:
                     node.JumpSliceByCentering(cx, cy, cz)
+                    if fit_to_bounds:
+                        self._fit_slice_node_to_bounds(node, widget, bounds, name)
             self._ensure_slice_scale_bars()
+        except Exception:
+            pass
+
+    def _fit_slice_node_to_bounds(self, slice_node, widget, bounds, view_name):
+        try:
+            dims = {
+                "Red": (abs(bounds[1] - bounds[0]), abs(bounds[3] - bounds[2])),
+                "Yellow": (abs(bounds[1] - bounds[0]), abs(bounds[5] - bounds[4])),
+                "Green": (abs(bounds[3] - bounds[2]), abs(bounds[5] - bounds[4])),
+            }.get(str(view_name), (abs(bounds[1] - bounds[0]), abs(bounds[3] - bounds[2])))
+            dim_x = max(float(dims[0]), 1.0)
+            dim_y = max(float(dims[1]), 1.0)
+            view = widget.sliceView() if widget is not None else None
+            render_window = view.renderWindow() if view is not None else None
+            size = render_window.GetSize() if render_window is not None else (1, 1)
+            aspect = max(0.1, float(max(1, int(size[0]))) / float(max(1, int(size[1]))))
+            target_x = max(dim_x * 1.18, 8.0)
+            target_y = max(dim_y * 1.18, 8.0)
+            if target_x / target_y < aspect:
+                target_x = target_y * aspect
+            else:
+                target_y = target_x / aspect
+            slice_node.SetFieldOfView(float(target_x), float(target_y), 1.0)
         except Exception:
             pass
 
@@ -5202,7 +5233,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"sub-{subject_id} site-{site} ({data_type})"
         )
         if first_loaded_node is not None:
-            self._center_slices_on_node(first_loaded_node)
+            self._center_slices_on_node(first_loaded_node, fit_to_bounds=True)
         if is_remodelling_load and loaded:
             if self.remodellingFullSegCombo.count > 0 and self.remodellingFullSegCombo.currentIndex < 0:
                 self.remodellingFullSegCombo.setCurrentIndex(0)
