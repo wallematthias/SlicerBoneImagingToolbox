@@ -717,6 +717,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisMethodCombo.addItem("Binary + grayscale", "grayscale_and_binary")
         self.analysisMethodCombo.addItem("Grayscale only", "grayscale_delta_only")
         self.analysisMethodCombo.addItem("Marrow shell + grayscale", "grayscale_marrow_mask")
+        self.analysisMethodCombo.visible = False
+        self.analysisRestrictBoneSupportCheck = qt.QCheckBox()
+        self.analysisRestrictBoneSupportCheck.checked = False
+        self.analysisBinaryReclassificationCheck = qt.QCheckBox()
+        self.analysisBinaryReclassificationCheck.checked = True
         self.analysisPairModeCombo = qt.QComboBox()
         self.analysisPairModeCombo.addItem("Adjacent", "adjacent")
         self.analysisPairModeCombo.addItem("Baseline", "baseline")
@@ -738,15 +743,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.analysisGaussianFilterCheck, 220)
         _cap_width(self.analysisGaussianSigma, 220)
         _cap_width(self.analysisMethodCombo, 220)
+        _cap_width(self.analysisRestrictBoneSupportCheck, 220)
+        _cap_width(self.analysisBinaryReclassificationCheck, 220)
         _cap_width(self.analysisPairModeCombo, 220)
         _cap_width(self.analysisFullMaskDilation, 220)
         _cap_width(self.analysisMarrowMaskDilation, 220)
         _cap_width(self.analysisMarrowMaskErosion, 220)
         self.analysisHintLabel = qt.QLabel(
-            "Changing these analysis settings updates the loaded remodelling image. "
-            "Binary + grayscale uses bone overlap for state logic, Grayscale only uses grayscale thresholds "
-            "with binary overlap for quiescence when available, and Marrow shell + grayscale uses grayscale "
-            "thresholds inside a dilated baseline/follow-up segmentation support while displaying baseline bone."
+            "Changing these analysis settings updates the loaded remodelling image. Grayscale delta is always "
+            "the base detector; bone support limits where changes are detected, and binary reclassification "
+            "requires matching baseline/follow-up segmentation state changes."
         )
         self.analysisHintLabel.wordWrap = True
         self.analysisHintLabel.styleSheet = "color: #666666;"
@@ -776,7 +782,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         pairMetricsLayout.addWidget(self.analysisResorptionFractionLabel)
         analysisForm.addRow("Threshold", thresholdRow)
         analysisForm.addRow("Cluster size", clusterRow)
-        analysisForm.addRow("Method", self.analysisMethodCombo)
+        analysisForm.addRow("Restrict changes to bone support", self.analysisRestrictBoneSupportCheck)
+        analysisForm.addRow("Require binary reclassification", self.analysisBinaryReclassificationCheck)
         analysisForm.addRow("Pair mode", self.analysisPairModeCombo)
         analysisForm.addRow("Full mask dilation (vox)", self.analysisFullMaskDilation)
         analysisForm.addRow("Marrow mask dilation (vox)", self.analysisMarrowMaskDilation)
@@ -805,6 +812,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             lambda: self._set_analysis_cluster_value(self.analysisCluster.value, queue_update=True)
         )
         self.analysisMethodCombo.currentIndexChanged.connect(self._on_analysis_method_changed)
+        self.analysisRestrictBoneSupportCheck.toggled.connect(self._on_analysis_option_changed)
+        self.analysisBinaryReclassificationCheck.toggled.connect(self._on_analysis_option_changed)
         self.analysisFullMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisMarrowMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisMarrowMaskErosion.valueChanged.connect(self._on_interactive_preview_control_changed)
@@ -1314,6 +1323,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         idx = self.analysisMethodCombo.findData(self._analysis_method)
         if idx >= 0:
             self.analysisMethodCombo.setCurrentIndex(idx)
+        change_region_cfg = analysis_cfg.get("change_region") or {}
+        binary_cfg = analysis_cfg.get("binary_reclassification") or {}
+        if str(analysis_cfg.get("method", "") or "") == "auto" or change_region_cfg or binary_cfg:
+            restrict_bone = (
+                str(change_region_cfg.get("source", "common_mask")).strip().lower()
+                in {"bone_union", "segmentation_union"}
+            )
+            binary_enabled = bool(binary_cfg.get("enabled", False))
+        else:
+            restrict_bone = self._analysis_method == "grayscale_marrow_mask"
+            binary_enabled = self._analysis_method == "grayscale_and_binary"
+        self.analysisRestrictBoneSupportCheck.checked = bool(restrict_bone)
+        self.analysisBinaryReclassificationCheck.checked = bool(binary_enabled)
         pair_idx = self.analysisPairModeCombo.findData(str(analysis_cfg.get("pair_mode", "adjacent")))
         if pair_idx >= 0:
             self.analysisPairModeCombo.setCurrentIndex(pair_idx)
@@ -1332,7 +1354,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisFullMaskDilation.value = int(
             analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))
         )
-        change_region_cfg = analysis_cfg.get("change_region") or {}
         self.analysisMarrowMaskDilation.value = int(
             change_region_cfg.get(
                 "dilation_voxels",
@@ -1395,6 +1416,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._show(f"[settings] could not load defaults from pipeline config: {exc}")
 
     def _current_analysis_method(self):
+        restrict_bone = bool(getattr(self, "analysisRestrictBoneSupportCheck", None) and self.analysisRestrictBoneSupportCheck.checked)
+        enforce_binary = bool(getattr(self, "analysisBinaryReclassificationCheck", None) and self.analysisBinaryReclassificationCheck.checked)
+        if enforce_binary:
+            return "grayscale_and_binary"
+        if restrict_bone:
+            return "grayscale_marrow_mask"
+        return "grayscale_delta_only"
+
+    def _legacy_analysis_combo_method(self):
         data = self.analysisMethodCombo.currentData
         if data:
             return str(data)
@@ -1414,8 +1444,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _analysis_config_from_controls(self, pair_mode):
         method = self._current_analysis_method()
-        use_bone_union = method == "grayscale_marrow_mask"
-        enforce_binary = method == "grayscale_and_binary"
+        use_bone_union = bool(self.analysisRestrictBoneSupportCheck.checked)
+        enforce_binary = bool(self.analysisBinaryReclassificationCheck.checked)
         return {
             "method": method,
             "change_detection": "grayscale_delta",
@@ -1438,9 +1468,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         }
 
     def _on_analysis_method_changed(self, *_args):
-        method = self._current_analysis_method()
-        self.analysisMarrowMaskDilation.enabled = method == "grayscale_marrow_mask"
-        self.analysisMarrowMaskErosion.enabled = method == "grayscale_marrow_mask"
+        method = self._legacy_analysis_combo_method()
+        self.analysisRestrictBoneSupportCheck.checked = method == "grayscale_marrow_mask"
+        self.analysisBinaryReclassificationCheck.checked = method == "grayscale_and_binary"
+        self._on_analysis_option_changed()
+
+    def _on_analysis_option_changed(self, *_args):
+        use_bone_union = bool(self.analysisRestrictBoneSupportCheck.checked)
+        self.analysisMarrowMaskDilation.enabled = use_bone_union
+        self.analysisMarrowMaskErosion.enabled = use_bone_union
         self._on_interactive_preview_control_changed()
 
     def _on_mask_method_changed(self, method_name):
@@ -1646,6 +1682,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.analysisClusterSlider,
             self.analysisCluster,
             self.analysisMethodCombo,
+            self.analysisRestrictBoneSupportCheck,
+            self.analysisBinaryReclassificationCheck,
             self.analysisFullMaskDilation,
             self.analysisMarrowMaskDilation,
             self.analysisMarrowMaskErosion,
@@ -3206,10 +3244,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not metadata:
             return False
         saved_method = str(metadata.get("method", ""))
+        saved_source = str(metadata.get("change_region_source", "")).strip().lower()
+        saved_binary = metadata.get("binary_reclassification_enabled", None)
         saved_thresholds = metadata.get("thresholds") or []
         saved_clusters = metadata.get("cluster_sizes") or []
         return (
             saved_method == self._current_analysis_method()
+            and (not saved_source or saved_source == ("bone_union" if self.analysisRestrictBoneSupportCheck.checked else "common_mask"))
+            and (saved_binary is None or bool(saved_binary) == bool(self.analysisBinaryReclassificationCheck.checked))
             and saved_thresholds[:1] == [float(self.analysisThreshold.value)]
             and saved_clusters[:1] == [int(self.analysisCluster.value)]
             and bool(metadata.get("gaussian_filter", False)) == bool(self.analysisGaussianFilterCheck.checked)
@@ -4232,6 +4274,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "site": site,
                 "scenario_name": scenario_name,
                 "method": self._current_analysis_method(),
+                "change_region_source": "bone_union" if self.analysisRestrictBoneSupportCheck.checked else "common_mask",
+                "binary_reclassification_enabled": bool(self.analysisBinaryReclassificationCheck.checked),
                 "threshold": float(self.analysisThreshold.value),
                 "cluster_size": int(self.analysisCluster.value),
                 "gaussian_filter": bool(self.analysisGaussianFilterCheck.checked),
