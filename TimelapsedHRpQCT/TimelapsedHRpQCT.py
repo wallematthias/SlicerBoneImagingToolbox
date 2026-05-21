@@ -413,7 +413,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._latest_study_summary_rows = []
         self._last_dataset_root_text = ""
         self._last_results_root_text = ""
-        self._slice_scale_bar_actors = {}
+        self._slice_scale_bars = {}
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -4679,25 +4679,125 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 renderer = renderers.GetFirstRenderer() if renderers is not None else None
                 if renderer is None:
                     continue
-                actor = self._slice_scale_bar_actors.get(name)
-                if actor is None:
-                    actor = vtk.vtkLegendScaleActor()
-                    actor.SetLabelModeToDistance()
-                    actor.TopAxisVisibilityOff()
-                    actor.LeftAxisVisibilityOff()
-                    actor.RightAxisVisibilityOff()
-                    actor.BottomAxisVisibilityOn()
-                    actor.GridVisibilityOff()
-                    actor.LegendVisibilityOff()
-                    actor.SetNumberOfHorizontalLabels(3)
-                    actor.GetBottomAxis().SetTitle("")
-                    actor.GetBottomAxis().GetLabelTextProperty().SetColor(1.0, 1.0, 1.0)
-                    actor.GetBottomAxis().GetLabelTextProperty().SetFontSize(12)
-                    actor.GetBottomAxis().GetProperty().SetColor(1.0, 1.0, 1.0)
-                    renderer.AddActor2D(actor)
-                    self._slice_scale_bar_actors[name] = actor
-                actor.SetVisibility(True)
-                render_window.Render()
+                record = self._slice_scale_bars.get(name)
+                if record is None:
+                    points = vtk.vtkPoints()
+                    points.SetNumberOfPoints(6)
+                    cells = vtk.vtkCellArray()
+                    for p0, p1 in ((0, 1), (2, 3), (4, 5)):
+                        line = vtk.vtkLine()
+                        line.GetPointIds().SetId(0, p0)
+                        line.GetPointIds().SetId(1, p1)
+                        cells.InsertNextCell(line)
+                    polydata = vtk.vtkPolyData()
+                    polydata.SetPoints(points)
+                    polydata.SetLines(cells)
+                    coordinate = vtk.vtkCoordinate()
+                    coordinate.SetCoordinateSystemToDisplay()
+                    mapper = vtk.vtkPolyDataMapper2D()
+                    mapper.SetInputData(polydata)
+                    mapper.SetTransformCoordinate(coordinate)
+                    line_actor = vtk.vtkActor2D()
+                    line_actor.SetMapper(mapper)
+                    line_actor.GetProperty().SetColor(1.0, 1.0, 1.0)
+                    line_actor.GetProperty().SetLineWidth(3.0)
+                    text_actor = vtk.vtkTextActor()
+                    text_actor.GetTextProperty().SetColor(1.0, 1.0, 1.0)
+                    text_actor.GetTextProperty().SetFontSize(13)
+                    text_actor.GetTextProperty().BoldOn()
+                    renderer.AddActor2D(line_actor)
+                    renderer.AddActor2D(text_actor)
+                    record = {
+                        "points": points,
+                        "polydata": polydata,
+                        "line_actor": line_actor,
+                        "text_actor": text_actor,
+                        "observer_node": None,
+                        "observer_tag": None,
+                    }
+                    self._slice_scale_bars[name] = record
+                slice_node = widget.mrmlSliceNode()
+                if (
+                    slice_node is not None
+                    and record.get("observer_node") is not slice_node
+                ):
+                    old_node = record.get("observer_node")
+                    old_tag = record.get("observer_tag")
+                    if old_node is not None and old_tag is not None:
+                        try:
+                            old_node.RemoveObserver(old_tag)
+                        except Exception:
+                            pass
+                    try:
+                        record["observer_tag"] = slice_node.AddObserver(
+                            vtk.vtkCommand.ModifiedEvent,
+                            lambda _caller, _event, view_name=name: self._update_slice_scale_bar(view_name),
+                        )
+                        record["observer_node"] = slice_node
+                    except Exception:
+                        record["observer_node"] = None
+                        record["observer_tag"] = None
+                self._update_slice_scale_bar(name, widget, render_window)
+        except Exception:
+            pass
+
+    def _update_slice_scale_bar(self, name, widget=None, render_window=None):
+        try:
+            record = self._slice_scale_bars.get(name)
+            if record is None:
+                return
+            if widget is None or render_window is None:
+                lm = slicer.app.layoutManager()
+                widget = lm.sliceWidget(name) if lm is not None else None
+                view = widget.sliceView() if widget is not None else None
+                render_window = view.renderWindow() if view is not None else None
+            if widget is None or render_window is None:
+                return
+            slice_node = widget.mrmlSliceNode()
+            if slice_node is None:
+                return
+            size = render_window.GetSize()
+            width_px = max(1, int(size[0]))
+            fov = slice_node.GetFieldOfView()
+            fov_x_mm = abs(float(fov[0])) if fov is not None else 0.0
+            if fov_x_mm <= 0:
+                return
+            mm_per_px = fov_x_mm / float(width_px)
+            candidates_mm = (0.5, 1.0, 2.0, 5.0, 10.0)
+            target_px = 105.0
+            visible_candidates = [
+                mm for mm in candidates_mm if 45.0 <= (mm / mm_per_px) <= 170.0
+            ]
+            if visible_candidates:
+                bar_mm = min(visible_candidates, key=lambda mm: abs((mm / mm_per_px) - target_px))
+            else:
+                bar_mm = min(candidates_mm, key=lambda mm: abs((mm / mm_per_px) - target_px))
+            bar_px = max(24.0, min(180.0, bar_mm / mm_per_px))
+            x0 = 24.0
+            y0 = 28.0
+            x1 = x0 + bar_px
+            tick = 5.0
+            points = record["points"]
+            for idx, point in enumerate(
+                (
+                    (x0, y0, 0.0),
+                    (x1, y0, 0.0),
+                    (x0, y0 - tick, 0.0),
+                    (x0, y0 + tick, 0.0),
+                    (x1, y0 - tick, 0.0),
+                    (x1, y0 + tick, 0.0),
+                )
+            ):
+                points.SetPoint(idx, point)
+            points.Modified()
+            record["polydata"].Modified()
+            label = f"{int(bar_mm)} mm" if float(bar_mm).is_integer() else f"{bar_mm:g} mm"
+            text_actor = record["text_actor"]
+            text_actor.SetInput(label)
+            text_actor.SetPosition(x0, y0 + 8.0)
+            record["line_actor"].SetVisibility(True)
+            text_actor.SetVisibility(True)
+            render_window.Render()
         except Exception:
             pass
 
