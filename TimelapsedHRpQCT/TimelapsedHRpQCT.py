@@ -436,6 +436,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         depForm = qt.QFormLayout(depBox)
         depForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
         self.pipelineStatusLabel = qt.QLabel()
+        self.pipelineStatusLabel.wordWrap = False
+        self.pipelineStatusLabel.setMaximumWidth(260)
         self.installBtn = qt.QPushButton("Install / Update timelapsed-hrpqct")
         self.checkBtn = qt.QPushButton("Check")
         self.installBtn.clicked.connect(self._on_install_pipeline)
@@ -2465,13 +2467,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _on_check_pipeline(self):
         self._update_dependency_ui()
 
+    def _dependency_status_text(self, detail):
+        detail = str(detail or "")
+        if detail.startswith("Installed ("):
+            return detail.split(" from ", 1)[0]
+        if detail.startswith("Out of date"):
+            return detail.split(". Imported from ", 1)[0]
+        if detail.startswith("Not installed"):
+            return "Not installed"
+        return detail[:80] + "..." if len(detail) > 80 else detail
+
     def _update_dependency_ui(self):
         available, detail = self.logic.pipeline_status()
+        self.pipelineStatusLabel.text = self._dependency_status_text(detail)
+        self.pipelineStatusLabel.toolTip = str(detail or "")
         if available:
-            self.pipelineStatusLabel.text = detail
             self.pipelineStatusLabel.styleSheet = "color: #228b22;"
         else:
-            self.pipelineStatusLabel.text = detail
             self.pipelineStatusLabel.styleSheet = "color: #cc5500;"
 
     def _refresh_patient_list(self):
