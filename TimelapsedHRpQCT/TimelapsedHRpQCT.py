@@ -728,7 +728,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisMarrowMaskErosion = qt.QSpinBox()
         self.analysisMarrowMaskErosion.minimum = 0
         self.analysisMarrowMaskErosion.maximum = 20
-        self.analysisMarrowMaskErosion.value = 2
+        self.analysisMarrowMaskErosion.value = 0
         _cap_width(self.analysisThreshold, 220)
         _cap_width(self.analysisCluster, 220)
         _cap_width(self.analysisGaussianFilterCheck, 220)
@@ -740,8 +740,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisHintLabel = qt.QLabel(
             "Changing these analysis settings updates the loaded remodelling image. "
             "Binary + grayscale uses bone overlap for state logic, Grayscale only uses grayscale thresholds "
-            "with binary overlap for quiescence when available, and Marrow shell + grayscale restricts the "
-            "grayscale analysis to an endosteal shell derived from shared marrow."
+            "with binary overlap for quiescence when available, and Marrow shell + grayscale uses grayscale "
+            "thresholds inside the shared mask/segmentation support."
         )
         self.analysisHintLabel.wordWrap = True
         self.analysisHintLabel.styleSheet = "color: #666666;"
@@ -3170,7 +3170,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             and bool(metadata.get("gaussian_filter", False)) == bool(self.analysisGaussianFilterCheck.checked)
             and float(metadata.get("gaussian_sigma", 0.0)) == float(self.analysisGaussianSigma.value)
             and int(metadata.get("full_mask_dilation_voxels", 2)) == int(self.analysisFullMaskDilation.value)
-            and int(metadata.get("marrow_mask_erosion_voxels", 2)) == int(self.analysisMarrowMaskErosion.value)
+            and int(metadata.get("marrow_mask_erosion_voxels", 0)) == int(self.analysisMarrowMaskErosion.value)
         )
 
     def _selected_series_adjacent_pairs(self):
