@@ -69,7 +69,8 @@ The Slicer modules remain workflow wrappers around core Python packages:
 2. Go to `View -> Python Interactor`.
 3. Run:
    ```python
-   exec(open("<repo>/TimelapsedHRpQCTSlicer/scripts/link_local_toolbox_modules.py").read())
+   script = "<repo>/TimelapsedHRpQCTSlicer/scripts/link_local_toolbox_modules.py"
+   exec(open(script).read(), {"__name__": "__main__", "SCRIPT_PATH": script})
    ```
 4. Restart Slicer.
 5. Open modules from the `HR-pQCT` category.
