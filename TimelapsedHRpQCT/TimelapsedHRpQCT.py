@@ -413,6 +413,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._latest_study_summary_rows = []
         self._last_dataset_root_text = ""
         self._last_results_root_text = ""
+        self._slice_scale_bar_actors = {}
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -423,6 +424,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_patient_list()
         self._refresh_processing_subjects()
         self._set_3d_background_black()
+        self._ensure_slice_scale_bars()
 
     def _build_ui(self):
         def _cap_width(widget, width=320):
@@ -792,6 +794,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisPairMetricsMaskLabel = qt.QLabel("Mask: N/A")
         self.analysisFormationFractionLabel = qt.QLabel("Formation fraction: N/A")
         self.analysisResorptionFractionLabel = qt.QLabel("Resorption fraction: N/A")
+        for metric_label in (
+            self.analysisPairMetricsMaskLabel,
+            self.analysisFormationFractionLabel,
+            self.analysisResorptionFractionLabel,
+        ):
+            metric_label.wordWrap = True
         self.analysisPairMetricsMaskLabel.toolTip = "Compartment/mask used for the displayed pair metrics."
         self.analysisFormationFractionLabel.toolTip = "Formation fraction for the currently loaded/previewed comparison."
         self.analysisResorptionFractionLabel.toolTip = "Resorption fraction for the currently loaded/previewed comparison."
@@ -817,13 +825,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         clusterLayout.setSpacing(8)
         clusterLayout.addWidget(self.analysisClusterSlider, 1)
         clusterLayout.addWidget(self.analysisCluster)
-        pairMetricsRow = qt.QWidget()
-        pairMetricsLayout = qt.QVBoxLayout(pairMetricsRow)
-        pairMetricsLayout.setContentsMargins(0, 0, 0, 0)
-        pairMetricsLayout.setSpacing(2)
-        pairMetricsLayout.addWidget(self.analysisPairMetricsMaskLabel)
-        pairMetricsLayout.addWidget(self.analysisFormationFractionLabel)
-        pairMetricsLayout.addWidget(self.analysisResorptionFractionLabel)
+        metricsBox = qt.QGroupBox("Current Comparison")
+        metricsBox.toolTip = "Formation and resorption fractions for the currently loaded or previewed comparison."
+        metricsBox.setStyleSheet(
+            "QGroupBox { font-weight: 600; border: 1px solid #bdbdbd; border-radius: 4px; "
+            "margin-top: 8px; padding: 8px 6px 6px 6px; } "
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
+        )
+        metricsLayout = qt.QVBoxLayout(metricsBox)
+        metricsLayout.setContentsMargins(8, 10, 8, 8)
+        metricsLayout.setSpacing(4)
+        self.analysisFormationFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #c95b00;")
+        self.analysisResorptionFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #b02c83;")
+        metricsLayout.addWidget(self.analysisPairMetricsMaskLabel)
+        metricsLayout.addWidget(self.analysisFormationFractionLabel)
+        metricsLayout.addWidget(self.analysisResorptionFractionLabel)
         analysisActionsRow = qt.QWidget()
         analysisActionsLayout = qt.QHBoxLayout(analysisActionsRow)
         analysisActionsLayout.setContentsMargins(0, 0, 0, 0)
@@ -831,20 +847,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         analysisActionsLayout.addWidget(self.runAnalysisBtn)
         analysisActionsLayout.addWidget(self.saveAnalysisScenarioBtn)
         analysisActionsLayout.addStretch(1)
+        analysisForm.addRow(_label("Pair mode", "Which session comparisons to analyze: adjacent, baseline, or all pairs."), self.analysisPairModeCombo)
         analysisForm.addRow(_label("Threshold", "Absolute density-change threshold for formation/resorption detection."), thresholdRow)
         analysisForm.addRow(_label("Cluster size", "Minimum connected event size retained in remodelling maps. Use 0 to disable cluster filtering."), clusterRow)
         analysisForm.addRow(_label("Restrict changes to bone support", restrict_tip), self.analysisRestrictBoneSupportCheck)
         analysisForm.addRow(_label("Require binary reclassification", binary_tip), self.analysisBinaryReclassificationCheck)
-        analysisForm.addRow(_label("Pair mode", "Which session comparisons to analyze: adjacent, baseline, or all pairs."), self.analysisPairModeCombo)
-        analysisForm.addRow(_label("Bone support dilation (vox)", "Dilation of baseline/follow-up bone support when restricting changes to bone support."), self.analysisBoneSupportDilation)
         analysisForm.addRow(_label("Gaussian filter remodelling sites", "Smooth grayscale images before subtraction for remodelling-site detection."), self.analysisGaussianFilterCheck)
         analysisForm.addRow(_label("Analysis actions", "Update all processed analyses or save the current loaded comparison as a scenario."), analysisActionsRow)
-        analysisForm.addRow(_label("Pair metrics", "Formation and resorption fractions for the currently loaded/previewed comparison."), pairMetricsRow)
         analysisForm.addRow(_label("Preview status", "Status of the interactive remodelling preview update."), self.analysisStatusLabel)
         analysisForm.addRow(self.analysisHintLabel)
         advancedAnalysisForm.addRow(
             _label("Full mask dilation (vox)", "Dilation applied to full masks before common-region construction."),
             self.analysisFullMaskDilation,
+        )
+        advancedAnalysisForm.addRow(
+            _label("Bone support dilation (vox)", "Dilation of baseline/follow-up bone support when restricting changes to bone support."),
+            self.analysisBoneSupportDilation,
         )
         advancedAnalysisForm.addRow(
             _label("Gaussian sigma (vox)", "Sigma in voxels when Gaussian remodelling-site filtering is enabled."),
@@ -919,7 +937,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
 
-        settingsLayout.addWidget(quickBox)
         settingsLayout.addWidget(maskBox)
         settingsLayout.addWidget(registrationBox)
         settingsLayout.addWidget(advancedAnalysisBox)
@@ -938,18 +955,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.cancelRunBtn.clicked.connect(self._on_cancel_run)
         self.cancelRunBtn.enabled = False
         self.cancelRunBtn.toolTip = "Cancel the currently running pipeline step."
-        buttons = [
-            self.runMasksBtn,
-            self.runTimelapseBtn,
-            self.seriesSummaryExportBtn,
-            self.cancelRunBtn,
-        ]
-        for b in buttons:
-            _cap_width(b, 180)
-        _cap_width(self.cancelRunBtn, 90)
+        _cap_width(self.runTimelapseBtn, 125)
+        _cap_width(self.seriesSummaryExportBtn, 92)
+        _cap_width(self.cancelRunBtn, 82)
+        self.runTimelapseBtn.setMinimumWidth(110)
+        self.seriesSummaryExportBtn.setMinimumWidth(82)
+        self.cancelRunBtn.setMinimumWidth(72)
+        actionLayout.setHorizontalSpacing(6)
+        actionLayout.setContentsMargins(0, 0, 0, 0)
         actionLayout.addWidget(self.runTimelapseBtn, 0, 0)
         actionLayout.addWidget(self.seriesSummaryExportBtn, 0, 1)
         actionLayout.addWidget(self.cancelRunBtn, 0, 2)
+        actionLayout.setColumnStretch(3, 1)
 
         self.runMasksBtn.clicked.connect(self._on_run_masks)
         self.runTimelapseBtn.clicked.connect(self._on_run_full_pipeline)
@@ -1036,12 +1053,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addLayout(form)
         self.layout.addWidget(quickBox)
         self.layout.addWidget(parseBox)
-        self.layout.addWidget(settingsBox)
         self.layout.addWidget(statusBox)
         self.layout.addLayout(actionLayout)
         self.seriesSummaryBox.visible = False
-        self.layout.addWidget(loadBox)
         self.layout.addWidget(analysisSectionBox)
+        self.layout.addWidget(metricsBox)
+        self.layout.addWidget(loadBox)
+        self.layout.addWidget(settingsBox)
         self.layout.addWidget(self.logText)
         self.layout.addStretch(1)
         self._update_dependency_ui()
@@ -4642,6 +4660,44 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 node = widget.mrmlSliceNode()
                 if node is not None:
                     node.JumpSliceByCentering(cx, cy, cz)
+            self._ensure_slice_scale_bars()
+        except Exception:
+            pass
+
+    def _ensure_slice_scale_bars(self):
+        try:
+            lm = slicer.app.layoutManager()
+            if lm is None:
+                return
+            for name in ("Red", "Yellow", "Green"):
+                widget = lm.sliceWidget(name)
+                if widget is None:
+                    continue
+                view = widget.sliceView()
+                render_window = view.renderWindow() if view is not None else None
+                renderers = render_window.GetRenderers() if render_window is not None else None
+                renderer = renderers.GetFirstRenderer() if renderers is not None else None
+                if renderer is None:
+                    continue
+                actor = self._slice_scale_bar_actors.get(name)
+                if actor is None:
+                    actor = vtk.vtkLegendScaleActor()
+                    actor.SetLabelModeToDistance()
+                    actor.TopAxisVisibilityOff()
+                    actor.LeftAxisVisibilityOff()
+                    actor.RightAxisVisibilityOff()
+                    actor.BottomAxisVisibilityOn()
+                    actor.GridVisibilityOff()
+                    actor.LegendVisibilityOff()
+                    actor.SetNumberOfHorizontalLabels(3)
+                    actor.GetBottomAxis().SetTitle("")
+                    actor.GetBottomAxis().GetLabelTextProperty().SetColor(1.0, 1.0, 1.0)
+                    actor.GetBottomAxis().GetLabelTextProperty().SetFontSize(12)
+                    actor.GetBottomAxis().GetProperty().SetColor(1.0, 1.0, 1.0)
+                    renderer.AddActor2D(actor)
+                    self._slice_scale_bar_actors[name] = actor
+                actor.SetVisibility(True)
+                render_window.Render()
         except Exception:
             pass
 
