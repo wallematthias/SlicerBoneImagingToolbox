@@ -3763,6 +3763,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         source_path=None,
         interactive_cache_key=None,
         valid_mask_zyx=None,
+        center_slices=True,
     ):
         filtered_arr = self._apply_preview_label_filters(label_arr_zyx, valid_mask_zyx=valid_mask_zyx)
         full_seg = None
@@ -3782,7 +3783,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(source_path).resolve()))
             if interactive_cache_key is not None:
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingInteractiveCacheKey", str(interactive_cache_key))
-            self._center_slices_on_segmentation(full_seg)
+            if center_slices:
+                self._center_slices_on_segmentation(full_seg)
 
         if create_preview:
             preview_arr = self._create_midplane_preview(
@@ -3976,6 +3978,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 source_path=source_path,
                 interactive_cache_key=preview_inputs["cache_key"],
                 valid_mask_zyx=preview.valid_mask,
+                center_slices=False,
             )
             self._remove_existing_preview_for_full(full_seg)
             slicer.mrmlScene.RemoveNode(full_seg)
