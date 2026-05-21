@@ -122,7 +122,7 @@ The `Scanco I/O` module is intended for simple Slicer round trips:
 
 The Slicer module is only the GUI layer. AIM parsing and writing are handled by a lightweight local wrapper backed by the `aimio-py` package (`py_aimio` import name). The `Install / Update AIM I/O` button installs only that package, not the full `timelapsed-hrpqct` pipeline.
 
-Imported AIM metadata is stored on the loaded Slicer volume and shown as editable JSON in the export panel. For exports from volumes that did not originate from `Scanco I/O`, provide an imported-stack metadata JSON from the timelapsed pipeline, paste/edit header JSON manually, or explicitly enable minimal metadata export. Geometry fields that can be read from the selected Slicer volume, such as dimensions, spacing, origin, and direction, are refreshed at export time.
+Imported AIM metadata is stored on the loaded Slicer volume. The processing log is shown as an editable field table using `aimio-py`'s `log_to_dict` / `dict_to_log` helpers, while the remaining AIM header metadata is shown as editable JSON. For exports from volumes that did not originate from `Scanco I/O`, provide an imported-stack metadata JSON from the timelapsed pipeline, paste/edit header JSON manually, or explicitly enable minimal metadata export. Geometry fields that can be read from the selected Slicer volume, such as dimensions, spacing, origin, and direction, are refreshed at export time.
 
 ## Contours And Segmentation
 

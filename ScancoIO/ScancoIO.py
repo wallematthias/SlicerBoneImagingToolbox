@@ -55,6 +55,22 @@ def _image_geometry_metadata(image):
     }
 
 
+def _parse_table_value(text):
+    text = str(text).strip()
+    if not text:
+        return ""
+    if "," in text:
+        return [_parse_table_value(part) for part in text.split(",")]
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
 class ScancoIO(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
@@ -259,13 +275,28 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         load_header.clicked.connect(self._load_header_from_selected_volume)
         form.addRow(load_header)
 
+        self.processingLogTable = qt.QTableWidget()
+        self.processingLogTable.setColumnCount(2)
+        self.processingLogTable.setHorizontalHeaderLabels(["Field", "Value"])
+        self.processingLogTable.horizontalHeader().setStretchLastSection(True)
+        self.processingLogTable.setMinimumHeight(220)
+        form.addRow("Processing log", self.processingLogTable)
+
+        log_buttons = qt.QHBoxLayout()
+        self.addLogRowButton = qt.QPushButton("Add log field")
+        self.addLogRowButton.clicked.connect(self._add_processing_log_row)
+        self.removeLogRowButton = qt.QPushButton("Remove selected")
+        self.removeLogRowButton.clicked.connect(self._remove_selected_processing_log_rows)
+        log_buttons.addWidget(self.addLogRowButton)
+        log_buttons.addWidget(self.removeLogRowButton)
+        form.addRow(log_buttons)
+
         self.headerEdit = qt.QTextEdit()
-        self.headerEdit.setMinimumHeight(180)
+        self.headerEdit.setMinimumHeight(110)
         self.headerEdit.setPlaceholderText(
-            "AIM header metadata JSON. Imported AIM metadata is stored on the "
-            "Slicer volume and can be edited here before export."
+            "Other AIM header metadata JSON. Geometry is refreshed from the selected volume at export."
         )
-        form.addRow("AIM header", self.headerEdit)
+        form.addRow("Other header", self.headerEdit)
 
         self.allowMinimalCheck = qt.QCheckBox("Allow export with minimal geometry metadata")
         self.allowMinimalCheck.checked = False
@@ -329,7 +360,47 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         return json.loads(metadata_text)
 
     def _set_header_metadata(self, metadata):
+        metadata = dict(metadata or {})
+        processing_log = metadata.pop("processing_log", {})
+        metadata.pop("processing_log_raw", None)
+        self._set_processing_log_table(processing_log if isinstance(processing_log, dict) else {})
         self.headerEdit.setPlainText(_metadata_json(metadata))
+
+    def _set_processing_log_table(self, log_dict):
+        self.processingLogTable.setRowCount(0)
+        for key, value in (log_dict or {}).items():
+            row = self.processingLogTable.rowCount
+            self.processingLogTable.insertRow(row)
+            self.processingLogTable.setItem(row, 0, qt.QTableWidgetItem(str(key)))
+            if isinstance(value, (list, tuple)):
+                text = ", ".join(str(v) for v in value)
+            else:
+                text = str(value)
+            self.processingLogTable.setItem(row, 1, qt.QTableWidgetItem(text))
+
+    def _processing_log_from_table(self):
+        out = {}
+        for row in range(self.processingLogTable.rowCount):
+            key_item = self.processingLogTable.item(row, 0)
+            value_item = self.processingLogTable.item(row, 1)
+            key = key_item.text().strip() if key_item else ""
+            if not key:
+                continue
+            value = value_item.text().strip() if value_item else ""
+            out[key] = _parse_table_value(value)
+        return out
+
+    def _add_processing_log_row(self):
+        row = self.processingLogTable.rowCount
+        self.processingLogTable.insertRow(row)
+        self.processingLogTable.setItem(row, 0, qt.QTableWidgetItem(""))
+        self.processingLogTable.setItem(row, 1, qt.QTableWidgetItem(""))
+        self.processingLogTable.setCurrentCell(row, 0)
+
+    def _remove_selected_processing_log_rows(self):
+        rows = sorted({index.row() for index in self.processingLogTable.selectedIndexes()}, reverse=True)
+        for row in rows:
+            self.processingLogTable.removeRow(row)
 
     def _load_header_from_selected_volume(self):
         metadata = self._node_header_metadata(self.volumeSelector.currentNode())
@@ -354,6 +425,9 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         metadata = json.loads(text)
         if not isinstance(metadata, dict):
             raise ValueError("AIM header JSON must be an object/dictionary.")
+        processing_log = self._processing_log_from_table()
+        if processing_log:
+            metadata["processing_log"] = processing_log
         return metadata
 
     def _install_core(self):

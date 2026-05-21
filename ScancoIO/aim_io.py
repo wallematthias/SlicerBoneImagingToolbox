@@ -30,6 +30,16 @@ def is_aimio_available() -> bool:
         return False
 
 
+def log_to_dict(log: str) -> dict[str, Any]:
+    py_aimio = _load_py_aimio()
+    return py_aimio.log_to_dict(log or "")
+
+
+def dict_to_log(log_dict: dict[str, Any]) -> str:
+    py_aimio = _load_py_aimio()
+    return py_aimio.dict_to_log(log_dict or {})
+
+
 def _get_aim_calibration_constants_from_processing_log(
     processing_log: str,
 ) -> tuple[int, float, float, float, float]:
@@ -143,7 +153,11 @@ def read_aim(path: Path, scaling: str = "bmd") -> tuple[sitk.Image, dict[str, An
     np_arr, meta = py_aimio.read_aim(str(path), density=False, hu=False)
     meta = dict(meta)
     processing_log_value = meta.get("processing_log")
-    processing_log = str(meta.get("processing_log_raw") or processing_log_value or "")
+    processing_log = str(
+        meta.get("processing_log_raw")
+        or (dict_to_log(processing_log_value) if isinstance(processing_log_value, dict) else processing_log_value)
+        or ""
+    )
 
     dims_xyz_raw = meta.get("dimensions")
     dimensions_xyz: tuple[int, int, int] | None
@@ -179,12 +193,10 @@ def read_aim(path: Path, scaling: str = "bmd") -> tuple[sitk.Image, dict[str, An
         "dimensions": dimensions_xyz
         if dimensions_xyz is not None
         else (image.GetSize()[0], image.GetSize()[1], image.GetSize()[2]),
-        "processing_log": processing_log,
+        "processing_log": processing_log_value if isinstance(processing_log_value, dict) else log_to_dict(processing_log),
         "processing_log_raw": processing_log,
         "unit": image.GetMetaData("unit"),
     })
-    if isinstance(processing_log_value, dict):
-        metadata["processing_log_dict"] = processing_log_value
     return image, metadata
 
 
@@ -225,11 +237,16 @@ def aim_metadata_from_import_json(
     payload = json.loads(Path(metadata_json).read_text(encoding="utf-8"))
     source_meta = payload.get("image_metadata") or {}
     out = dict(source_meta)
-    processing_log = str(source_meta.get("processing_log_raw") or source_meta.get("processing_log", ""))
+    processing_log_value = source_meta.get("processing_log")
+    processing_log = str(
+        source_meta.get("processing_log_raw")
+        or (dict_to_log(processing_log_value) if isinstance(processing_log_value, dict) else processing_log_value)
+        or ""
+    )
     if log:
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         processing_log = f"{processing_log}\n[{stamp}] {log}."
-    out["processing_log"] = processing_log
+    out["processing_log"] = log_to_dict(processing_log)
     out["processing_log_raw"] = processing_log
     out["dimensions"] = tuple(int(v) for v in image.GetSize())
     out["spacing"] = tuple(float(v) for v in image.GetSpacing())
@@ -273,5 +290,8 @@ def write_aim(
         meta["unit"] = "native"
     elif unit is not None:
         meta["unit"] = unit
+
+    if isinstance(meta.get("processing_log"), dict):
+        meta["processing_log_raw"] = dict_to_log(meta["processing_log"])
 
     py_aimio.write_aim(str(path), arr_zyx, meta, unit=write_unit)
