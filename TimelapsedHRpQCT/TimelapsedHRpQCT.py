@@ -1336,7 +1336,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if source_label and hasattr(self, "userMessageLabel"):
             self._set_user_message("info", "Profile applied", source_label)
 
-    def _on_apply_study_profile(self):
+    def _on_apply_study_profile(self, *_args):
         if not self.logic.is_pipeline_available():
             _ok, detail = self.logic.pipeline_status()
             self._set_user_message("warn", "Pipeline needs update", detail)
@@ -1395,12 +1395,36 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if method == "laplace_hamming":
             self.maskLowLabel.text = "LH threshold"
             self.maskHighLabel.text = "Min component voxels"
+            self.maskLow.minimum = 0.0
+            self.maskLow.maximum = 100000.0
+            self.maskLow.decimals = 1
+            self.maskLow.singleStep = 100.0
+            self.maskHigh.minimum = 0.0
+            self.maskHigh.maximum = 1000000.0
+            self.maskHigh.decimals = 0
+            self.maskHigh.singleStep = 1.0
         elif method == "seg_gauss":
             self.maskLowLabel.text = "Seg threshold"
             self.maskHighLabel.text = "Gaussian sigma"
+            self.maskLow.minimum = 0.0
+            self.maskLow.maximum = 5000.0
+            self.maskLow.decimals = 1
+            self.maskLow.singleStep = 5.0
+            self.maskHigh.minimum = 0.0
+            self.maskHigh.maximum = 10.0
+            self.maskHigh.decimals = 2
+            self.maskHigh.singleStep = 0.1
         else:
             self.maskLowLabel.text = "Adaptive low threshold"
             self.maskHighLabel.text = "Adaptive high threshold"
+            self.maskLow.minimum = -1000.0
+            self.maskLow.maximum = 5000.0
+            self.maskLow.decimals = 1
+            self.maskLow.singleStep = 5.0
+            self.maskHigh.minimum = -1000.0
+            self.maskHigh.maximum = 5000.0
+            self.maskHigh.decimals = 1
+            self.maskHigh.singleStep = 5.0
         low, high = self._mask_method_defaults[method]
         self.maskLow.value = float(low)
         self.maskHigh.value = float(high)
