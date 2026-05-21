@@ -2234,6 +2234,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         imported = self._require_results_root("Could not resolve imported dataset path.")
         if imported is None:
             return
+        self._clear_existing_stack_segmentations(imported, scoped_subject)
         self._set_stage_status("masks", "pending")
         self._is_full_pipeline_run = False
         self._run_includes_analysis = False
@@ -2254,6 +2255,28 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ],
             stages=["masks", "masks"],
         )
+
+    def _clear_existing_stack_segmentations(self, imported_root, subject_id=None):
+        root = Path(imported_root)
+        if subject_id:
+            subject_roots = [root / f"sub-{subject_id}"]
+        else:
+            subject_roots = sorted(root.glob("sub-*"))
+        removed = 0
+        for subject_root in subject_roots:
+            if not subject_root.exists():
+                continue
+            for pattern in ("site-*/ses-*/stacks/*_seg.nii.gz", "site-*/ses-*/stacks/*_seg.mha"):
+                for seg_path in subject_root.glob(pattern):
+                    try:
+                        seg_path.unlink()
+                        removed += 1
+                    except Exception as exc:
+                        self._show(f"[masks] could not remove existing segmentation {seg_path}: {exc}")
+        if removed:
+            self._show(
+                f"[masks] removed {removed} existing stack segmentation file(s) so Generate Masks uses current settings."
+            )
 
     def _on_run_timelapse(self):
         if not self._require_pipeline_installed():
