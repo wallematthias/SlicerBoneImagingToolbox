@@ -431,6 +431,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception:
                 pass
 
+        def _with_help(widget, text):
+            row = qt.QWidget()
+            layout = qt.QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
+            layout.addWidget(widget)
+            help_label = qt.QLabel("?")
+            help_label.toolTip = str(text)
+            help_label.setStyleSheet(
+                "QLabel { color:#666666; border:1px solid #bdbdbd; border-radius:7px; "
+                "padding-left:4px; padding-right:4px; font-weight:600; }"
+            )
+            layout.addWidget(help_label)
+            layout.addStretch(1)
+            return row
+
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
         depForm = qt.QFormLayout(depBox)
@@ -562,6 +578,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         maskForm.addRow("Mask method", self.maskMethod)
         maskForm.addRow(self.maskLowLabel, self.maskLow)
         maskForm.addRow(self.maskHighLabel, self.maskHigh)
+        self.doNotGenerateMasksCheck = qt.QCheckBox()
+        self.doNotGenerateMasksCheck.checked = False
+        skip_masks_tip = (
+            "Skip automatic mask/segmentation generation during Run pipeline. "
+            "Use this only when existing generated outputs or raw provided masks/SEG files should be used as-is. "
+            "If the selected analysis options require segmentations and none are available, the run will stop before launch."
+        )
+        self.doNotGenerateMasksCheck.toolTip = skip_masks_tip
+        _cap_width(self.doNotGenerateMasksCheck, 220)
+        maskForm.addRow("Do not generate masks", _with_help(self.doNotGenerateMasksCheck, skip_masks_tip))
 
         self.resultsRootPath = ctk.ctkPathLineEdit()
         self.resultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
@@ -720,8 +746,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisMethodCombo.visible = False
         self.analysisRestrictBoneSupportCheck = qt.QCheckBox()
         self.analysisRestrictBoneSupportCheck.checked = False
+        restrict_tip = (
+            "Limit formation/resorption candidates to baseline/follow-up bone support. "
+            "Use this for marrow-mask style analysis."
+        )
+        self.analysisRestrictBoneSupportCheck.toolTip = restrict_tip
         self.analysisBinaryReclassificationCheck = qt.QCheckBox()
         self.analysisBinaryReclassificationCheck.checked = True
+        binary_tip = (
+            "Require the binary segmentation state to change in addition to the grayscale density change. "
+            "Formation must become bone; resorption must stop being bone."
+        )
+        self.analysisBinaryReclassificationCheck.toolTip = binary_tip
         self.analysisPairModeCombo = qt.QComboBox()
         self.analysisPairModeCombo.addItem("Adjacent", "adjacent")
         self.analysisPairModeCombo.addItem("Baseline", "baseline")
@@ -752,9 +788,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.analysisBoneSupportDilation, 220)
         _cap_width(self.analysisMarrowMaskErosion, 220)
         self.analysisHintLabel = qt.QLabel(
-            "Changing these analysis settings updates the loaded remodelling image. Grayscale delta is always "
-            "the base detector; bone support limits where changes are detected, and binary reclassification "
-            "requires matching baseline/follow-up segmentation state changes."
+            "Hover ? icons for option details."
         )
         self.analysisHintLabel.wordWrap = True
         self.analysisHintLabel.styleSheet = "color: #666666;"
@@ -784,8 +818,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         pairMetricsLayout.addWidget(self.analysisResorptionFractionLabel)
         analysisForm.addRow("Threshold", thresholdRow)
         analysisForm.addRow("Cluster size", clusterRow)
-        analysisForm.addRow("Restrict changes to bone support", self.analysisRestrictBoneSupportCheck)
-        analysisForm.addRow("Require binary reclassification", self.analysisBinaryReclassificationCheck)
+        analysisForm.addRow(
+            "Restrict changes to bone support",
+            _with_help(self.analysisRestrictBoneSupportCheck, restrict_tip),
+        )
+        analysisForm.addRow(
+            "Require binary reclassification",
+            _with_help(self.analysisBinaryReclassificationCheck, binary_tip),
+        )
         analysisForm.addRow("Pair mode", self.analysisPairModeCombo)
         analysisForm.addRow("Full mask dilation (vox)", self.analysisFullMaskDilation)
         analysisForm.addRow("Bone support dilation (vox)", self.analysisBoneSupportDilation)
@@ -834,7 +874,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummarySavedStateLabel.wordWrap = True
         self.seriesSummaryUpdateBtn = qt.QPushButton("Load saved cohort summary")
         self.seriesSummaryUpdateBtn.clicked.connect(self._refresh_saved_cohort_summary)
-        self.seriesSummaryExportBtn = qt.QPushButton("Export cohort rows")
+        self.seriesSummaryExportBtn = qt.QPushButton("Export tabulated results")
+        self.seriesSummaryExportBtn.toolTip = (
+            "Export saved pairwise remodelling result rows for the processed cohort."
+        )
         self.seriesSummaryExportBtn.clicked.connect(self._on_export_study_summary)
         self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
         self.seriesSummaryTable = qt.QTableWidget()
@@ -855,27 +898,31 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryForm.addRow("Mask summaries", self.seriesSummaryTable)
         self.seriesSummaryForm.addRow(self.seriesBasisLabel)
 
-        self.saveAnalysisScenarioBtn = qt.QPushButton("Save Analysis As...")
+        self.saveAnalysisScenarioBtn = qt.QPushButton("Save current analysis...")
+        self.saveAnalysisScenarioBtn.toolTip = (
+            "Save the currently loaded remodelling comparison and current analysis options as a scenario."
+        )
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
 
         settingsLayout.addWidget(quickBox)
         settingsLayout.addWidget(maskBox)
         settingsLayout.addWidget(registrationBox)
         analysisSectionLayout.addWidget(analysisBox)
-        analysisSectionLayout.addWidget(self.saveAnalysisScenarioBtn)
 
         actionLayout = qt.QGridLayout()
-        self.runMasksBtn = qt.QPushButton("1. Generate Masks")
+        self.runMasksBtn = qt.QPushButton("Generate masks")
         self.runMasksBtn.toolTip = "Generate/recompute masks from imported stacks."
-        self.runTimelapseBtn = qt.QPushButton("2. Timelapse Pipeline")
+        self.runMasksBtn.visible = False
+        self.runTimelapseBtn = qt.QPushButton("Run pipeline")
         self.runTimelapseBtn.toolTip = (
-            "Run import + timelapse pipeline (mode controlled by "
-            "'Use multistack correction' in Advanced Settings), "
-            "while skipping automatic mask generation."
+            "Run the complete workflow. By default this includes mask generation; "
+            "enable 'Do not generate masks' in Advanced Settings to use existing/provided masks."
         )
-        self.runAnalysisBtn = qt.QPushButton("3. Re-run Analysis")
-        self.runAnalysisBtn.toolTip = "Re-run analysis only."
-        self.cancelRunBtn = qt.QPushButton("Cancel current run")
+        self.runAnalysisBtn = qt.QPushButton("Update analysis")
+        self.runAnalysisBtn.toolTip = (
+            "Rerun only the remodelling analysis for processed data using the current analysis options."
+        )
+        self.cancelRunBtn = qt.QPushButton("✕ Cancel")
         self.cancelRunBtn.clicked.connect(self._on_cancel_run)
         self.cancelRunBtn.enabled = False
         self.cancelRunBtn.toolTip = "Cancel the currently running pipeline step."
@@ -883,17 +930,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.runMasksBtn,
             self.runTimelapseBtn,
             self.runAnalysisBtn,
+            self.seriesSummaryExportBtn,
+            self.saveAnalysisScenarioBtn,
             self.cancelRunBtn,
         ]
         for b in buttons:
             _cap_width(b, 180)
-        actionLayout.addWidget(self.runMasksBtn, 0, 0)
-        actionLayout.addWidget(self.runTimelapseBtn, 0, 1)
+        _cap_width(self.cancelRunBtn, 90)
+        actionLayout.addWidget(self.runTimelapseBtn, 0, 0)
+        actionLayout.addWidget(self.seriesSummaryExportBtn, 0, 1)
         actionLayout.addWidget(self.runAnalysisBtn, 1, 0)
-        actionLayout.addWidget(self.cancelRunBtn, 1, 1)
+        actionLayout.addWidget(self.saveAnalysisScenarioBtn, 1, 1)
+        actionLayout.addWidget(self.cancelRunBtn, 2, 0)
 
         self.runMasksBtn.clicked.connect(self._on_run_masks)
-        self.runTimelapseBtn.clicked.connect(self._on_run_timelapse)
+        self.runTimelapseBtn.clicked.connect(self._on_run_full_pipeline)
         self.runAnalysisBtn.clicked.connect(self._on_run_analysis)
 
         statusBox = ctk.ctkCollapsibleButton()
@@ -978,7 +1029,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(settingsBox)
         self.layout.addWidget(statusBox)
         self.layout.addLayout(actionLayout)
-        self.layout.addWidget(self.seriesSummaryBox)
+        self.seriesSummaryBox.visible = False
         self.layout.addWidget(loadBox)
         self.layout.addWidget(analysisSectionBox)
         self.layout.addWidget(self.logText)
@@ -1691,8 +1742,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _set_running_ui(self, is_running):
         running = bool(is_running)
-        for btn in [self.runMasksBtn, self.runTimelapseBtn, self.runAnalysisBtn]:
+        for btn in [
+            self.runMasksBtn,
+            self.runTimelapseBtn,
+            self.runAnalysisBtn,
+            self.seriesSummaryExportBtn,
+            self.saveAnalysisScenarioBtn,
+        ]:
             btn.enabled = not running
+        if hasattr(self, "doNotGenerateMasksCheck"):
+            self.doNotGenerateMasksCheck.enabled = not running
         self.cancelRunBtn.enabled = running
 
     def _set_interactive_preview_busy(self, is_busy, message=None):
@@ -2510,6 +2569,71 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             cfg,
         ])
 
+    def _current_analysis_requires_segmentation(self):
+        return self._current_analysis_method() in {"grayscale_and_binary", "grayscale_marrow_mask"}
+
+    def _raw_sessions_have_segmentation_inputs(self, sessions):
+        sessions = list(sessions or [])
+        if not sessions:
+            return False
+        for session in sessions:
+            seg_path = getattr(session, "raw_seg_path", None)
+            if not seg_path or not Path(seg_path).exists():
+                return False
+        return True
+
+    def _existing_imported_segmentations_complete(self, imported, sessions=None, scoped_subject=None):
+        try:
+            from timelapsedhrpqct.dataset.artifacts import iter_imported_stack_records
+        except Exception as exc:
+            self._show(f"[masks] could not inspect existing imported segmentations: {exc}")
+            return False
+
+        session_keys = set()
+        for session in sessions or []:
+            subject = str(getattr(session, "subject_id", "")).strip()
+            site = str(getattr(session, "site", "")).strip().lower()
+            session_id = str(getattr(session, "session_id", "")).strip()
+            stack_index = getattr(session, "stack_index", None)
+            try:
+                stack_index = int(stack_index) if stack_index is not None else None
+            except Exception:
+                stack_index = None
+            if subject and site and session_id:
+                session_keys.add((subject, site, session_id, stack_index))
+
+        records = []
+        for record in iter_imported_stack_records(imported):
+            if scoped_subject is not None and str(getattr(record, "subject_id", "")) != str(scoped_subject):
+                continue
+            if session_keys:
+                key = (
+                    str(getattr(record, "subject_id", "")).strip(),
+                    str(getattr(record, "site", "")).strip().lower(),
+                    str(getattr(record, "session_id", "")).strip(),
+                    int(getattr(record, "stack_index", 0)),
+                )
+                # Single-stack parsed sessions may have no explicit stack index.
+                key_no_stack = (key[0], key[1], key[2], None)
+                if key not in session_keys and key_no_stack not in session_keys:
+                    continue
+            records.append(record)
+
+        if not records:
+            return False
+        return all(getattr(record, "seg_path", None) and Path(record.seg_path).exists() for record in records)
+
+    def _can_skip_mask_generation(self, imported, sessions=None, scoped_subject=None):
+        if not self._current_analysis_requires_segmentation():
+            return True
+        if self._raw_sessions_have_segmentation_inputs(sessions):
+            return True
+        return self._existing_imported_segmentations_complete(
+            imported,
+            sessions=sessions,
+            scoped_subject=scoped_subject,
+        )
+
     def _auto_mode_from_sessions(self, sessions=None):
         candidate_sessions = sessions if sessions is not None else (self._last_parsed_sessions or [])
         has_multistack = any(
@@ -2546,13 +2670,30 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if imported is None:
             return
         mode = self._auto_mode_from_sessions(scoped_sessions)
+        skip_mask_generation = bool(getattr(self, "doNotGenerateMasksCheck", None) and self.doNotGenerateMasksCheck.checked)
+        if skip_mask_generation and not self._can_skip_mask_generation(
+            imported,
+            sessions=scoped_sessions,
+            scoped_subject=scoped_subject,
+        ):
+            slicer.util.errorDisplay(
+                "Cannot skip mask generation with the current analysis options.\n\n"
+                "The selected analysis settings require segmentation masks. "
+                "Provide raw *_SEG.AIM files, use an existing imported dataset with generated segmentations, "
+                "or uncheck 'Do not generate masks'. Raw provided masks/SEG files are imported and used as-is."
+            )
+            return
         cfg = self.logic.create_override_config(self._settings_override())
         self._set_user_message(
             "info",
             "Running full pipeline",
             (
-                f"Mode: <b>{mode}</b>. Running unified pipeline command with smart skip detection "
-                "(existing import/masks/registration/analysis outputs are reused when available)."
+                f"Mode: <b>{mode}</b>. "
+                + (
+                    "Using existing/provided masks and segmentations; automatic mask generation is disabled."
+                    if skip_mask_generation
+                    else "Automatic mask generation is enabled; raw provided masks/SEG files are preserved and used as inputs."
+                )
             ),
         )
         for s in ("masks", "registration", "analysis"):
@@ -2560,21 +2701,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._active_stage = "registration"
         self._is_full_pipeline_run = True
         self._run_includes_analysis = True
-        self._run(
-            [
-                "run",
-                str(run_root),
-                "--output-root",
-                str(imported),
-                "--mode",
-                mode,
-                *self._raw_ingest_cli_flags(raw_ingest_mode),
-                *self._raw_discovery_cli_flags(),
-                *self._profile_cli_args(),
-                "--config",
-                cfg,
-            ]
-        )
+        run_args = [
+            "run",
+            str(run_root),
+            "--output-root",
+            str(imported),
+            "--mode",
+            mode,
+            *self._raw_ingest_cli_flags(raw_ingest_mode),
+            *self._raw_discovery_cli_flags(),
+            *self._profile_cli_args(),
+            "--config",
+            cfg,
+        ]
+        if skip_mask_generation:
+            run_args.insert(6, "--skip-mask-generation")
+        else:
+            self._clear_stale_stack_segmentations(imported, scoped_subject, str(self.maskMethod.currentText or ""))
+        self._run(run_args)
 
     def _on_finished(self, exit_code, exit_status):
         self._show(f"[timelapsed-slicer] finished with exit code {exit_code}")
