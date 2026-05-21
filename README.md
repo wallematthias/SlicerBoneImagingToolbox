@@ -2,19 +2,30 @@
   <img src="resources/TimelapsedHRpQCTSlicer.png" alt="TimelapsedHRpQCTSlicer logo" width="320">
 </p>
 
-# TimelapsedHRpQCT Slicer Extension
+# HR-pQCT Toolbox for 3D Slicer
 
-3D Slicer scripted extension for running and reviewing the `timelapsed-hrpqct` pipeline.
+3D Slicer scripted extension for HR-pQCT workflows: longitudinal timelapsed analysis, motion scoring, Scanco AIM import/export, and contouring/segmentation helpers.
 
 `timelapsed-hrpqct` is a longitudinal high-resolution peripheral quantitative computed tomography (HR-pQCT) analysis workflow that aligns longitudinal scans of the same subject across timepoints and computes remodelling-related outputs from those registered volumes.
 It is designed for high-throughput, pipeline-style processing of multi-subject datasets.
 It is intended for HR-pQCT datasets acquired on Scanco XtremeCT systems. The current workflow was developed primarily for second-generation XtremeCT data, but can be adapted to other compatible acquisition setups.
 
-## Core Pipeline Repository
+The extension appears in Slicer as one toolbox category:
 
-This Slicer extension is a GUI wrapper around the main pipeline repository:
+```text
+HR-pQCT
+  Timelapsed HR-pQCT
+  Motion Scoring
+  Scanco I/O
+  Contours and Segmentation
+```
+
+## Core Repositories
+
+The Slicer modules remain workflow wrappers around core Python packages:
 
 - `TimelapsedHRpQCT`: https://github.com/wallematthias/TimelapsedHRpQCT
+- `MotionScoreHRpQCT`: https://github.com/wallematthias/MotionScoreHRpQCT
 
 <p align="center">
   <img src="resources/screenshot-slicer-TimelapsedHRpQCT.png" alt="TimelapsedHRpQCT module screenshot" width="1000">
@@ -25,17 +36,29 @@ This Slicer extension is a GUI wrapper around the main pipeline repository:
 
 ## Modules
 
-- **TimelapsedHRpQCT**: End-to-end longitudinal HR-pQCT workflow in Slicer.
+- **Timelapsed HR-pQCT**: End-to-end longitudinal HR-pQCT workflow in Slicer.
   - Parses AIM datasets into subject/site/session structure.
   - Generates masks (if needed), runs timelapse registration, and computes remodelling outputs.
   - Loads processed outputs (`raw`, `transformed`, `remodelling image`) for review and 3D visualization.
+- **Motion Scoring**: Interactive HR-pQCT scan motion grading workflow.
+  - Runs MotionScore predictions.
+  - Supports rapid reviewer grading and review-table export.
+  - Keeps model inference and retraining logic in the MotionScore core package.
+- **Scanco I/O**: Focused AIM import/export utility.
+  - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, or HU.
+  - Preserves AIM metadata on imported Slicer volumes so edited data can be exported without a reference AIM.
+  - Exports edited grayscale volumes or binary masks back to `.AIM`.
+- **Contours and Segmentation**: Lightweight Slicer workflow helper for masks and contours.
+  - Creates a threshold-based segmentation from an HR-pQCT volume.
+  - Opens Slicer's Segment Editor for manual cleanup.
+  - Leaves algorithmic segmentation methods in the core packages.
 
 ## Installation
 
 ### Option A: Extension Manager (recommended when listed)
 
 1. Open 3D Slicer.
-2. Install `TimelapsedHRpQCT` from Extension Manager.
+2. Install `HR-pQCT Toolbox` from Extension Manager.
 3. Restart 3D Slicer.
 
 ### Option B: Developer mode (current fallback)
@@ -44,12 +67,15 @@ This Slicer extension is a GUI wrapper around the main pipeline repository:
 2. Go to `Edit -> Application Settings -> Modules`.
 3. Add module path:
    - `<repo>/TimelapsedHRpQCTSlicer/TimelapsedHRpQCT`
+   - `<repo>/TimelapsedHRpQCTSlicer/MotionScoreHRpQCT`
+   - `<repo>/TimelapsedHRpQCTSlicer/ScancoIO`
+   - `<repo>/TimelapsedHRpQCTSlicer/HRpQCTSegmentation`
 4. Restart Slicer.
-5. Open module `TimelapsedHRpQCT`.
+5. Open modules from the `HR-pQCT` category.
 
 ## Tutorial
 
-1. Open module `TimelapsedHRpQCT`.
+1. Open module `Timelapsed HR-pQCT`.
 2. Click `Install / Update timelapsed-hrpqct` to install runtime dependencies in Slicer Python.
 3. Select your AIM dataset root.
 4. Click `Parse input`.
@@ -70,6 +96,20 @@ After loading a saved remodelling image, the module exposes the same review para
 When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
 The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation fraction, and resorption fraction.
 Mask segmentation can be generated with adaptive, global Gaussian-threshold, or Laplace-Hamming binarization.
+
+## Scanco AIM I/O
+
+The `Scanco I/O` module is intended for simple Slicer round trips:
+
+1. Import an AIM image using density/BMD, native, mu, or HU scaling.
+2. Use standard Slicer tools to inspect, segment, crop, smooth, or edit the loaded volume.
+3. Export the edited scalar volume or labelmap back to AIM.
+
+Imported AIM metadata is stored on the loaded Slicer volume. For exports from volumes that did not originate from `Scanco I/O`, provide an imported-stack metadata JSON from the timelapsed pipeline or explicitly enable minimal metadata export.
+
+## Contours And Segmentation
+
+The `Contours and Segmentation` module creates an initial threshold segmentation from a selected HR-pQCT volume and then opens Slicer's Segment Editor for manual contour cleanup. This module is intentionally small; it provides Slicer workflow glue and does not move core segmentation algorithms out of their Python packages.
 
 ## Results Layout
 

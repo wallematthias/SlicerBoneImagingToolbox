@@ -48,8 +48,8 @@ def _suppress_simpleitk_warnings():
 class TimelapsedHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "TimelapsedHRpQCT"
-        parent.categories = ["Quantification"]
+        parent.title = "Timelapsed HR-pQCT"
+        parent.categories = ["HR-pQCT"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

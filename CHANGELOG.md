@@ -2,6 +2,19 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.2.0] - 2026-05-21
+
+### Added
+
+- Evolved the extension into an HR-pQCT Toolbox with Timelapsed, Motion Scoring, Scanco I/O, and Contours and Segmentation modules under one Slicer category.
+- Added a Scanco I/O module for AIM import with density/native/mu/HU scaling and AIM export for grayscale or binary mask volumes.
+- Added a Contours and Segmentation module for threshold-based segmentation creation followed by cleanup in Slicer's Segment Editor.
+- Added MotionScoreHRpQCT as a sibling toolbox module.
+
+### Changed
+
+- Updated extension metadata and README language from a single Timelapsed wrapper toward the HR-pQCT Toolbox identity while keeping the existing repository URL.
+
 ## [0.1.6] - 2026-05-20
 
 ### Added
