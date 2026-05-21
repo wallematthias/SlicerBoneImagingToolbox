@@ -1004,6 +1004,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         secondaryActionLayout.addStretch(1)
         _cap_width(self.seriesSummaryExportBtn, 96)
         _cap_width(self.cancelRunBtn, 82)
+        processingSubjectRow = qt.QWidget()
+        processingSubjectLayout = qt.QFormLayout(processingSubjectRow)
+        processingSubjectLayout.setContentsMargins(0, 0, 0, 0)
+        processingSubjectLayout.setSpacing(6)
+        processingSubjectLayout.addRow(
+            _label("Processing subject", "Subject selected for pipeline runs. All subjects processes the cohort."),
+            self.processingSubjectCombo,
+        )
+        actionLayout.addWidget(processingSubjectRow)
         actionLayout.addWidget(self.runTimelapseBtn)
         actionLayout.addWidget(secondaryActionRow)
 
@@ -1020,7 +1029,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.progressBar.value = 0
         self.currentStepLabel = qt.QLabel("Current step: idle")
         self.currentStepLabel.toolTip = "Currently running pipeline command or idle state."
-        statusForm.addRow(_label("Processing subject", "Subject selected for pipeline runs. All subjects processes the cohort."), self.processingSubjectCombo)
         statusForm.addRow(_label("Progress", "Current pipeline stage progress."), self.progressBar)
         statusForm.addRow(_label("Current", "Currently running pipeline step."), self.currentStepLabel)
         self.stageLabels = {}
