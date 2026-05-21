@@ -1454,11 +1454,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return {"change_detection", "change_region", "binary_reclassification"}.issubset(names)
 
     def _analysis_config_from_controls(self, pair_mode):
-        method = self._current_analysis_method()
         use_bone_union = bool(self.analysisRestrictBoneSupportCheck.checked)
         enforce_binary = bool(self.analysisBinaryReclassificationCheck.checked)
         base = {
-            "method": method,
+            "method": "auto",
             "pair_mode": pair_mode,
             "compartments": ["full", "trab", "cort"],
             "thresholds": [float(self.analysisThreshold.value)],
@@ -1484,6 +1483,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
         else:
             # Older released cores warn on the explicit nested analysis keys. Keep legacy keys only.
+            base["method"] = self._current_analysis_method()
             base["marrow_mask_dilation_voxels"] = int(self.analysisMarrowMaskDilation.value) if use_bone_union else 0
             base["marrow_mask_erosion_voxels"] = 0
         return base
