@@ -29,10 +29,12 @@ from slicer.ScriptedLoadableModule import (
 )
 
 
-MODULE_VERSION = "0.1.4"
-DEFAULT_LICENSE_API = "https://motionscore-license-api.matthias-walle.workers.dev"
-DEFAULT_MODEL_BUNDLE_URL = ""
-DEFAULT_REGISTRATION_URL = ""
+MODULE_VERSION = "0.1.5"
+MIN_CORE_VERSION = "2.5.3"
+DEFAULT_MODEL_CATALOG_URL = (
+    "https://github.com/wallematthias/MotionScoreHRpQCT/releases/latest/download/model_catalog.json"
+)
+DEFAULT_REGISTRATION_URL = "https://github.com/wallematthias/MotionScoreHRpQCT/issues/new"
 LICENSE_HTTP_USER_AGENT = "MotionScoreSlicer/0.1 (+3D-Slicer; Python urllib)"
 CORE_PYPI_PACKAGE = "motionscorehrpqct"
 CORE_PIP_CONSTRAINTS = ("numpy<2.0",)
@@ -229,21 +231,14 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         licenseForm.addRow("Local models folder", self.modelsPathEdit)
 
         self.modelBundleUrlEdit = qt.QLineEdit()
-        self.modelBundleUrlEdit.setText(self._settings().value("MotionScore/ModelBundleUrl", DEFAULT_MODEL_BUNDLE_URL))
-        self.modelBundleUrlEdit.setPlaceholderText("Optional HTTPS URL to a .tar.gz model bundle")
-        licenseForm.addRow("Model bundle URL", self.modelBundleUrlEdit)
+        self.modelBundleUrlEdit.setText(self._settings().value("MotionScore/ModelCatalogUrl", DEFAULT_MODEL_CATALOG_URL))
+        self.modelBundleUrlEdit.setPlaceholderText("Model catalog JSON URL")
+        licenseForm.addRow("Model catalog URL", self.modelBundleUrlEdit)
 
         self.registrationUrlEdit = qt.QLineEdit()
         self.registrationUrlEdit.setText(self._settings().value("MotionScore/RegistrationUrl", DEFAULT_REGISTRATION_URL))
-        self.registrationUrlEdit.setPlaceholderText("Optional registration form or project page URL")
-        licenseForm.addRow("Registration URL", self.registrationUrlEdit)
-
-        self.licenseApiEdit = qt.QLineEdit()
-        self.licenseApiEdit.setText(self._settings().value("MotionScore/LicenseApiBase", DEFAULT_LICENSE_API))
-
-        legacyLabel = qt.QLabel("Optional contact / legacy online license fields")
-        legacyLabel.setStyleSheet("font-weight: 600; color: #555555;")
-        licenseForm.addRow(legacyLabel)
+        self.registrationUrlEdit.setPlaceholderText("Tracking issue/form URL")
+        licenseForm.addRow("Tracking URL", self.registrationUrlEdit)
 
         self.licenseNameEdit = qt.QLineEdit()
         self.licenseNameEdit.setText(self._settings().value("MotionScore/LicenseName", ""))
@@ -257,17 +252,29 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.licenseEmailEdit.setText(self._settings().value("MotionScore/LicenseEmail", ""))
         licenseForm.addRow("Email", self.licenseEmailEdit)
 
+        self.licenseGroupEdit = qt.QLineEdit()
+        self.licenseGroupEdit.setText(self._settings().value("MotionScore/LicenseGroup", ""))
+        licenseForm.addRow("Lab / group", self.licenseGroupEdit)
+
+        self.licenseUseEdit = qt.QLineEdit()
+        self.licenseUseEdit.setText(self._settings().value("MotionScore/LicenseUse", "HR-pQCT motion scoring"))
+        licenseForm.addRow("Intended use", self.licenseUseEdit)
+
         self.licenseKeyEdit = qt.QLineEdit()
         self.licenseKeyEdit.setText(self._settings().value("MotionScore/LicenseKey", ""))
-        licenseForm.addRow("Legacy license key", self.licenseKeyEdit)
+        self.licenseKeyEdit.readOnly = True
+        licenseForm.addRow("Registration key", self.licenseKeyEdit)
 
         self.modelVersionEdit = qt.QLineEdit()
         self.modelVersionEdit.setText(self._settings().value("MotionScore/ModelVersion", "v1"))
 
-        self.quickSetupButton = qt.QPushButton("Setup / Refresh Local Models")
+        self.quickSetupButton = qt.QPushButton("Register And Download Models")
         licenseLayout.addWidget(self.quickSetupButton)
 
-        self.downloadModelBundleButton = qt.QPushButton("Download Model Bundle")
+        self.requestLicenseButton = qt.QPushButton("Request / Create Registration")
+        licenseLayout.addWidget(self.requestLicenseButton)
+
+        self.downloadModelBundleButton = qt.QPushButton("Download Models")
         licenseLayout.addWidget(self.downloadModelBundleButton)
 
         self.importModelBundleButton = qt.QPushButton("Import Model Bundle...")
@@ -280,9 +287,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         licenseLayout.addWidget(self.forceReinstallButton)
 
         self.licenseFlowHelpLabel = qt.QLabel(
-            "Recommended: use a public or lab-hosted model bundle and optional registration page. "
-            "This avoids a metered license API while still allowing release download counts and voluntary registration. "
-            "The legacy online license fields below remain available if that service is restored."
+            "Registration is self-service and automatically approved. Name, institution, and email are written "
+            "to a local registration key before model download; the generated tracking URL can be opened for usage tracking."
         )
         self.licenseFlowHelpLabel.setWordWrap(True)
         licenseLayout.addWidget(self.licenseFlowHelpLabel)
@@ -635,6 +641,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.exportButton.clicked.connect(self.onExport)
         self.importButton.clicked.connect(self.onImportFinalGrades)
         self.quickSetupButton.clicked.connect(self.onQuickSetup)
+        self.requestLicenseButton.clicked.connect(self.onRequestLicense)
         self.downloadModelBundleButton.clicked.connect(self.onDownloadModelBundle)
         self.importModelBundleButton.clicked.connect(self.onImportModelBundle)
         self.openRegistrationButton.clicked.connect(self.onOpenRegistrationPage)
@@ -652,12 +659,13 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.datasetPathEdit.currentPathChanged.connect(self.onDatasetPathChanged)
         self.trainingModeCheck.toggled.connect(self.onTrainingModeToggled)
         self.reviewerEdit.editingFinished.connect(self._persist_reviewer_setting)
-        self.licenseApiEdit.editingFinished.connect(self._persist_license_settings)
         self.modelBundleUrlEdit.editingFinished.connect(self._persist_license_settings)
         self.registrationUrlEdit.editingFinished.connect(self._persist_license_settings)
         self.licenseNameEdit.editingFinished.connect(self._persist_license_settings)
         self.licenseInstitutionEdit.editingFinished.connect(self._persist_license_settings)
         self.licenseEmailEdit.editingFinished.connect(self._persist_license_settings)
+        self.licenseGroupEdit.editingFinished.connect(self._persist_license_settings)
+        self.licenseUseEdit.editingFinished.connect(self._persist_license_settings)
         self.licenseKeyEdit.editingFinished.connect(self._persist_license_settings)
         self.deviceCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.runModeCombo.currentTextChanged.connect(self._persist_runtime_settings)
@@ -714,12 +722,13 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _persist_license_settings(self):
         s = self._settings()
-        s.setValue("MotionScore/LicenseApiBase", self.licenseApiEdit.text.strip())
-        s.setValue("MotionScore/ModelBundleUrl", self.modelBundleUrlEdit.text.strip())
+        s.setValue("MotionScore/ModelCatalogUrl", self.modelBundleUrlEdit.text.strip())
         s.setValue("MotionScore/RegistrationUrl", self.registrationUrlEdit.text.strip())
         s.setValue("MotionScore/LicenseName", self.licenseNameEdit.text.strip())
         s.setValue("MotionScore/LicenseInstitution", self.licenseInstitutionEdit.text.strip())
         s.setValue("MotionScore/LicenseEmail", self.licenseEmailEdit.text.strip())
+        s.setValue("MotionScore/LicenseGroup", self.licenseGroupEdit.text.strip())
+        s.setValue("MotionScore/LicenseUse", self.licenseUseEdit.text.strip())
         s.setValue("MotionScore/LicenseKey", self.licenseKeyEdit.text.strip())
         s.setValue("MotionScore/ModelVersion", self.modelVersionEdit.text.strip())
 
@@ -802,45 +811,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.licenseStatusLabel.setText(str(text))
         self._update_setup_status()
 
-    def _license_token(self):
-        return str(self._settings().value("MotionScore/LicenseToken", "") or "").strip()
-
-    def _license_decrypt_key(self):
-        return str(self._settings().value("MotionScore/ModelDecryptKey", "") or "").strip()
-
-    def _license_session_email(self):
-        return str(self._settings().value("MotionScore/LicenseSessionEmail", "") or "").strip().lower()
-
-    def _license_session_key(self):
-        return str(self._settings().value("MotionScore/LicenseSessionKey", "") or "").strip()
-
-    def _clear_license_session(self):
-        s = self._settings()
-        s.setValue("MotionScore/LicenseToken", "")
-        s.setValue("MotionScore/ModelDecryptKey", "")
-        s.setValue("MotionScore/LicenseSessionEmail", "")
-        s.setValue("MotionScore/LicenseSessionKey", "")
-        self._update_setup_status()
-
-    def _set_license_session(self, token, decrypt_key, *, email="", license_key=""):
-        s = self._settings()
-        s.setValue("MotionScore/LicenseToken", str(token).strip())
-        s.setValue("MotionScore/ModelDecryptKey", str(decrypt_key).strip())
-        s.setValue("MotionScore/LicenseSessionEmail", str(email).strip().lower())
-        s.setValue("MotionScore/LicenseSessionKey", str(license_key).strip())
-        self._update_setup_status()
-
     def _default_device_hash(self):
         machine = platform.machine()
         node = platform.node()
         mac = f"{uuid.getnode():012x}"
         raw = f"{machine}|{node}|{mac}".encode("utf-8")
         return hashlib.sha256(raw).hexdigest()[:24]
-
-    def _license_api_base(self):
-        base = self.licenseApiEdit.text.strip() or DEFAULT_LICENSE_API
-        base = base.rstrip("/")
-        return base
 
     def _http_json(self, method, url, payload=None, headers=None):
         headers = dict(headers or {})
@@ -1210,25 +1186,72 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         models_dir = models_dir or self._models_dir()
         if models_dir is None:
             return False
-        return any(models_dir.glob("DNN_*.pt")) or any(models_dir.glob("DNN_*.h5"))
+        models_dir = Path(models_dir)
+        try:
+            from motionscore.model_registry import list_model_profiles, resolve_model_dir
+
+            for profile in list_model_profiles(models_dir):
+                model_id = str(profile.get("model_id", "")).strip()
+                if not model_id:
+                    continue
+                model_dir, _ = resolve_model_dir(model_root=models_dir, model_id=model_id)
+                if any(Path(model_dir).glob("DNN_*.pt")) or any(Path(model_dir).glob("DNN_*.h5")):
+                    return True
+        except Exception:
+            pass
+        return (
+            any(models_dir.glob("DNN_*.pt"))
+            or any(models_dir.glob("DNN_*.h5"))
+            or any(models_dir.glob("*/DNN_*.pt"))
+            or any(models_dir.glob("*/DNN_*.h5"))
+        )
+
+    def _version_tuple(self, value):
+        parts = []
+        for token in re.findall(r"\d+", str(value or "")):
+            try:
+                parts.append(int(token))
+            except Exception:
+                parts.append(0)
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
 
     def _core_package_ready(self):
         try:
-            import motionscore  # noqa: F401
-
-            return True
+            import motionscore
         except Exception:
             return False
+        installed = getattr(motionscore, "__version__", "0")
+        return self._version_tuple(installed) >= self._version_tuple(MIN_CORE_VERSION)
 
-    def _license_ready(self):
-        return bool(self._license_token() and self._license_decrypt_key())
+    def _installed_core_version(self):
+        try:
+            import motionscore
 
-    def _license_session_matches_form(self):
-        form_email = self.licenseEmailEdit.text.strip().lower()
-        form_key = self.licenseKeyEdit.text.strip()
-        if not form_email or not form_key:
+            return str(getattr(motionscore, "__version__", "unknown"))
+        except Exception:
+            return "not installed"
+
+    def _license_file_path(self):
+        try:
+            from motionscore.licensing import default_license_path
+
+            return Path(default_license_path())
+        except Exception:
+            return Path.home() / ".motionscore" / "MotionScore" / "license.json"
+
+    def _license_registered(self):
+        path = self._license_file_path()
+        if not path.exists():
             return False
-        return (form_email == self._license_session_email()) and (form_key == self._license_session_key())
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        key = str(payload.get("license_key", "")).strip()
+        email = str(payload.get("email", "")).strip()
+        return bool(key and email)
 
     def _python_executable_for_setup(self):
         return (
@@ -1264,7 +1287,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             raise RuntimeError(f"pip install failed (exit {completed.returncode}).")
 
     def _core_pip_requirements(self):
-        return [CORE_PYPI_PACKAGE, *CORE_PIP_CONSTRAINTS]
+        return [f"{CORE_PYPI_PACKAGE}>={MIN_CORE_VERSION}", *CORE_PIP_CONSTRAINTS]
 
     def _ensure_core_package(self):
         if self._core_package_ready():
@@ -1311,9 +1334,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _update_setup_status(self):
         if not hasattr(self, "setupStatusLabel"):
             return
-        install_txt = "ready" if (self._core_package_ready() and self._has_local_models()) else "setup"
-        registration_txt = "optional"
-        self.setupStatusLabel.setText(f"Install: {install_txt} | Registration: {registration_txt}")
+        install_txt = "ready" if self._core_package_ready() else f"needs {MIN_CORE_VERSION}"
+        registration_txt = "ready" if self._license_registered() else "required"
+        models_txt = "ready" if self._has_local_models() else "required"
+        self.setupStatusLabel.setText(
+            f"Core: {install_txt} | Registration: {registration_txt} | Models: {models_txt}"
+        )
 
     def _training_mode_enabled(self):
         checked_attr = self.trainingModeCheck.checked
@@ -1331,6 +1357,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.backButton.enabled = bool(enabled and self._grade_history)
         self.clearButton.enabled = enabled
         self.quickSetupButton.enabled = enabled
+        self.requestLicenseButton.enabled = enabled
         self.downloadModelBundleButton.enabled = enabled
         self.importModelBundleButton.enabled = enabled
         self.openRegistrationButton.enabled = enabled
@@ -1425,14 +1452,14 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def onQuickSetup(self):
         """
         Friendly setup flow:
-        1) Install core package from PyPI (if missing)
-        2) Refresh local model profiles
-        3) Download a configured public/lab model bundle if no local models exist
+        1) Install/upgrade core package from PyPI
+        2) Create/update a local self-service registration
+        3) Download and register the configured model catalog entry
         """
         self._persist_license_settings()
 
-        if self._core_package_ready() and self._has_local_models():
-            self._set_license_status("Setup already complete (package and local models).")
+        if self._core_package_ready() and self._license_registered() and self._has_local_models():
+            self._set_license_status("Setup already complete (package, registration, and local models).")
             self._log("[setup] skipped: already ready\n")
             self._refresh_model_profiles()
             return
@@ -1440,22 +1467,86 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not self._ensure_core_package():
             return
 
+        if not self._ensure_local_registration(open_tracking=False):
+            return
+
         if not self._has_local_models():
-            bundle_url = self.modelBundleUrlEdit.text.strip()
-            if bundle_url:
-                if not self.onDownloadModelBundle():
-                    return
-            else:
-                self._set_license_status(
-                    "Core package ready. Add local DNN_*.pt files or set a model bundle URL."
-                )
-                self._log("[setup] waiting for local model files or model bundle URL\n")
-                self._refresh_model_profiles()
+            if not self.onDownloadModelBundle():
                 return
 
-        self._set_license_status("Setup complete (package and local models ready).")
-        self._log("[setup] complete: package and local models ready\n")
+        self._set_license_status("Setup complete (package, registration, and local models ready).")
+        self._log("[setup] complete: package, registration, and local models ready\n")
         self._refresh_model_profiles()
+
+    def onRequestLicense(self):
+        if not self._ensure_core_package():
+            return False
+        return self._ensure_local_registration(open_tracking=True)
+
+    def _ensure_local_registration(self, open_tracking=False):
+        name = self.licenseNameEdit.text.strip()
+        institution = self.licenseInstitutionEdit.text.strip()
+        email = self.licenseEmailEdit.text.strip()
+        if not name or not institution or not email:
+            slicer.util.errorDisplay("Please fill Name, Institution, and Email before registration.")
+            return False
+
+        self._persist_license_settings()
+        args = [
+            "license-register",
+            "--name",
+            name,
+            "--institution",
+            institution,
+            "--email",
+            email,
+        ]
+        group = self.licenseGroupEdit.text.strip()
+        intended_use = self.licenseUseEdit.text.strip()
+        tracking_url = self.registrationUrlEdit.text.strip() or DEFAULT_REGISTRATION_URL
+        if group:
+            args.extend(["--group", group])
+        if intended_use:
+            args.extend(["--intended-use", intended_use])
+        if tracking_url:
+            args.extend(["--tracking-url", tracking_url])
+        if open_tracking:
+            args.append("--open-tracking-url")
+
+        python_exe = self._python_executable_for_setup()
+        if not python_exe:
+            slicer.util.errorDisplay("Could not find a Python executable for registration.")
+            return False
+
+        cmd = [python_exe, "-m", "motionscore.cli", *args]
+        self._set_license_status("Creating local MotionScore registration...")
+        self._log(f"[license] running: {' '.join(cmd)}\n")
+        completed = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if completed.stdout:
+            self._log(completed.stdout)
+        if int(completed.returncode) != 0:
+            self._set_license_status(f"Registration failed (exit {completed.returncode}).")
+            slicer.util.errorDisplay(f"Registration failed:\n{completed.stdout or completed.returncode}")
+            return False
+
+        for line in (completed.stdout or "").splitlines():
+            if "license_key=" in line:
+                key = line.split("license_key=", 1)[1].strip()
+                if key:
+                    self.licenseKeyEdit.setText(key)
+                    self._persist_license_settings()
+                break
+
+        self._set_license_status("Registration created/updated. You can download models now.")
+        self._log(f"[license] registration ready: {self._license_file_path()}\n")
+        self._update_setup_status()
+        return True
 
     def onOpenRegistrationPage(self):
         url = self.registrationUrlEdit.text.strip()
@@ -1496,33 +1587,37 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             return False
 
     def onDownloadModelBundle(self):
-        url = self.modelBundleUrlEdit.text.strip()
-        if not url:
-            slicer.util.errorDisplay("Enter a model bundle URL first.")
+        catalog = self.modelBundleUrlEdit.text.strip() or DEFAULT_MODEL_CATALOG_URL
+        if not self._ensure_core_package():
+            return False
+        if not self._license_registered() and not self._ensure_local_registration(open_tracking=False):
             return False
         models_dir = self._models_dir()
         if models_dir is None:
             slicer.util.errorDisplay("Could not resolve local models folder.")
             return False
-        try:
-            self._set_license_status("Downloading model bundle...")
-            req = urllib_request.Request(
-                url=url,
-                method="GET",
-                headers={"user-agent": LICENSE_HTTP_USER_AGENT},
-            )
-            with urllib_request.urlopen(req, timeout=180) as resp:
-                bundle = resp.read()
-            self._safe_extract_tar_gz_bytes(bundle, models_dir)
-            self._set_license_status(f"Downloaded model bundle into {models_dir}.")
-            self._log(f"[models] downloaded bundle: {url} -> {models_dir}\n")
+        self._set_license_status("Downloading and registering MotionScore models...")
+
+        def _finish_download():
+            self.modelsPathEdit.currentPath = str(models_dir)
             self._refresh_model_profiles()
             self._update_setup_status()
-            return True
-        except Exception as exc:
-            self._set_license_status(f"Model bundle download failed: {exc}")
-            slicer.util.errorDisplay(f"Model bundle download failed:\n{exc}")
-            return False
+            self._set_license_status(f"Models downloaded and registered in {models_dir}.")
+
+        self._run_cli(
+            [
+                "model-download",
+                "--model-id",
+                "base-v1",
+                "--model-root",
+                str(models_dir),
+                "--catalog",
+                catalog,
+                "--overwrite",
+            ],
+            on_finish=_finish_download,
+        )
+        return True
 
     def onLoadDataset(self):
         self.refreshReview()
@@ -1552,13 +1647,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             if not has_models:
                 self._log("[setup] no local model files found; running local model setup.\n")
                 self.onQuickSetup()
-                has_models = self._has_local_models(models_dir)
-                if not has_models:
-                    slicer.util.errorDisplay(
-                        "No model files available yet.\n"
-                        "Import a model bundle, set a model bundle URL, or place DNN_*.pt files in the local models folder."
-                    )
-                    return
+                self._set_license_status("Model setup started. Run prediction again after the download finishes.")
+                return
 
         selected_scope = self._combo_text(self.runScopeCombo)
         if selected_scope == self.RUN_SCOPE_ALL and self._all_scans_already_predicted(self._selected_model_id()):
@@ -1603,81 +1693,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._run_cli(args, on_finish=self.refreshReview)
 
     def onLicenseSignup(self):
-        base = self._license_api_base()
-        name = self.licenseNameEdit.text.strip()
-        institution = self.licenseInstitutionEdit.text.strip()
-        email = self.licenseEmailEdit.text.strip()
-        if not name or not institution or not email:
-            slicer.util.errorDisplay("Please fill Name, Institution, and Email before signup.")
-            return False
-        self._persist_license_settings()
-        try:
-            payload = {
-                "name": name,
-                "institution": institution,
-                "email": email,
-            }
-            res = self._http_json("POST", f"{base}/signup", payload=payload)
-            if not bool(res.get("ok", False)):
-                raise RuntimeError(str(res.get("error", "signup_failed")))
-            license_key = (
-                ((res.get("license") or {}).get("license_key"))
-                if isinstance(res.get("license"), dict)
-                else None
-            )
-            if license_key:
-                self.licenseKeyEdit.setText(str(license_key))
-                self._persist_license_settings()
-            self._set_license_status(
-                f"License signup successful. Key issued for {email}."
-            )
-            self._log(f"[license] signup ok: {email}\n")
-            return True
-        except Exception as exc:
-            self._set_license_status(f"License signup failed: {exc}")
-            slicer.util.errorDisplay(f"Signup failed:\n{exc}")
-            return False
+        return self.onRequestLicense()
 
     def onLicenseActivate(self):
-        base = self._license_api_base()
-        email = self.licenseEmailEdit.text.strip()
-        license_key = self.licenseKeyEdit.text.strip()
-        if not email or not license_key:
-            slicer.util.errorDisplay("Please enter Email and License Key before activation.")
-            return False
-        self._persist_license_settings()
-        try:
-            payload = {
-                "email": email,
-                "license_key": license_key,
-                "device_hash": self._default_device_hash(),
-            }
-            res = self._http_json("POST", f"{base}/activate", payload=payload)
-            if not bool(res.get("ok", False)):
-                raise RuntimeError(str(res.get("error", "activation_failed")))
-            token = str(res.get("token", "")).strip()
-            decrypt_key = str(res.get("model_decrypt_key", "")).strip()
-            if not token:
-                raise RuntimeError("Missing token in activation response")
-            if not decrypt_key:
-                raise RuntimeError("Missing model_decrypt_key in activation response")
-            self._set_license_session(
-                token=token,
-                decrypt_key=decrypt_key,
-                email=email,
-                license_key=license_key,
-            )
-            lic = res.get("license", {})
-            expires_txt = ""
-            if isinstance(lic, dict):
-                expires_txt = str(lic.get("expires_at", "")).strip()
-            self._set_license_status(f"License activated. Expires: {expires_txt or 'unknown'}")
-            self._log(f"[license] activated: {email}\n")
-            return True
-        except Exception as exc:
-            self._set_license_status(f"License activation failed: {exc}")
-            slicer.util.errorDisplay(f"Activation failed:\n{exc}")
-            return False
+        return self.onRequestLicense()
 
     def _safe_extract_tar_gz_bytes(self, blob, output_dir):
         output_dir = Path(output_dir).resolve()
@@ -1691,104 +1710,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             tf.extractall(path=output_dir)
 
     def onLicenseFetchModels(self):
-        base = self._license_api_base()
-        version = self.modelVersionEdit.text.strip() or "v1"
-        token = self._license_token()
-        decrypt_key = self._license_decrypt_key()
-        if not token or not decrypt_key:
-            slicer.util.errorDisplay("Please activate license first (token/decrypt key missing).")
-            return False
-
-        models_dir = self._models_dir()
-        if models_dir is None:
-            slicer.util.errorDisplay("Could not resolve local models folder.")
-            return False
-
-        headers = {
-            "authorization": f"Bearer {token}",
-            "accept": "application/json",
-            "user-agent": LICENSE_HTTP_USER_AGENT,
-        }
-        try:
-            manifest = self._http_json("GET", f"{base}/model/{version}/manifest", headers=headers)
-            enc_req = urllib_request.Request(
-                url=f"{base}/model/{version}",
-                method="GET",
-                headers=headers,
-            )
-            try:
-                with urllib_request.urlopen(enc_req, timeout=60) as resp:
-                    enc_bytes = resp.read()
-            except urllib_error.HTTPError as exc:
-                err_text = exc.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"HTTP {exc.code}: {err_text}") from exc
-
-            expected_enc_sha = str(manifest.get("encrypted_sha256", "")).strip().lower()
-            if expected_enc_sha:
-                got_enc_sha = hashlib.sha256(enc_bytes).hexdigest().lower()
-                if got_enc_sha != expected_enc_sha:
-                    raise RuntimeError(
-                        f"Encrypted bundle SHA mismatch: expected={expected_enc_sha} got={got_enc_sha}"
-                    )
-
-            try:
-                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            except Exception as exc:
-                raise RuntimeError(
-                    "Missing dependency 'cryptography'. Install in Slicer Python:\n"
-                    "/Applications/Slicer.app/Contents/bin/PythonSlicer -m pip install cryptography"
-                ) from exc
-
-            try:
-                key = base64.b64decode(decrypt_key, validate=True)
-            except binascii.Error as exc:
-                raise RuntimeError(
-                    "Invalid model_decrypt_key format. Expected base64-encoded AES-256 key."
-                ) from exc
-            if len(key) != 32:
-                raise RuntimeError(
-                    f"Invalid model_decrypt_key length: expected 32 bytes after base64 decode, got {len(key)}."
-                )
-
-            try:
-                nonce = base64.b64decode(str(manifest.get("nonce_base64", "")).strip(), validate=True)
-                aad = base64.b64decode(str(manifest.get("aad_base64", "")).strip(), validate=True)
-            except binascii.Error as exc:
-                raise RuntimeError("Invalid manifest encoding for nonce/aad.") from exc
-            plain = AESGCM(key).decrypt(nonce, enc_bytes, aad)
-
-            expected_plain_sha = str(manifest.get("plaintext_sha256", "")).strip().lower()
-            if expected_plain_sha:
-                got_plain_sha = hashlib.sha256(plain).hexdigest().lower()
-                if got_plain_sha != expected_plain_sha:
-                    raise RuntimeError(
-                        f"Plain bundle SHA mismatch: expected={expected_plain_sha} got={got_plain_sha}"
-                    )
-
-            self._safe_extract_tar_gz_bytes(plain, models_dir)
-            self.modelsPathEdit.currentPath = str(models_dir)
-            self._set_license_status(f"Models fetched and decrypted for version {version}.")
-            self._log(f"[license] models fetched: version={version} -> {models_dir}\n")
-            self._update_setup_status()
-            self._refresh_model_profiles()
-            return True
-        except Exception as exc:
-            err = str(exc)
-            if "model_not_found" in err:
-                msg = (
-                    f"Model fetch failed: version '{version}' is not uploaded to R2 yet.\n\n"
-                    f"Expected objects:\n"
-                    f"- models/{version}.manifest.json\n"
-                    f"- models/{version}.enc\n\n"
-                    f"Upload those files, then try Download Models again."
-                )
-                self._set_license_status(msg)
-                slicer.util.errorDisplay(msg)
-            else:
-                self._set_license_status(f"Model fetch failed: {err}")
-                slicer.util.errorDisplay(f"Fetch Models failed:\n{err}")
-            self._update_setup_status()
-            return False
+        return self.onDownloadModelBundle()
 
     def onRefreshReview(self):
         derivatives = self._derivatives_root()
