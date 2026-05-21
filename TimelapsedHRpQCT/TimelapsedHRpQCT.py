@@ -3125,18 +3125,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         display.SetVisibility(True)
         display.SetVisibility2D(bool(show2d))
         display.SetVisibility3D(bool(show3d))
-        display.SetOpacity2DFill(0.35)
+        display.SetOpacity2DFill(1.0)
         display.SetOpacity2DOutline(0.0)
         display.SetOpacity3D(1.0)
         if hasattr(display, "RemoveAllViewNodeIDs"):
             display.RemoveAllViewNodeIDs()
 
         label_style = {
-            1: ("resorption", (1.00, 0.00, 0.85), 1.0, 1.0),  # vivid magenta
-            2: ("quiescent", (0.36, 0.36, 0.36), 0.28, 0.0),  # subtle baseline support/no-change label
-            3: ("formation", (1.00, 0.85, 0.00), 1.0, 1.0),   # vivid amber
-            4: ("formation", (1.00, 0.85, 0.00), 1.0, 1.0),   # legacy 5-label support
-            5: ("quiescent", (0.36, 0.36, 0.36), 0.28, 0.0),  # subtle legacy baseline support label
+            1: ("resorption", (1.00, 0.05, 0.70), 1.0, 1.0),  # vivid pink
+            2: ("quiescent", (0.62, 0.62, 0.62), 0.32, 0.0),  # subtle baseline support/no-change label
+            3: ("formation", (1.00, 0.48, 0.00), 1.0, 1.0),   # saturated orange
+            4: ("formation", (1.00, 0.48, 0.00), 1.0, 1.0),   # legacy 5-label support
+            5: ("quiescent", (0.62, 0.62, 0.62), 0.32, 0.0),  # subtle legacy baseline support label
+        }
+        label_name_to_value = {
+            "resorption": 1,
+            "quiescent": 2,
+            "formation": 3,
         }
         seg = seg_node.GetSegmentation()
         ids = vtk.vtkStringArray()
@@ -3148,7 +3153,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 continue
             name = str(segment.GetName() or "")
             m = re.search(r"(\d+)", name)
-            label_val = int(m.group(1)) if m else None
+            label_val = int(m.group(1)) if m else label_name_to_value.get(name.strip().lower())
             if label_val in label_style:
                 disp_name, color, opacity2d, opacity3d = label_style[label_val]
                 segment.SetName(disp_name)
