@@ -4459,11 +4459,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return True
 
     def _center_slices_on_segmentation(self, seg_node):
-        if seg_node is None:
+        self._center_slices_on_node(seg_node)
+
+    def _center_slices_on_node(self, node_to_center):
+        if node_to_center is None:
             return
         try:
             bounds = [0.0] * 6
-            seg_node.GetBounds(bounds)
+            node_to_center.GetBounds(bounds)
             if not all(np.isfinite(bounds)):
                 return
             cx = 0.5 * (bounds[0] + bounds[1])
@@ -4750,6 +4753,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         loaded = 0
+        first_loaded_node = None
 
         if image_records:
             for rec in sorted(
@@ -4764,6 +4768,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 ok, node = self._load_volume_node(p)
                 if ok and node is not None:
                     loaded += 1
+                    if first_loaded_node is None:
+                        first_loaded_node = node
                     session_id = str(getattr(rec, "session_id", ""))
                     stack_index = getattr(rec, "stack_index", None)
                     folder_id = self._ensure_load_folder(subject_id, site, session_id, stack_index)
@@ -4832,6 +4838,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     ok, node = self._load_volume_node(p)
                     if ok and node is not None:
                         loaded += 1
+                        if first_loaded_node is None:
+                            first_loaded_node = node
                         self._place_node_in_folder(node, folder_id)
                         try:
                             origin = tuple(float(x) for x in node.GetOrigin())
@@ -4846,6 +4854,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"[load] loaded {loaded}/{len(candidates)} files for "
             f"sub-{subject_id} site-{site} ({data_type})"
         )
+        if first_loaded_node is not None:
+            self._center_slices_on_node(first_loaded_node)
         if is_remodelling_load and loaded:
             if self.remodellingFullSegCombo.count > 0 and self.remodellingFullSegCombo.currentIndex < 0:
                 self.remodellingFullSegCombo.setCurrentIndex(0)
