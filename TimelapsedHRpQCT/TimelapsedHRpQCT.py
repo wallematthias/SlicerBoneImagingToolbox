@@ -1056,9 +1056,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(statusBox)
         self.layout.addLayout(actionLayout)
         self.seriesSummaryBox.visible = False
+        self.layout.addWidget(loadBox)
         self.layout.addWidget(analysisSectionBox)
         self.layout.addWidget(metricsBox)
-        self.layout.addWidget(loadBox)
         self.layout.addWidget(settingsBox)
         self.layout.addWidget(self.logText)
         self.layout.addStretch(1)
