@@ -1,6 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
+import importlib
 import sys
 
 import qt
@@ -71,8 +72,17 @@ def _parse_table_value(text):
         return text
 
 
+def _aim_io_module():
+    import aim_io
+
+    required = ("is_aimio_available", "read_aim", "write_aim", "log_to_dict")
+    if not all(hasattr(aim_io, name) for name in required):
+        aim_io = importlib.reload(aim_io)
+    return aim_io
+
+
 def _normalize_processing_log(metadata):
-    from aim_io import log_to_dict
+    aim_io = _aim_io_module()
 
     if not isinstance(metadata, dict):
         return {}
@@ -84,9 +94,9 @@ def _normalize_processing_log(metadata):
         return legacy_processing_log
     raw_log = metadata.get("processing_log_raw")
     if isinstance(raw_log, str) and raw_log.strip():
-        return log_to_dict(raw_log)
+        return aim_io.log_to_dict(raw_log)
     if isinstance(processing_log, str) and processing_log.strip():
-        return log_to_dict(processing_log)
+        return aim_io.log_to_dict(processing_log)
     return {}
 
 
@@ -106,20 +116,18 @@ class ScancoIO(ScriptedLoadableModule):
 
 class ScancoIOLogic(ScriptedLoadableModuleLogic):
     def is_core_available(self):
-        from aim_io import is_aimio_available
-
-        return is_aimio_available()
+        return _aim_io_module().is_aimio_available()
 
     def install_or_update_core(self):
         slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir aimio-py")
 
     def import_aim(self, aim_path, scaling, volume_name=None):
-        from aim_io import read_aim
+        aim_io = _aim_io_module()
 
         aim_path = Path(aim_path)
         if not aim_path.exists():
             raise FileNotFoundError(f"AIM file does not exist: {aim_path}")
-        image, metadata = read_aim(aim_path, scaling=scaling)
+        image, metadata = aim_io.read_aim(aim_path, scaling=scaling)
         name = volume_name.strip() if volume_name else aim_path.stem
 
         with tempfile.TemporaryDirectory(prefix="hrpqct_aim_import_") as temp_dir:
@@ -154,7 +162,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         allow_minimal_metadata=False,
         log="Exported from Slicer HR-pQCT Toolbox",
     ):
-        from aim_io import aim_metadata_from_import_json, write_aim
+        aim_io = _aim_io_module()
 
         if volume_node is None:
             raise ValueError("Select a scalar volume to export.")
@@ -171,7 +179,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         metadata = None
         metadata_json = Path(metadata_json) if metadata_json else None
         if metadata_json and metadata_json.exists():
-            metadata = aim_metadata_from_import_json(metadata_json, image, log=log)
+            metadata = aim_io.aim_metadata_from_import_json(metadata_json, image, log=log)
         else:
             metadata_text = volume_node.GetAttribute(AIM_METADATA_ATTRIBUTE)
             if metadata_text:
@@ -196,7 +204,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             write_unit = unit
         if metadata is not None and as_mask:
             metadata["unit"] = "native"
-        write_aim(image, output_path, metadata=metadata, unit=write_unit, mask=as_mask)
+        aim_io.write_aim(image, output_path, metadata=metadata, unit=write_unit, mask=as_mask)
         return output_path
 
 
@@ -216,6 +224,10 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         collapsible.text = "Import AIM"
         self.layout.addWidget(collapsible)
         form = qt.QFormLayout(collapsible)
+
+        self.installButton = qt.QPushButton("Install / Update AIM I/O")
+        self.installButton.clicked.connect(self._install_core)
+        form.addRow(self.installButton)
 
         self.importPathEdit = qt.QLineEdit()
         browse = qt.QPushButton("Browse...")
@@ -237,10 +249,6 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
         self.volumeNameEdit = qt.QLineEdit()
         form.addRow("Volume name", self.volumeNameEdit)
-
-        self.installButton = qt.QPushButton("Install / Update AIM I/O")
-        self.installButton.clicked.connect(self._install_core)
-        form.addRow(self.installButton)
 
         self.importButton = qt.QPushButton("Import AIM")
         self.importButton.clicked.connect(self._import_aim)
