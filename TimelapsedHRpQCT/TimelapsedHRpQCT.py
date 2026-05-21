@@ -2628,7 +2628,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
 
         if viz_dir.exists():
-            candidates = sorted(viz_dir.glob("*_comp-full_*_remodelling.mha"))
+            candidates = sorted(viz_dir.glob("*_comp-full_*_remodelling.nii.gz"))
+            if not candidates:
+                candidates = sorted(viz_dir.glob("*_comp-full_*_remodelling.mha"))
+            if not candidates:
+                candidates = sorted(viz_dir.glob("*_remodelling.nii.gz"))
             if not candidates:
                 candidates = sorted(viz_dir.glob("*_remodelling.mha"))
 
@@ -3242,11 +3246,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         patterns = [
             re.compile(
                 r"^sub-(?P<subject_id>.+?)_site-(?P<site>.+?)_comp-(?P<compartment>.+?)_"
-                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.mha$"
+                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.(?:nii\.gz|mha)$"
             ),
             re.compile(
                 r"^sub-(?P<subject_id>.+?)_comp-(?P<compartment>.+?)_"
-                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.mha$"
+                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.(?:nii\.gz|mha)$"
             ),
         ]
         for pattern in patterns:
