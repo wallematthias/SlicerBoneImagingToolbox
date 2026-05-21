@@ -3407,6 +3407,84 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         ref_arr = sitk.GetArrayFromImage(sitk.ReadImage(str(reference_image_path)))
         return np.zeros_like(ref_arr, dtype=bool)
 
+    def _infer_stack_seg_path_from_image_path(self, image_path):
+        path = Path(str(image_path))
+        name = path.name
+        replacements = [
+            ("_image.nii.gz", "_seg.nii.gz"),
+            ("_image.mha", "_seg.mha"),
+            ("_image.nrrd", "_seg.nrrd"),
+        ]
+        for old, new in replacements:
+            if name.endswith(old):
+                candidate = path.with_name(name[: -len(old)] + new)
+                if candidate.exists():
+                    return candidate
+        return None
+
+    def _fused_metadata_path_from_image_path(self, image_path):
+        path = Path(str(image_path))
+        name = path.name
+        replacements = [
+            ("_image_fused.nii.gz", "_fused.json"),
+            ("_image_fused.mha", "_fused.json"),
+            ("_image_fused.nrrd", "_fused.json"),
+        ]
+        for old, new in replacements:
+            if name.endswith(old):
+                candidate = path.with_name(name[: -len(old)] + new)
+                if candidate.exists():
+                    return candidate
+        return None
+
+    def _read_seg_array_for_preview(self, session, reference_image):
+        seg_path = getattr(session, "seg_path", None)
+        if seg_path is not None and Path(seg_path).exists():
+            seg_img = sitk.ReadImage(str(seg_path))
+            return (sitk.GetArrayFromImage(seg_img) > 0).astype(bool, copy=False)
+
+        metadata_path = self._fused_metadata_path_from_image_path(getattr(session, "image_path", ""))
+        if metadata_path is None:
+            return None
+        try:
+            metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+        seg_union = None
+        for contributor in metadata.get("contributors", []) or []:
+            stack_seg_path = contributor.get("seg_path")
+            if stack_seg_path:
+                stack_seg_path = Path(str(stack_seg_path))
+            else:
+                stack_seg_path = self._infer_stack_seg_path_from_image_path(contributor.get("image_path", ""))
+            if stack_seg_path is None or not Path(stack_seg_path).exists():
+                continue
+
+            transform_path = contributor.get("transform_source")
+            if transform_path and Path(str(transform_path)).exists():
+                transform = sitk.ReadTransform(str(transform_path))
+            else:
+                transform = sitk.Transform(3, sitk.sitkIdentity)
+
+            seg_img = sitk.Cast(sitk.ReadImage(str(stack_seg_path)) > 0, sitk.sitkUInt8)
+            seg_tx = sitk.Resample(
+                seg_img,
+                reference_image,
+                transform,
+                sitk.sitkNearestNeighbor,
+                0,
+                sitk.sitkUInt8,
+            )
+            if seg_union is None:
+                seg_union = sitk.Cast(seg_tx > 0, sitk.sitkUInt8)
+            else:
+                seg_union = seg_union | sitk.Cast(seg_tx > 0, sitk.sitkUInt8)
+
+        if seg_union is None:
+            return None
+        return (sitk.GetArrayFromImage(seg_union) > 0).astype(bool, copy=False)
+
     def _get_interactive_preview_inputs(self, source_path):
         cache_key = str(Path(source_path).resolve())
         cached = self._interactive_preview_cache.get(cache_key)
@@ -3443,12 +3521,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         ref_img = sitk.ReadImage(str(t0.image_path))
         img_t0 = sitk.GetArrayFromImage(ref_img).astype(np.float32, copy=False)
-        img_t1 = sitk.GetArrayFromImage(sitk.ReadImage(str(t1.image_path))).astype(np.float32, copy=False)
-        seg_t0 = None
-        seg_t1 = None
-        if t0.seg_path is not None and t1.seg_path is not None:
-            seg_t0 = (sitk.GetArrayFromImage(sitk.ReadImage(str(t0.seg_path))) > 0).astype(bool, copy=False)
-            seg_t1 = (sitk.GetArrayFromImage(sitk.ReadImage(str(t1.seg_path))) > 0).astype(bool, copy=False)
+        img_t1_ref = sitk.ReadImage(str(t1.image_path))
+        img_t1 = sitk.GetArrayFromImage(img_t1_ref).astype(np.float32, copy=False)
+        seg_t0 = self._read_seg_array_for_preview(t0, ref_img)
+        seg_t1 = self._read_seg_array_for_preview(t1, img_t1_ref)
 
         support_t0 = self._load_support_mask_array(t0.mask_paths, t0.image_path)
         support_t1 = self._load_support_mask_array(t1.mask_paths, t1.image_path)
@@ -3658,9 +3734,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for session in sessions:
             image = sitk.ReadImage(str(session.image_path))
             image_arr = sitk.GetArrayFromImage(image).astype(np.float32, copy=False)
-            seg_arr = None
-            if session.seg_path is not None and Path(session.seg_path).exists():
-                seg_arr = (sitk.GetArrayFromImage(sitk.ReadImage(str(session.seg_path))) > 0).astype(bool, copy=False)
+            seg_arr = self._read_seg_array_for_preview(session, image)
             support = self._load_support_mask_array(session.mask_paths, session.image_path)
             ordered.append(
                 {
