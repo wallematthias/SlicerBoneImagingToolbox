@@ -2,6 +2,7 @@ import base64
 import binascii
 import csv
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -1143,14 +1144,52 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         return tuple(parts[:3])
 
     def _core_package_ready(self):
+        importlib.invalidate_caches()
         try:
             import motionscore
-        except Exception:
+        except Exception as exc:
+            self._last_core_import_error = str(exc)
             return False
         installed = getattr(motionscore, "__version__", "0")
-        return self._version_tuple(installed) >= self._version_tuple(MIN_CORE_VERSION)
+        ready = self._version_tuple(installed) >= self._version_tuple(MIN_CORE_VERSION)
+        if not ready:
+            self._last_core_import_error = f"installed version {installed}, need >= {MIN_CORE_VERSION}"
+        else:
+            self._last_core_import_error = ""
+        return ready
+
+    def _core_package_ready_in_subprocess(self):
+        python_exe = self._python_executable_for_setup()
+        if not python_exe:
+            self._last_core_import_error = "Could not find Python executable for package check."
+            return False
+        code = (
+            "import motionscore, sys; "
+            "print(getattr(motionscore, '__version__', 'unknown')); "
+            "sys.exit(0)"
+        )
+        completed = subprocess.run(
+            [python_exe, "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if completed.stdout:
+            self._log(completed.stdout)
+        if int(completed.returncode) != 0:
+            self._last_core_import_error = (completed.stdout or "").strip() or f"exit {completed.returncode}"
+            return False
+        version = (completed.stdout or "").strip().splitlines()[-1] if completed.stdout else "0"
+        ready = self._version_tuple(version) >= self._version_tuple(MIN_CORE_VERSION)
+        if not ready:
+            self._last_core_import_error = f"subprocess version {version}, need >= {MIN_CORE_VERSION}"
+        else:
+            self._last_core_import_error = ""
+        return ready
 
     def _installed_core_version(self):
+        importlib.invalidate_caches()
         try:
             import motionscore
 
@@ -1201,8 +1240,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         try:
             self._set_license_status("Installing MotionScore core package from PyPI...")
             self._pip_install(*self._core_pip_requirements())
-            if not self._core_package_ready():
-                raise RuntimeError("Installed package but 'motionscore' import still failed.")
+            if not (self._core_package_ready() or self._core_package_ready_in_subprocess()):
+                detail = getattr(self, "_last_core_import_error", "")
+                raise RuntimeError(f"Installed package but 'motionscore' import still failed. {detail}".strip())
             self._log(f"[setup] core package install ok: {CORE_PYPI_PACKAGE}\n")
             return True
         except Exception as exc:
@@ -1222,8 +1262,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 upgrade=True,
                 extra_args=["--force-reinstall", "--no-cache-dir"],
             )
-            if not self._core_package_ready():
-                raise RuntimeError("Package reinstall completed but import check failed.")
+            if not (self._core_package_ready() or self._core_package_ready_in_subprocess()):
+                detail = getattr(self, "_last_core_import_error", "")
+                raise RuntimeError(f"Package reinstall completed but import check failed. {detail}".strip())
             self._set_license_status("Core package reinstall complete.")
             self._log(f"[setup] core package force-reinstalled: {CORE_PYPI_PACKAGE}\n")
         except Exception as exc:
