@@ -1,6 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
+import sys
 
 import qt
 import ctk
@@ -16,6 +17,10 @@ from slicer.ScriptedLoadableModule import (
 
 
 MODULE_VERSION = "0.1.0"
+MODULE_DIR = Path(__file__).resolve().parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
+
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
@@ -36,6 +41,20 @@ def _json_default(value):
     return str(value)
 
 
+def _metadata_json(metadata):
+    return json.dumps(metadata or {}, indent=2, sort_keys=True, default=_json_default)
+
+
+def _image_geometry_metadata(image):
+    return {
+        "dimensions": tuple(int(v) for v in image.GetSize()),
+        "spacing": tuple(float(v) for v in image.GetSpacing()),
+        "element_size": tuple(float(v) for v in image.GetSpacing()),
+        "origin": tuple(float(v) for v in image.GetOrigin()),
+        "direction": tuple(float(v) for v in image.GetDirection()),
+    }
+
+
 class ScancoIO(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
@@ -52,18 +71,15 @@ class ScancoIO(ScriptedLoadableModule):
 
 class ScancoIOLogic(ScriptedLoadableModuleLogic):
     def is_core_available(self):
-        try:
-            import timelapsedhrpqct  # noqa: F401
+        from aim_io import is_aimio_available
 
-            return True
-        except Exception:
-            return False
+        return is_aimio_available()
 
     def install_or_update_core(self):
-        slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct")
+        slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir aimio-py")
 
     def import_aim(self, aim_path, scaling, volume_name=None):
-        from timelapsedhrpqct.io.aim import read_aim
+        from aim_io import read_aim
 
         aim_path = Path(aim_path)
         if not aim_path.exists():
@@ -99,10 +115,11 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         as_mask=False,
         unit="auto",
         metadata_json=None,
+        header_metadata=None,
         allow_minimal_metadata=False,
         log="Exported from Slicer HR-pQCT Toolbox",
     ):
-        from timelapsedhrpqct.io.aim import aim_metadata_from_import_json, write_aim
+        from aim_io import aim_metadata_from_import_json, write_aim
 
         if volume_node is None:
             raise ValueError("Select a scalar volume to export.")
@@ -124,11 +141,14 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             metadata_text = volume_node.GetAttribute(AIM_METADATA_ATTRIBUTE)
             if metadata_text:
                 metadata = json.loads(metadata_text)
-                metadata["dimensions"] = tuple(int(v) for v in image.GetSize())
-                metadata["spacing"] = tuple(float(v) for v in image.GetSpacing())
-                metadata["element_size"] = tuple(float(v) for v in image.GetSpacing())
-                metadata["origin"] = tuple(float(v) for v in image.GetOrigin())
-                metadata["direction"] = tuple(float(v) for v in image.GetDirection())
+
+        if header_metadata:
+            metadata = {**(metadata or {}), **header_metadata}
+
+        if metadata is not None:
+            metadata.update(_image_geometry_metadata(image))
+            metadata.setdefault("position", (0, 0, 0))
+            metadata.setdefault("offset", (0, 0, 0))
 
         if metadata is None and not allow_minimal_metadata:
             raise ValueError(
@@ -183,7 +203,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.volumeNameEdit = qt.QLineEdit()
         form.addRow("Volume name", self.volumeNameEdit)
 
-        self.installButton = qt.QPushButton("Install / Update timelapsed-hrpqct")
+        self.installButton = qt.QPushButton("Install / Update AIM I/O")
         self.installButton.clicked.connect(self._install_core)
         form.addRow(self.installButton)
 
@@ -204,6 +224,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.volumeSelector.removeEnabled = False
         self.volumeSelector.noneEnabled = True
         self.volumeSelector.setMRMLScene(slicer.mrmlScene)
+        self.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._on_volume_selected)
         form.addRow("Volume", self.volumeSelector)
 
         self.exportPathEdit = qt.QLineEdit()
@@ -233,6 +254,18 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         meta_row.addWidget(self.metadataJsonEdit)
         meta_row.addWidget(browse_meta)
         form.addRow("Metadata JSON", meta_row)
+
+        load_header = qt.QPushButton("Load header from selected volume")
+        load_header.clicked.connect(self._load_header_from_selected_volume)
+        form.addRow(load_header)
+
+        self.headerEdit = qt.QTextEdit()
+        self.headerEdit.setMinimumHeight(180)
+        self.headerEdit.setPlaceholderText(
+            "AIM header metadata JSON. Imported AIM metadata is stored on the "
+            "Slicer volume and can be edited here before export."
+        )
+        form.addRow("AIM header", self.headerEdit)
 
         self.allowMinimalCheck = qt.QCheckBox("Allow export with minimal geometry metadata")
         self.allowMinimalCheck.checked = False
@@ -287,11 +320,47 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         if path:
             self.metadataJsonEdit.text = path
 
+    def _node_header_metadata(self, node):
+        if node is None:
+            return None
+        metadata_text = node.GetAttribute(AIM_METADATA_ATTRIBUTE)
+        if not metadata_text:
+            return None
+        return json.loads(metadata_text)
+
+    def _set_header_metadata(self, metadata):
+        self.headerEdit.setPlainText(_metadata_json(metadata))
+
+    def _load_header_from_selected_volume(self):
+        metadata = self._node_header_metadata(self.volumeSelector.currentNode())
+        if metadata is None:
+            self._log("Selected volume has no stored AIM header metadata.")
+            return
+        self._set_header_metadata(metadata)
+        self._log("Loaded AIM header metadata from selected volume.")
+
+    def _on_volume_selected(self, node):
+        try:
+            metadata = self._node_header_metadata(node)
+            if metadata is not None:
+                self._set_header_metadata(metadata)
+        except Exception as exc:
+            self._log(f"Could not load AIM header metadata: {exc}")
+
+    def _edited_header_metadata(self):
+        text = self.headerEdit.toPlainText().strip()
+        if not text:
+            return None
+        metadata = json.loads(text)
+        if not isinstance(metadata, dict):
+            raise ValueError("AIM header JSON must be an object/dictionary.")
+        return metadata
+
     def _install_core(self):
         try:
-            self._log("Installing timelapsed-hrpqct...")
+            self._log("Installing aimio-py...")
             self.logic.install_or_update_core()
-            self._log("timelapsed-hrpqct is installed.")
+            self._log("AIM I/O dependency is installed.")
         except Exception as exc:
             self._error(exc)
 
@@ -303,6 +372,8 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
                 scaling=scaling,
                 volume_name=self.volumeNameEdit.text,
             )
+            self.volumeSelector.setCurrentNode(node)
+            self._set_header_metadata(self._node_header_metadata(node))
             self._log(f"Imported {node.GetName()} from {self.importPathEdit.text}")
         except Exception as exc:
             self._error(exc)
@@ -316,6 +387,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
                 as_mask=(mode == "mask"),
                 unit=self.unitCombo.currentData,
                 metadata_json=self.metadataJsonEdit.text.strip() or None,
+                header_metadata=self._edited_header_metadata(),
                 allow_minimal_metadata=bool(self.allowMinimalCheck.checked),
             )
             self._log(f"Wrote {output}")

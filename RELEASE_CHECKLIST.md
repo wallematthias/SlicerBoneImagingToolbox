@@ -11,6 +11,7 @@
 
 - [ ] Module loads in Slicer developer mode.
 - [ ] `Install / Update timelapsed-hrpqct` works on clean Slicer install.
+- [ ] `Install / Update AIM I/O` installs `aimio-py` without installing the full timelapsed pipeline.
 - [ ] Full pipeline run works on representative dataset.
 - [ ] Analyze rerun works with changed threshold/cluster.
 - [ ] Raw/transformed/remodelling loading works.
