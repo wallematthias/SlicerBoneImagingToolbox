@@ -14,6 +14,7 @@ from TimelapsedHRpQCTLib.Reporting import (  # noqa: E402
 )
 from TimelapsedHRpQCTReporting import (  # noqa: E402
     PROFILE_DISPLAY_ORDER as LEGACY_PROFILE_DISPLAY_ORDER,
+    TimelapsedHRpQCTReporting,
 )
 
 
@@ -24,6 +25,17 @@ def test_profile_order_leads_with_eth_uofc_then_multistack() -> None:
 
 def test_legacy_reporting_module_reexports_helpers() -> None:
     assert LEGACY_PROFILE_DISPLAY_ORDER == PROFILE_DISPLAY_ORDER
+
+
+def test_legacy_reporting_module_has_hidden_slicer_module_class() -> None:
+    class Parent:
+        hidden = False
+        title = ""
+
+    parent = Parent()
+    TimelapsedHRpQCTReporting(parent)
+
+    assert parent.hidden is True
 
 
 def test_enrich_cohort_export_row_adds_volume_fraction_metrics() -> None:
