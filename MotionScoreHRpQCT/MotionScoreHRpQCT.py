@@ -295,6 +295,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.progressBar.textVisible = True
         runLayout.addWidget(self.progressLabel)
         runLayout.addWidget(self.progressBar)
+        self.datasetSummaryLabel = qt.QLabel("Dataset: not loaded")
+        self.datasetSummaryLabel.setWordWrap(True)
+        runLayout.addWidget(self.datasetSummaryLabel)
 
         # Advanced options (moved out of main Run flow to declutter first-time usage).
         self.confidenceSpin = qt.QSpinBox()
@@ -1453,6 +1456,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def onLoadDataset(self):
         self.refreshReview()
+        self._update_dataset_summary()
         if self._combo_count(self.scanCombo) > 0:
             self.scanCombo.setCurrentIndex(0)
             if self._auto_load_enabled():
@@ -1554,7 +1558,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         index_path = derivatives / "index.tsv"
         if not index_path.exists():
             self._all_scan_ids = []
+            self._index_rows = {}
+            self._review_rows = {}
             self._audit_rows = []
+            self._model_index_rows = {}
+            self._model_review_rows = {}
+            self._model_audit_rows = {}
             self.scanCombo.clear()
             self.autoLabel.text = "Auto grade: - | confidence: -"
             self.agreementLabel.text = "Agreement: overlap=0 | match=- | exact=-"
@@ -1567,6 +1576,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_run_scope_items(self._discover_scan_ids_for_dataset())
             self._update_review_queue_label()
             self._log(f"[review] index not found: {index_path}\n")
+            self._update_dataset_summary()
             return
 
         self._index_rows = {}
@@ -1626,6 +1636,57 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._update_agreement_summary()
         self._update_agreement_matrix()
         self.onScanSelectionChanged(self._combo_text(self.scanCombo))
+        self._update_dataset_summary()
+
+    def _update_dataset_summary(self):
+        if not hasattr(self, "datasetSummaryLabel"):
+            return
+        dataset = self.datasetPathEdit.currentPath.strip()
+        if not dataset:
+            text = "Dataset: choose a dataset root."
+            self.datasetSummaryLabel.text = text
+            self.progressLabel.setText("Dataset not selected")
+            return
+
+        derivatives = self._derivatives_root()
+        index_exists = bool(derivatives is not None and (derivatives / "index.tsv").exists())
+        discovered = self._discover_scan_ids_for_dataset()
+        discovered_count = len(discovered)
+        processed_count = len(self._index_rows)
+        review_count = len(self._review_rows)
+        pending_count = len(self._pending_scan_ids())
+        reviewed_count = sum(1 for row in self._review_rows.values() if str(row.get("manual_grade", "")).strip())
+
+        if not self._core_package_ready():
+            text = (
+                f"Dataset loaded, but MotionScore core is not installed. "
+                f"Existing processed scans: {processed_count}. Install/update MotionScore before discovering or predicting raw scans."
+            )
+            progress = "Dataset loaded; core not installed"
+        elif not index_exists:
+            if discovered_count > 0:
+                text = (
+                    f"Dataset loaded: {discovered_count} raw scan(s) discovered; 0 processed yet. "
+                    "Click Predict to create MotionScore outputs, or Grade Manually to start manual review."
+                )
+                progress = f"Dataset loaded: {discovered_count} discovered, 0 processed"
+            else:
+                text = (
+                    "Dataset loaded: 0 raw scans discovered and 0 processed scans found. "
+                    "Check the Dataset Root and AIM filename/layout."
+                )
+                progress = "Dataset loaded: 0 discovered, 0 processed"
+        else:
+            text = (
+                f"Dataset loaded: {discovered_count} raw scan(s) discovered; "
+                f"{processed_count} processed; {review_count} in review; "
+                f"{pending_count} pending; {reviewed_count} reviewed."
+            )
+            progress = f"Dataset loaded: {processed_count} processed, {pending_count} pending"
+
+        self.datasetSummaryLabel.text = text
+        self.progressLabel.setText(progress)
+        self._log(f"[dataset] {text}\n")
 
     def onTrainingModeToggled(self, checked):
         mode = "ON" if bool(checked) else "OFF"
