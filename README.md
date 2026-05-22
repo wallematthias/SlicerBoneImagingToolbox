@@ -135,6 +135,8 @@ Mask segmentation can be generated with adaptive, seg_gauss, or Laplace-Hamming 
 
 ## MotionScore Model Access
 
+Motion Scoring requires PyTorch for model inference. In 3D Slicer, install the `PyTorch` extension from Slicer's Extension Manager before running MotionScore predictions, then restart Slicer. The MotionScore model bundle only provides the trained weights; it does not install PyTorch.
+
 Motion Scoring no longer depends on a hosted license request service. The recommended model distribution path is a downloadable `.tar.gz` model bundle, for example a GitHub release artifact or local/lab-hosted model bundle. This keeps the workflow usable without paid infrastructure while still allowing aggregate download counts and voluntary user registration when useful.
 
 The Slicer module has a `Local models folder` field in the Motion Scoring setup panel. The automatic `Install / Download Models` button downloads the default model from the MotionScoreHRpQCT release catalog. If that automatic download is unavailable, install the same model weights manually:
