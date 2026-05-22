@@ -1212,30 +1212,25 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             or shutil.which("python")
         )
 
-    def _pip_install(self, *packages, upgrade=False, extra_args=None):
-        python_exe = self._python_executable_for_setup()
-        if not python_exe:
-            raise RuntimeError("Could not find Python executable for pip install.")
-        cmd = [python_exe, "-m", "pip", "install"]
+    def _pip_install_args(self, *packages, upgrade=False, extra_args=None):
+        args = []
         if upgrade:
-            cmd.append("--upgrade")
+            args.append("--upgrade")
         if extra_args:
-            cmd.extend(str(a) for a in extra_args if str(a).strip())
-        cmd.extend(str(p) for p in packages if str(p).strip())
-        if len(cmd) <= 4:
+            args.extend(str(a) for a in extra_args if str(a).strip())
+        args.extend(str(p) for p in packages if str(p).strip())
+        return args
+
+    def _pip_install(self, *packages, upgrade=False, extra_args=None):
+        args = self._pip_install_args(*packages, upgrade=upgrade, extra_args=extra_args)
+        if not args:
             return
-        self._log(f"[setup] running: {' '.join(cmd)}\n")
-        completed = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-        )
-        if completed.stdout:
-            self._log(completed.stdout)
-        if int(completed.returncode) != 0:
-            raise RuntimeError(f"pip install failed (exit {completed.returncode}).")
+        command = " ".join(args)
+        self._log(f"[setup] running Slicer pip install: {command}\n")
+        slicer.util.pip_install(command)
+        for name in list(sys.modules):
+            if name == "motionscore" or name.startswith("motionscore."):
+                sys.modules.pop(name, None)
 
     def _core_pip_requirements(self):
         return [f"{CORE_PYPI_PACKAGE}>={MIN_CORE_VERSION}", *CORE_PIP_CONSTRAINTS]
@@ -1402,7 +1397,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def onQuickSetup(self):
         """
         Friendly setup flow:
-        1) Force reinstall/upgrade core package from PyPI
+        1) Force reinstall/upgrade core package from PyPI using Slicer's pip helper
         2) Download and register the configured model catalog entry only if no local models exist
         """
         self._persist_license_settings()
