@@ -140,9 +140,12 @@ Motion Scoring no longer depends on a hosted license request service. The recomm
 The Slicer module has a `Local models folder` field in the Motion Scoring setup panel. The automatic `Install / Download Models` button downloads the default model from the MotionScoreHRpQCT release catalog. If that automatic download is unavailable, install the same model weights manually:
 
 1. Download the default MotionScore base model bundle:
-   - https://github.com/wallematthias/MotionScoreHRpQCT/releases/download/v2.5.4/motionscore-base-v1.tar.gz
+   - Windows-friendly zip: https://github.com/wallematthias/MotionScoreHRpQCT/releases/download/v2.5.4/motionscore-base-v1.zip
+   - macOS/Linux tarball: https://github.com/wallematthias/MotionScoreHRpQCT/releases/download/v2.5.4/motionscore-base-v1.tar.gz
 2. In Slicer, open `Motion Scoring` and note the path shown in `Local models folder`.
-3. Extract the downloaded `.tar.gz` bundle into that folder.
+3. Extract the downloaded bundle into that folder.
+   - The `.zip` bundle already contains the `base-v1` folder.
+   - If using the `.tar.gz` bundle manually, create a `base-v1` folder inside `Local models folder` and extract the tarball contents into that `base-v1` folder.
 4. Confirm the extracted files include model weights named like `DNN_*.pt` or `DNN_*.h5`, either directly in the local models folder or inside a model subfolder such as `base-v1`.
 5. Restart Slicer or reopen the `Motion Scoring` module, then select `Base v1 (base-v1)` from `Model Profile`.
 
