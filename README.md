@@ -57,30 +57,54 @@ The Slicer modules remain workflow wrappers around core Python packages:
 
 ## Installation
 
-### Option A: Extension Manager (recommended when listed)
+The toolbox is not yet available in the full stable Slicer Extensions Index for all users. Until it is listed for your Slicer version, install it manually by downloading this repository and adding the module folders to Slicer.
+
+### Option A: Extension Manager (when listed)
 
 1. Open 3D Slicer.
 2. Install `HR-pQCT Toolbox` from Extension Manager.
 3. Restart 3D Slicer.
 
-### Option B: Developer mode (current fallback)
+### Option B: Manual install from download or clone
 
-1. Open 3D Slicer.
-2. Go to `View -> Python Interactor`.
-3. Run:
+1. Download or clone this repository:
+   - Git clone: `git clone https://github.com/wallematthias/SlicerTimelapsedHRpQCT.git`
+   - Or download the repository ZIP from GitHub and extract it somewhere permanent.
+2. Open 3D Slicer.
+3. Go to `View -> Python Interactor`.
+4. Run the helper script below, replacing `<repo>` with the folder that contains this README:
    ```python
-   script = "<repo>/TimelapsedHRpQCTSlicer/scripts/link_local_toolbox_modules.py"
+   script = "<repo>/scripts/link_local_toolbox_modules.py"
    exec(open(script).read(), {"__name__": "__main__", "SCRIPT_PATH": script})
    ```
-4. Restart Slicer.
-5. Open modules from the `HR-pQCT` category.
+5. Restart Slicer.
+6. Open modules from the `HR-pQCT` category:
+   - `Timelapsed HR-pQCT`
+   - `Motion Scoring`
+   - `Scanco I/O`
+   - `Contours and Segmentation`
 
-Manual alternative: go to `Edit -> Application Settings -> Modules` and add all module paths:
+Example script paths:
 
-   - `<repo>/TimelapsedHRpQCTSlicer/TimelapsedHRpQCT`
-   - `<repo>/TimelapsedHRpQCTSlicer/MotionScoreHRpQCT`
-   - `<repo>/TimelapsedHRpQCTSlicer/ScancoIO`
-   - `<repo>/TimelapsedHRpQCTSlicer/HRpQCTSegmentation`
+- macOS/Linux: `script = "/Users/<you>/Downloads/SlicerTimelapsedHRpQCT/scripts/link_local_toolbox_modules.py"`
+- Windows: `script = r"C:\Users\<you>\Downloads\SlicerTimelapsedHRpQCT\scripts\link_local_toolbox_modules.py"`
+
+### Manual Slicer UI alternative
+
+If you prefer not to run the helper script, add the module folders through Slicer's settings:
+
+1. In Slicer, open `Edit -> Application Settings -> Modules`.
+2. Under `Additional module paths`, add each folder below.
+3. Click `OK` or `Apply`, then restart Slicer.
+
+Add these folders, replacing `<repo>` with the downloaded/cloned repository folder:
+
+- `<repo>/TimelapsedHRpQCT`
+- `<repo>/MotionScoreHRpQCT`
+- `<repo>/ScancoIO`
+- `<repo>/HRpQCTSegmentation`
+
+Do not add only the top-level repository folder. Slicer needs the four module folders above to load the whole toolbox.
 
 ## Tutorial
 
@@ -105,12 +129,13 @@ The Timelapsed module lists the profiles bundled with the installed `timelapsed-
 Applying a profile updates the visible analysis controls and passes the selected core profile to new runs.
 After loading a saved remodelling image, the module exposes the key review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
 When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
-The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation fraction, and resorption fraction.
+The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation volume fraction (`FV/BV`), resorption volume fraction (`RV/BV`), net change volume fraction (`NV/BV = FV/BV - RV/BV`), and active volume fraction (`AV/BV = FV/BV + RV/BV`).
+When scan interval metadata is already present in pairwise outputs, the export also carries `scan_period_days` and `scan_period_years`; these interval fields are reported for context and are not used to normalize remodelling metrics.
 Mask segmentation can be generated with adaptive, seg_gauss, or Laplace-Hamming binarization.
 
 ## MotionScore Model Access
 
-Motion Scoring no longer depends on a hosted license request service. The recommended model distribution path is a local or lab-hosted `.tar.gz` model bundle, optionally linked from a registration page or GitHub release. This keeps the workflow usable without paid infrastructure while still allowing aggregate download counts and voluntary user registration.
+Motion Scoring no longer depends on a hosted license request service. The recommended model distribution path is a downloadable `.tar.gz` model bundle, for example a GitHub release artifact or local/lab-hosted model bundle. This keeps the workflow usable without paid infrastructure while still allowing aggregate download counts and voluntary user registration when useful.
 
 ## Scanco AIM I/O
 
@@ -175,11 +200,32 @@ Notes:
 - Parse supports generic and sided sites (`radius/tibia/knee` and `*_left/*_right` variants).
 - `Restructure raw inputs` is disabled when parse-table label overrides are active, because overrides run through a virtual input root.
 
-## Publication
+## Method Citations
 
-If you use this extension in your research, please cite:
+For the main `eth-uofc` timelapsed HR-pQCT method, cite:
 
 Walle M, Whittier DE, Schenk D, Atkins PR, Blauth M, Zysset P, Lippuner K, Müller R, Collins CJ. Precision of bone mechanoregulation assessment in humans using longitudinal high-resolution peripheral quantitative computed tomography in vivo. *Bone*. 2023 Jul;172:116780. doi: 10.1016/j.bone.2023.116780. Epub 2023 May 1. PMID: 37137459.
+
+Related applications using the method include:
+
+- Walle M, Duseja A, Whittier DE, Vilaca T, Paggiosi M, Eastell R, Müller R, Collins CJ. Bone remodeling and responsiveness to mechanical stimuli in individuals with type 1 diabetes mellitus. *Journal of Bone and Mineral Research*. 2024;39(2):85-94.
+- Walle M, Gabel L, Whittier DE, Liphardt AM, Hulme PA, Heer M, Zwart SR, Smith SM, Sibonga JD, Boyd SK. Tracking of spaceflight-induced bone remodeling reveals a limited time frame for recovery of resorption sites in humans.
+- Matheson BE, Walle M, Bugbird AR, Rosenberg M, Mateus J, Boyd SK. Early skeletal deteriorations following short-duration spaceflight.
+
+For multistack registration, cite:
+
+Whittier DE, Walle M, Schenk D, Atkins PR, Collins CJ, Zysset P, Lippuner K, Müller R. A multi-stack registration technique to improve measurement accuracy and precision across longitudinal HR-pQCT scans. *Bone*. 2023;176:116893. doi: 10.1016/j.bone.2023.116893.
+
+For adapted profile variants, cite the profile-specific paper when relevant:
+
+- `shriners`: Hosseinitabatabaei S, Vitienes I, Rummler M, Birkhold A, Rauch F, Willie BM. Non-invasive quantification of bone (re)modeling dynamics in adults with osteogenesis imperfecta treated with setrusumab using timelapse high-resolution peripheral-quantitative computed tomography. *Journal of Bone and Mineral Research*. 2025;40(3):348. https://academic.oup.com/jbmr/article/40/3/348/7978263
+- `ucsf`: Zhou M, Sadoughi S, Go L, Ramil G, Yu I, Saeed I, Fan B, Wu PH, Salusky IB, Nickolas TL, Ix JH, Kazakia GJ. Time-lapse HR-pQCT reliably assesses and monitors local bone turnover in patients with chronic kidney disease. *Journal of Bone and Mineral Research*. 2025;40(6):738-752. doi: 10.1093/jbmr/zjaf006.
+
+For Laplace-Hamming segmentation, refer to the Galateia Kazakia lab implementation and related work: https://github.com/gkazakia
+
+For Motion Scoring, cite:
+
+Walle M, Eggemann D, Atkins PR, Kendall JJ, Stock K, Müller R, Collins CJ. Motion grading of high-resolution quantitative computed tomography supported by deep convolutional neural networks. *Bone*. 2023 Jan;166:116607. doi: 10.1016/j.bone.2022.116607. Epub 2022 Nov 8. PMID: 36368464.
 
 ## License
 

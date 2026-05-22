@@ -25,6 +25,10 @@ for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
         pass
 
 import SimpleITK as sitk
+from TimelapsedHRpQCTReporting import (
+    PROFILE_DISPLAY_ORDER,
+    enrich_cohort_export_row,
+)
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
     ScriptedLoadableModuleWidget,
@@ -34,17 +38,6 @@ from slicer.ScriptedLoadableModule import (
 
 MODULE_VERSION = "0.2.1"
 MIN_PIPELINE_VERSION = "2.0.25"
-
-PROFILE_DISPLAY_ORDER = [
-    "standard",
-    "xct1-standard",
-    "eth-uofc",
-    "ucsf",
-    "shriners",
-    "multistack",
-    "single-stack",
-    "low-memory",
-]
 
 
 def _version_tuple(version_text):
@@ -807,17 +800,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisStatusLabel = qt.QLabel("Ready")
         self.analysisStatusLabel.styleSheet = "color: #666666;"
         self.analysisPairMetricsMaskLabel = qt.QLabel("Mask: N/A")
-        self.analysisFormationFractionLabel = qt.QLabel("Formation fraction: N/A")
-        self.analysisResorptionFractionLabel = qt.QLabel("Resorption fraction: N/A")
+        self.analysisFormationFractionLabel = qt.QLabel("Formation volume fraction (FV/BV): N/A")
+        self.analysisResorptionFractionLabel = qt.QLabel("Resorption volume fraction (RV/BV): N/A")
+        self.analysisNetChangeFractionLabel = qt.QLabel("Net change volume fraction (NV/BV): N/A")
+        self.analysisActiveFractionLabel = qt.QLabel("Active volume fraction (AV/BV): N/A")
         for metric_label in (
             self.analysisPairMetricsMaskLabel,
             self.analysisFormationFractionLabel,
             self.analysisResorptionFractionLabel,
+            self.analysisNetChangeFractionLabel,
+            self.analysisActiveFractionLabel,
         ):
             metric_label.wordWrap = True
         self.analysisPairMetricsMaskLabel.toolTip = "Compartment/mask used for the displayed pair metrics."
-        self.analysisFormationFractionLabel.toolTip = "Formation fraction for the currently loaded/previewed comparison."
-        self.analysisResorptionFractionLabel.toolTip = "Resorption fraction for the currently loaded/previewed comparison."
+        self.analysisFormationFractionLabel.toolTip = "Formation volume fraction for the currently loaded/previewed comparison."
+        self.analysisResorptionFractionLabel.toolTip = "Resorption volume fraction for the currently loaded/previewed comparison."
+        self.analysisNetChangeFractionLabel.toolTip = "Net change volume fraction: FV/BV minus RV/BV."
+        self.analysisActiveFractionLabel.toolTip = "Active volume fraction: FV/BV plus RV/BV."
         self.runAnalysisBtn = qt.QPushButton("Update all")
         self.runAnalysisBtn.toolTip = (
             "Rerun remodelling analysis for all processed samples using the current analysis options."
@@ -852,9 +851,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         metricsLayout.setSpacing(4)
         self.analysisFormationFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #c95b00;")
         self.analysisResorptionFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #b02c83;")
+        self.analysisNetChangeFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #4c5a64;")
+        self.analysisActiveFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #336b5f;")
         metricsLayout.addWidget(self.analysisPairMetricsMaskLabel)
         metricsLayout.addWidget(self.analysisFormationFractionLabel)
         metricsLayout.addWidget(self.analysisResorptionFractionLabel)
+        metricsLayout.addWidget(self.analysisNetChangeFractionLabel)
+        metricsLayout.addWidget(self.analysisActiveFractionLabel)
         analysisActionsRow = qt.QWidget()
         analysisActionsLayout = qt.QHBoxLayout(analysisActionsRow)
         analysisActionsLayout.setContentsMargins(0, 0, 0, 0)
@@ -933,9 +936,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
         self.seriesBasisLabel.toolTip = "Comparison pairs currently included in cohort summary calculations."
         self.seriesSummaryTable = qt.QTableWidget()
-        self.seriesSummaryTable.setColumnCount(4)
+        self.seriesSummaryTable.setColumnCount(6)
         self.seriesSummaryTable.setHorizontalHeaderLabels(
-            ["Mask", "Mean Formation", "Mean Resorption", "Subjects"]
+            ["Mask", "Mean FV/BV", "Mean RV/BV", "Mean NV/BV", "Mean AV/BV", "Subjects"]
         )
         self.seriesSummaryTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
         self.seriesSummaryTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
@@ -947,7 +950,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryForm.addRow(self.seriesSummarySavedStateLabel)
         self.seriesSummaryForm.addRow(self.seriesSummaryUpdateBtn)
         self.seriesSummaryForm.addRow(self.seriesSummaryExportBtn)
-        self.seriesSummaryForm.addRow(_label("Mask summaries", "Mean saved formation/resorption fractions by mask/compartment."), self.seriesSummaryTable)
+        self.seriesSummaryForm.addRow(_label("Mask summaries", "Mean saved remodelling volume fractions by mask/compartment."), self.seriesSummaryTable)
         self.seriesSummaryForm.addRow(self.seriesBasisLabel)
 
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
@@ -3525,12 +3528,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
         self._latest_pair_metric_rows = list(rows)
         comp_text = str(compartment) if rows else "N/A"
+        if formation_frac is not None and resorption_frac is not None:
+            net_change_frac = float(formation_frac) - float(resorption_frac)
+            active_frac = float(formation_frac) + float(resorption_frac)
+        else:
+            net_change_frac = None
+            active_frac = None
         self.analysisPairMetricsMaskLabel.text = f"Mask: {comp_text}"
         self.analysisFormationFractionLabel.text = (
-            f"Formation fraction: {_fmt(formation_frac)}"
+            f"Formation volume fraction (FV/BV): {_fmt(formation_frac)}"
         )
         self.analysisResorptionFractionLabel.text = (
-            f"Resorption fraction: {_fmt(resorption_frac)}"
+            f"Resorption volume fraction (RV/BV): {_fmt(resorption_frac)}"
+        )
+        self.analysisNetChangeFractionLabel.text = (
+            f"Net change volume fraction (NV/BV): {_fmt(net_change_frac)}"
+        )
+        self.analysisActiveFractionLabel.text = (
+            f"Active volume fraction (AV/BV): {_fmt(active_frac)}"
         )
 
     def _set_pair_metric_rows(self, rows=None):
@@ -3564,6 +3579,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 str(row.get("compartment", "")),
                 _fmt_pct(row.get("mean_formation_frac_bv0")),
                 _fmt_pct(row.get("mean_resorption_frac_bv0")),
+                _fmt_pct(row.get("mean_net_change_frac_bv0")),
+                _fmt_pct(row.get("mean_active_frac_bv0")),
                 str(int(row.get("n_subjects", 0))),
             ]
             for col_idx, value in enumerate(values):
@@ -4502,6 +4519,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     "mean_resorption_frac_bv0": float(
                         np.nanmean([row["resorption_frac_bv0"] for row in rows_for_compartment])
                     ),
+                    "mean_net_change_frac_bv0": float(
+                        np.nanmean([row["NV_BV"] for row in rows_for_compartment])
+                    ),
+                    "mean_active_frac_bv0": float(
+                        np.nanmean([row["AV_BV"] for row in rows_for_compartment])
+                    ),
                     "n_subjects": len(
                         {(row["subject_id"], row["site"]) for row in rows_for_compartment}
                     ),
@@ -4542,7 +4565,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     pair_key = f"{row.get('t0')}->{row.get('t1')}"
                     if selected_pairs and pair_key not in selected_pairs:
                         continue
-                    cohort_rows.append(
+                    base_row = dict(row)
+                    base_row.update(
                         {
                             "subject_id": subject_id,
                             "site": site,
@@ -4554,6 +4578,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                             "resorption_frac_bv0": float(row.get("resorption_frac_bv0", "nan")),
                         }
                     )
+                    cohort_rows.append(enrich_cohort_export_row(base_row))
         return cohort_rows
 
     def _csv_fieldnames(self, rows):
