@@ -4882,7 +4882,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 target_x = target_y * aspect
             else:
                 target_y = target_x / aspect
-            slice_node.SetFieldOfView(float(target_x), float(target_y), 1.0)
+            current_fov = slice_node.GetFieldOfView()
+            z_fov = float(current_fov[2]) if current_fov is not None and len(current_fov) >= 3 else 1.0
+            slice_node.SetFieldOfView(float(target_x), float(target_y), z_fov)
         except Exception:
             pass
 

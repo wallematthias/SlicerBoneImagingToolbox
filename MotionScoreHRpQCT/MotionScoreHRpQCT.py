@@ -2939,12 +2939,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         row = self._model_index_rows.get(scan_id, {}).get(selected_model_id) if selected_model_id else None
         if not row:
             row = self._index_rows.get(scan_id, {})
-        rel_path = (
-            row.get("slice_profile_png_path", "").strip()
-            or row.get("preview_png_path", "").strip()
-        )
+        rel_path = self._resolve_slice_profile_png_relpath(row, derivatives)
         if not rel_path:
-            self._log(f"[profile] no png path in index for {scan_id}\n")
+            self._log(f"[profile] no slice profile png path in index for {scan_id}\n")
             self._clear_profile_plot()
             return
 
@@ -2968,3 +2965,24 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._profile_source_pixmap = pix
         self._profile_scan_id = scan_id
         self._render_profile_plot(scan_id)
+
+    def _resolve_slice_profile_png_relpath(self, row, derivatives):
+        rel_path = str(row.get("slice_profile_png_path", "") or "").strip()
+        if rel_path and (derivatives / rel_path).exists():
+            return rel_path
+
+        preview_rel = str(row.get("preview_png_path", "") or "").strip()
+        if preview_rel:
+            preview_path = (derivatives / preview_rel).resolve()
+            name = preview_path.name
+            candidates = []
+            if name.endswith("_preview.png"):
+                candidates.append(preview_path.with_name(name[: -len("_preview.png")] + "_slice_profile.png"))
+            candidates.extend(sorted(preview_path.parent.glob("*slice_profile*.png")))
+            for candidate in candidates:
+                if candidate.exists():
+                    try:
+                        return os.path.relpath(str(candidate.resolve()), str(derivatives.resolve()))
+                    except Exception:
+                        return str(candidate)
+        return ""
