@@ -137,6 +137,57 @@ Mask segmentation can be generated with adaptive, seg_gauss, or Laplace-Hamming 
 
 Motion Scoring no longer depends on a hosted license request service. The recommended model distribution path is a downloadable `.tar.gz` model bundle, for example a GitHub release artifact or local/lab-hosted model bundle. This keeps the workflow usable without paid infrastructure while still allowing aggregate download counts and voluntary user registration when useful.
 
+The Slicer module has a `Local models folder` field in the Motion Scoring setup panel. The automatic `Install / Download Models` button downloads the default model from the MotionScoreHRpQCT release catalog. If that automatic download is unavailable, install the same model weights manually:
+
+1. Download the default MotionScore base model bundle:
+   - https://github.com/wallematthias/MotionScoreHRpQCT/releases/download/v2.5.4/motionscore-base-v1.tar.gz
+2. In Slicer, open `Motion Scoring` and note the path shown in `Local models folder`.
+3. Extract the downloaded `.tar.gz` bundle into that folder.
+4. Confirm the extracted files include model weights named like `DNN_*.pt` or `DNN_*.h5`, either directly in the local models folder or inside a model subfolder such as `base-v1`.
+5. Restart Slicer or reopen the `Motion Scoring` module, then select `Base v1 (base-v1)` from `Model Profile`.
+
+Recommended folder structure:
+
+```text
+<Local models folder>/
+  base-v1/
+    DNN_*.pt
+    ...other files from the extracted model bundle...
+```
+
+For example, if the Slicer field shows:
+
+```text
+C:\Users\<you>\AppData\Roaming\NA-MIC\Slicer 5.10\MotionScore\models
+```
+
+then the model files should be placed like:
+
+```text
+C:\Users\<you>\AppData\Roaming\NA-MIC\Slicer 5.10\MotionScore\models\base-v1\DNN_*.pt
+```
+
+On macOS/Linux, the same structure applies:
+
+```text
+<Local models folder>/base-v1/DNN_*.pt
+```
+
+The module also accepts a flat fallback layout:
+
+```text
+<Local models folder>/
+  DNN_*.pt
+```
+
+However, the `base-v1` subfolder layout is preferred because it keeps model versions separated.
+
+When valid model weights are already present in `Local models folder`, the Slicer module uses those local files and skips the GitHub download. This is the preferred setup for managed workstations or offline installations.
+
+The current default model catalog is:
+
+- https://github.com/wallematthias/MotionScoreHRpQCT/releases/latest/download/model_catalog.json
+
 ## Scanco AIM I/O
 
 The `Scanco I/O` module is intended for simple Slicer round trips:

@@ -1403,7 +1403,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         """
         Friendly setup flow:
         1) Force reinstall/upgrade core package from PyPI
-        2) Download and register the configured model catalog entry
+        2) Download and register the configured model catalog entry only if no local models exist
         """
         self._persist_license_settings()
 
@@ -1426,6 +1426,13 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if models_dir is None:
             slicer.util.errorDisplay("Could not resolve local models folder.")
             return False
+        if self._has_local_models(models_dir):
+            self.modelsPathEdit.currentPath = str(models_dir)
+            self._refresh_model_profiles()
+            self._update_setup_status()
+            self._set_license_status(f"Local MotionScore models already found in {models_dir}. Download skipped.")
+            self._log(f"[models] local models found in {models_dir}; download skipped\n")
+            return True
         self._set_license_status("Downloading and registering MotionScore models...")
 
         def _finish_download():

@@ -8,15 +8,22 @@ from pathlib import Path
 MODULE_DIR = Path(__file__).resolve().parents[1] / "TimelapsedHRpQCT"
 sys.path.insert(0, str(MODULE_DIR))
 
-from TimelapsedHRpQCTReporting import (  # noqa: E402
+from TimelapsedHRpQCTLib.Reporting import (  # noqa: E402
     PROFILE_DISPLAY_ORDER,
     enrich_cohort_export_row,
+)
+from TimelapsedHRpQCTReporting import (  # noqa: E402
+    PROFILE_DISPLAY_ORDER as LEGACY_PROFILE_DISPLAY_ORDER,
 )
 
 
 def test_profile_order_leads_with_eth_uofc_then_multistack() -> None:
     assert PROFILE_DISPLAY_ORDER[:2] == ["eth-uofc", "multistack"]
     assert PROFILE_DISPLAY_ORDER.index("shriners") < PROFILE_DISPLAY_ORDER.index("ucsf")
+
+
+def test_legacy_reporting_module_reexports_helpers() -> None:
+    assert LEGACY_PROFILE_DISPLAY_ORDER == PROFILE_DISPLAY_ORDER
 
 
 def test_enrich_cohort_export_row_adds_volume_fraction_metrics() -> None:

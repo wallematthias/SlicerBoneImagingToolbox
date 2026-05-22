@@ -3,6 +3,8 @@ set(MODULE_NAME TimelapsedHRpQCT)
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
   ${MODULE_NAME}Reporting.py
+  ${MODULE_NAME}Lib/__init__.py
+  ${MODULE_NAME}Lib/Reporting.py
 )
 
 set(MODULE_PYTHON_RESOURCES

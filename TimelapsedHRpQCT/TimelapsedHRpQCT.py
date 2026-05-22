@@ -25,7 +25,7 @@ for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
         pass
 
 import SimpleITK as sitk
-from TimelapsedHRpQCTReporting import (
+from TimelapsedHRpQCTLib.Reporting import (
     PROFILE_DISPLAY_ORDER,
     enrich_cohort_export_row,
 )
