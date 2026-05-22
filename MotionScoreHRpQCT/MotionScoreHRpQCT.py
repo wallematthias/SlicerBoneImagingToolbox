@@ -945,6 +945,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         models_dir = self._models_dir()
         profiles = []
         if models_dir is not None:
+            self._ensure_base_model_registry(models_dir)
             try:
                 from motionscore.model_registry import list_model_profiles
 
@@ -1007,6 +1008,63 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if models_root is None:
             return None
         return models_root / self._normalized_retrain_model_id()
+
+    def _ensure_base_model_registry(self, models_dir=None):
+        models_dir = Path(models_dir or self._models_dir()).resolve()
+        registry_path = models_dir / "model_registry.json"
+        if registry_path.exists():
+            return False
+
+        candidates = [
+            (models_dir / "base-v1", "base-v1"),
+            (models_dir, "base-v1"),
+        ]
+        model_dir = None
+        model_id = "base-v1"
+        for candidate, candidate_id in candidates:
+            if any(candidate.glob("DNN_*.pt")):
+                model_dir = candidate
+                model_id = candidate_id
+                break
+        if model_dir is None:
+            child_dirs = sorted(p for p in models_dir.iterdir() if p.is_dir())
+            for child in child_dirs:
+                if any(child.glob("DNN_*.pt")):
+                    model_dir = child
+                    model_id = child.name or "base-v1"
+                    break
+        if model_dir is None:
+            return False
+
+        try:
+            relative_dir = model_dir.relative_to(models_dir)
+            checkpoint_count = len(list(model_dir.glob("DNN_*.pt")))
+            payload = {
+                "schema_version": "1.0",
+                "updated_at": "",
+                "default_model_id": model_id,
+                "models": [
+                    {
+                        "model_id": model_id,
+                        "display_name": "Base v1" if model_id == "base-v1" else model_id,
+                        "domain": "hrpqct",
+                        "version": "v1",
+                        "description": "Registered by Slicer from manually installed local model weights.",
+                        "relative_dir": str(relative_dir) if str(relative_dir) else ".",
+                        "checkpoint_count": checkpoint_count,
+                        "source_model_id": "",
+                        "training_manifest": "",
+                        "metrics_path": "",
+                        "registered_at": "",
+                    }
+                ],
+            }
+            registry_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self._log(f"[models] created missing model registry: {registry_path}\n")
+            return True
+        except Exception as exc:
+            self._log(f"[models] could not create missing model registry: {exc}\n")
+            return False
 
     def _retrain_cv_folds(self):
         models_root = self._models_dir()
@@ -1123,6 +1181,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if models_dir is None:
             return False
         models_dir = Path(models_dir)
+        self._ensure_base_model_registry(models_dir)
         try:
             from motionscore.model_registry import list_model_profiles, resolve_model_dir
 
@@ -1408,6 +1467,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not self._force_reinstall_core_package():
             return
 
+        self._ensure_base_model_registry()
         if not self._has_local_models():
             if not self.onDownloadModelBundle():
                 return
@@ -1435,6 +1495,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         def _finish_download():
             self.modelsPathEdit.currentPath = str(models_dir)
+            self._ensure_base_model_registry(models_dir)
             self._refresh_model_profiles()
             self._update_setup_status()
             self._set_license_status(f"Models downloaded and registered in {models_dir}.")
@@ -1479,6 +1540,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             if models_dir is None or not models_dir.exists():
                 slicer.util.errorDisplay("Could not resolve local models folder.")
                 return
+            self._ensure_base_model_registry(models_dir)
             has_models = self._has_local_models(models_dir)
             if not has_models:
                 self._log("[setup] no local model files found; running local model setup.\n")

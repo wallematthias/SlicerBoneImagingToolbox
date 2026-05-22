@@ -153,6 +153,7 @@ Recommended folder structure:
 
 ```text
 <Local models folder>/
+  model_registry.json
   base-v1/
     DNN_*.pt
     ...other files from the extracted model bundle...
@@ -180,10 +181,11 @@ The module also accepts a flat fallback layout:
 
 ```text
 <Local models folder>/
+  model_registry.json
   DNN_*.pt
 ```
 
-However, the `base-v1` subfolder layout is preferred because it keeps model versions separated.
+However, the `base-v1` subfolder layout is preferred because it keeps model versions separated. If the model weights are present but `model_registry.json` is missing, the Slicer module recreates a default registry for the detected local weights when the model list is refreshed.
 
 When valid model weights are already present in `Local models folder`, the Slicer module uses those local files and skips the GitHub download. This is the preferred setup for managed workstations or offline installations.
 
