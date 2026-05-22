@@ -2,19 +2,30 @@
   <img src="resources/TimelapsedHRpQCTSlicer.png" alt="TimelapsedHRpQCTSlicer logo" width="320">
 </p>
 
-# TimelapsedHRpQCT Slicer Extension
+# HR-pQCT Toolbox for 3D Slicer
 
-3D Slicer scripted extension for running and reviewing the `timelapsed-hrpqct` pipeline.
+3D Slicer scripted extension for HR-pQCT workflows: longitudinal timelapsed analysis, motion scoring, Scanco AIM import/export, and contouring/segmentation helpers.
 
 `timelapsed-hrpqct` is a longitudinal high-resolution peripheral quantitative computed tomography (HR-pQCT) analysis workflow that aligns longitudinal scans of the same subject across timepoints and computes remodelling-related outputs from those registered volumes.
 It is designed for high-throughput, pipeline-style processing of multi-subject datasets.
 It is intended for HR-pQCT datasets acquired on Scanco XtremeCT systems. The current workflow was developed primarily for second-generation XtremeCT data, but can be adapted to other compatible acquisition setups.
 
-## Core Pipeline Repository
+The extension appears in Slicer as one toolbox category:
 
-This Slicer extension is a GUI wrapper around the main pipeline repository:
+```text
+HR-pQCT
+  Timelapsed HR-pQCT
+  Motion Scoring
+  Scanco I/O
+  Contours and Segmentation
+```
+
+## Core Repositories
+
+The Slicer modules remain workflow wrappers around core Python packages:
 
 - `TimelapsedHRpQCT`: https://github.com/wallematthias/TimelapsedHRpQCT
+- `MotionScoreHRpQCT`: https://github.com/wallematthias/MotionScoreHRpQCT
 
 <p align="center">
   <img src="resources/screenshot-slicer-TimelapsedHRpQCT.png" alt="TimelapsedHRpQCT module screenshot" width="1000">
@@ -25,31 +36,79 @@ This Slicer extension is a GUI wrapper around the main pipeline repository:
 
 ## Modules
 
-- **TimelapsedHRpQCT**: End-to-end longitudinal HR-pQCT workflow in Slicer.
+- **Timelapsed HR-pQCT**: End-to-end longitudinal HR-pQCT workflow in Slicer.
   - Parses AIM datasets into subject/site/session structure.
   - Generates masks (if needed), runs timelapse registration, and computes remodelling outputs.
   - Loads processed outputs (`raw`, `transformed`, `remodelling image`) for review and 3D visualization.
+- **Motion Scoring**: Interactive HR-pQCT scan motion grading workflow.
+  - Runs MotionScore predictions.
+  - Supports rapid reviewer grading and review-table export.
+  - Keeps model inference and retraining logic in the MotionScore core package.
+  - Supports local or downloaded model bundles without requiring a hosted license API.
+- **Scanco I/O**: Focused AIM import/export utility.
+  - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, or HU.
+  - Preserves AIM metadata on imported Slicer volumes so edited data can be exported without a reference AIM.
+  - Exports edited grayscale volumes or binary masks back to `.AIM`.
+  - Uses a lightweight local wrapper around `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
+- **Contours and Segmentation**: Lightweight Slicer workflow helper for masks and contours.
+  - Generates HR-pQCT full, trabecular, cortical, and binary segmentation outputs from an input volume.
+  - Provides radius, tibia, and knee contour presets plus standard Gaussian, Laplace-Hamming, and adaptive segmentation methods.
+  - Keeps expert threshold and morphology settings collapsed by default, then optionally opens Slicer's Segment Editor for cleanup.
 
 ## Installation
 
-### Option A: Extension Manager (recommended when listed)
+The toolbox is not yet available in the full stable Slicer Extensions Index for all users. Until it is listed for your Slicer version, install it manually by downloading this repository and adding the module folders to Slicer.
+
+### Option A: Extension Manager (when listed)
 
 1. Open 3D Slicer.
-2. Install `TimelapsedHRpQCT` from Extension Manager.
+2. Install `HR-pQCT Toolbox` from Extension Manager.
 3. Restart 3D Slicer.
 
-### Option B: Developer mode (current fallback)
+### Option B: Manual install from download or clone
 
-1. Open 3D Slicer.
-2. Go to `Edit -> Application Settings -> Modules`.
-3. Add module path:
-   - `<repo>/TimelapsedHRpQCTSlicer/TimelapsedHRpQCT`
-4. Restart Slicer.
-5. Open module `TimelapsedHRpQCT`.
+1. Download or clone this repository:
+   - Git clone: `git clone https://github.com/wallematthias/SlicerTimelapsedHRpQCT.git`
+   - Or download the repository ZIP from GitHub and extract it somewhere permanent.
+2. Open 3D Slicer.
+3. Go to `View -> Python Interactor`.
+4. Run the helper script below, replacing `<repo>` with the folder that contains this README:
+   ```python
+   script = "<repo>/scripts/link_local_toolbox_modules.py"
+   exec(open(script).read(), {"__name__": "__main__", "SCRIPT_PATH": script})
+   ```
+5. Restart Slicer.
+6. Open modules from the `HR-pQCT` category:
+   - `Timelapsed HR-pQCT`
+   - `Motion Scoring`
+   - `Scanco I/O`
+   - `Contours and Segmentation`
+
+Example script paths:
+
+- macOS/Linux: `script = "/Users/<you>/Downloads/SlicerTimelapsedHRpQCT/scripts/link_local_toolbox_modules.py"`
+- Windows: `script = r"C:\Users\<you>\Downloads\SlicerTimelapsedHRpQCT\scripts\link_local_toolbox_modules.py"`
+
+### Manual Slicer UI alternative
+
+If you prefer not to run the helper script, add the module folders through Slicer's settings:
+
+1. In Slicer, open `Edit -> Application Settings -> Modules`.
+2. Under `Additional module paths`, add each folder below.
+3. Click `OK` or `Apply`, then restart Slicer.
+
+Add these folders, replacing `<repo>` with the downloaded/cloned repository folder:
+
+- `<repo>/TimelapsedHRpQCT`
+- `<repo>/MotionScoreHRpQCT`
+- `<repo>/ScancoIO`
+- `<repo>/HRpQCTSegmentation`
+
+Do not add only the top-level repository folder. Slicer needs the four module folders above to load the whole toolbox.
 
 ## Tutorial
 
-1. Open module `TimelapsedHRpQCT`.
+1. Open module `Timelapsed HR-pQCT`.
 2. Click `Install / Update timelapsed-hrpqct` to install runtime dependencies in Slicer Python.
 3. Select your AIM dataset root.
 4. Click `Parse input`.
@@ -66,10 +125,33 @@ This Slicer extension is a GUI wrapper around the main pipeline repository:
 
 ## Interactive Remodelling Review
 
-After loading a saved remodelling image, the module exposes the same review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
+The Timelapsed module lists the profiles bundled with the installed `timelapsed-hrpqct` package, including standard, XCT1 standard, ETH/UofC, UCSF, Shriners, and workflow profiles such as multistack.
+Applying a profile updates the visible analysis controls and passes the selected core profile to new runs.
+After loading a saved remodelling image, the module exposes the key review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
 When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
-The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation fraction, and resorption fraction.
-Mask segmentation can be generated with adaptive, global Gaussian-threshold, or Laplace-Hamming binarization.
+The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation volume fraction (`FV/BV`), resorption volume fraction (`RV/BV`), net change volume fraction (`NV/BV = FV/BV - RV/BV`), and active volume fraction (`AV/BV = FV/BV + RV/BV`).
+When scan interval metadata is already present in pairwise outputs, the export also carries `scan_period_days` and `scan_period_years`; these interval fields are reported for context and are not used to normalize remodelling metrics.
+Mask segmentation can be generated with adaptive, seg_gauss, or Laplace-Hamming binarization.
+
+## MotionScore Model Access
+
+Motion Scoring no longer depends on a hosted license request service. The recommended model distribution path is a downloadable `.tar.gz` model bundle, for example a GitHub release artifact or local/lab-hosted model bundle. This keeps the workflow usable without paid infrastructure while still allowing aggregate download counts and voluntary user registration when useful.
+
+## Scanco AIM I/O
+
+The `Scanco I/O` module is intended for simple Slicer round trips:
+
+1. Import an AIM image using density/BMD, native, mu, or HU scaling.
+2. Use standard Slicer tools to inspect, segment, crop, smooth, or edit the loaded volume.
+3. Export the edited scalar volume or labelmap back to AIM.
+
+The Slicer module is only the GUI layer. AIM parsing and writing are handled by a lightweight local wrapper backed by the `aimio-py` package (`py_aimio` import name). The `Install / Update AIM I/O` button installs only that package, not the full `timelapsed-hrpqct` pipeline.
+
+Imported AIM metadata is stored on the loaded Slicer volume. The processing log is shown as an editable field table using `aimio-py`'s `log_to_dict` / `dict_to_log` helpers, while the remaining AIM header metadata is shown as editable JSON. For exports from volumes that did not originate from `Scanco I/O`, provide an imported-stack metadata JSON from the timelapsed pipeline, paste/edit header JSON manually, or explicitly enable minimal metadata export. Geometry fields that can be read from the selected Slicer volume, such as dimensions, spacing, origin, and direction, are refreshed at export time.
+
+## Contours And Segmentation
+
+The `Contours and Segmentation` module wraps the core `timelapsed-hrpqct` contour-generation code. It can generate full, trabecular, cortical, and binary segmentation outputs from a selected HR-pQCT volume using radius, tibia, or knee presets. Segmentation methods include standard Gaussian thresholding, Laplace-Hamming, and adaptive thresholding. Expert thresholds and morphology settings are available in a collapsed panel for method validation and scanner-specific tuning.
 
 ## Results Layout
 
@@ -118,11 +200,32 @@ Notes:
 - Parse supports generic and sided sites (`radius/tibia/knee` and `*_left/*_right` variants).
 - `Restructure raw inputs` is disabled when parse-table label overrides are active, because overrides run through a virtual input root.
 
-## Publication
+## Method Citations
 
-If you use this extension in your research, please cite:
+For the main `eth-uofc` timelapsed HR-pQCT method, cite:
 
 Walle M, Whittier DE, Schenk D, Atkins PR, Blauth M, Zysset P, Lippuner K, Müller R, Collins CJ. Precision of bone mechanoregulation assessment in humans using longitudinal high-resolution peripheral quantitative computed tomography in vivo. *Bone*. 2023 Jul;172:116780. doi: 10.1016/j.bone.2023.116780. Epub 2023 May 1. PMID: 37137459.
+
+Related applications using the method include:
+
+- Walle M, Duseja A, Whittier DE, Vilaca T, Paggiosi M, Eastell R, Müller R, Collins CJ. Bone remodeling and responsiveness to mechanical stimuli in individuals with type 1 diabetes mellitus. *Journal of Bone and Mineral Research*. 2024;39(2):85-94.
+- Walle M, Gabel L, Whittier DE, Liphardt AM, Hulme PA, Heer M, Zwart SR, Smith SM, Sibonga JD, Boyd SK. Tracking of spaceflight-induced bone remodeling reveals a limited time frame for recovery of resorption sites in humans.
+- Matheson BE, Walle M, Bugbird AR, Rosenberg M, Mateus J, Boyd SK. Early skeletal deteriorations following short-duration spaceflight.
+
+For multistack registration, cite:
+
+Whittier DE, Walle M, Schenk D, Atkins PR, Collins CJ, Zysset P, Lippuner K, Müller R. A multi-stack registration technique to improve measurement accuracy and precision across longitudinal HR-pQCT scans. *Bone*. 2023;176:116893. doi: 10.1016/j.bone.2023.116893.
+
+For adapted profile variants, cite the profile-specific paper when relevant:
+
+- `shriners`: Hosseinitabatabaei S, Vitienes I, Rummler M, Birkhold A, Rauch F, Willie BM. Non-invasive quantification of bone (re)modeling dynamics in adults with osteogenesis imperfecta treated with setrusumab using timelapse high-resolution peripheral-quantitative computed tomography. *Journal of Bone and Mineral Research*. 2025;40(3):348. https://academic.oup.com/jbmr/article/40/3/348/7978263
+- `ucsf`: Zhou M, Sadoughi S, Go L, Ramil G, Yu I, Saeed I, Fan B, Wu PH, Salusky IB, Nickolas TL, Ix JH, Kazakia GJ. Time-lapse HR-pQCT reliably assesses and monitors local bone turnover in patients with chronic kidney disease. *Journal of Bone and Mineral Research*. 2025;40(6):738-752. doi: 10.1093/jbmr/zjaf006.
+
+For Laplace-Hamming segmentation, refer to the Galateia Kazakia lab implementation and related work: https://github.com/gkazakia
+
+For Motion Scoring, cite:
+
+Walle M, Eggemann D, Atkins PR, Kendall JJ, Stock K, Müller R, Collins CJ. Motion grading of high-resolution quantitative computed tomography supported by deep convolutional neural networks. *Bone*. 2023 Jan;166:116607. doi: 10.1016/j.bone.2022.116607. Epub 2022 Nov 8. PMID: 36368464.
 
 ## License
 

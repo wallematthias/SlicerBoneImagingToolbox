@@ -2,6 +2,26 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.2.0] - 2026-05-21
+
+### Added
+
+- Evolved the extension into an HR-pQCT Toolbox with Timelapsed, Motion Scoring, Scanco I/O, and Contours and Segmentation modules under one Slicer category.
+- Added a Scanco I/O module for AIM import with density/native/mu/HU scaling and AIM export for grayscale or binary mask volumes.
+- Added a Contours and Segmentation module for threshold-based segmentation creation followed by cleanup in Slicer's Segment Editor.
+- Added MotionScoreHRpQCT as a sibling toolbox module.
+- Added Timelapsed study profile selection for ETH/UofC, UCSF, Shriners, and standard core defaults.
+- Added MotionScore local/downloaded model bundle setup as a no-hosted-license-service alternative.
+- Added editable AIM header metadata display in the Scanco I/O export panel, including a processing-log field table backed by `aimio-py` log/dict helpers.
+- Added radius/tibia/knee presets and standard Gaussian, Laplace-Hamming, and adaptive segmentation methods to the Contours and Segmentation module.
+
+### Changed
+
+- Updated extension metadata and README language from a single Timelapsed wrapper toward the HR-pQCT Toolbox identity while keeping the existing repository URL.
+- Simplified Timelapsed remodelling review controls by removing the 3D preview rendering controls.
+- Removed separate Timelapsed quick presets so study profile is the single preset/profile control.
+- Scanco I/O now installs only `aimio-py` and no longer requires installing the full `timelapsed-hrpqct` pipeline.
+
 ## [0.1.6] - 2026-05-20
 
 ### Added

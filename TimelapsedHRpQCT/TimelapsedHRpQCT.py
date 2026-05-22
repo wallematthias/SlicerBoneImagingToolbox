@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import json
 import csv
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,10 @@ for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
         pass
 
 import SimpleITK as sitk
+from TimelapsedHRpQCTReporting import (
+    PROFILE_DISPLAY_ORDER,
+    enrich_cohort_export_row,
+)
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
     ScriptedLoadableModuleWidget,
@@ -31,7 +36,16 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.1.6"
+MODULE_VERSION = "0.2.1"
+MIN_PIPELINE_VERSION = "2.0.25"
+
+
+def _version_tuple(version_text):
+    parts = []
+    for token in re.split(r"[^0-9]+", str(version_text or "")):
+        if token:
+            parts.append(int(token))
+    return tuple(parts or [0])
 
 
 def _suppress_simpleitk_warnings():
@@ -48,8 +62,8 @@ def _suppress_simpleitk_warnings():
 class TimelapsedHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "TimelapsedHRpQCT"
-        parent.categories = ["Quantification"]
+        parent.title = "Timelapsed HR-pQCT"
+        parent.categories = ["HR-pQCT"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -74,17 +88,33 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
             pass
 
     def is_pipeline_available(self):
+        ok, _message = self.pipeline_status()
+        return ok
+
+    def pipeline_status(self):
         try:
-            import timelapsedhrpqct  # noqa: F401
-            return True
-        except Exception:
-            return False
+            import timelapsedhrpqct
+        except Exception as exc:
+            return False, f"Not installed ({exc})"
+
+        version = str(getattr(timelapsedhrpqct, "__version__", "0"))
+        package_path = str(Path(getattr(timelapsedhrpqct, "__file__", "")).resolve())
+        if _version_tuple(version) < _version_tuple(MIN_PIPELINE_VERSION):
+            return (
+                False,
+                f"Out of date ({version}); install/update to timelapsed-hrpqct >= {MIN_PIPELINE_VERSION}. "
+                f"Imported from {package_path}",
+            )
+        return True, f"Installed ({version}) from {package_path}"
 
     def install_or_update_pipeline(self):
         # Force-refresh from PyPI so "Install / Update" always pulls latest.
         slicer.util.pip_install(
             "--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct"
         )
+        for name in list(sys.modules):
+            if name == "timelapsedhrpqct" or name.startswith("timelapsedhrpqct."):
+                sys.modules.pop(name, None)
 
     def default_config_path(self):
         import timelapsedhrpqct
@@ -368,6 +398,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._remodelling_comparison_items = []
         self._sh_tree_hooks_installed = False
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         self._last_parse_mode_used = None
         self._updating_parse_table = False
@@ -375,7 +406,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._temp_input_root = None
         self._mask_method_defaults = {
             "adaptive": (100.0, 300.0),
-            "global": (100.0, 300.0),
+            "seg_gauss": (225.0, 1.2),
             "laplace_hamming": (15564.0, 70.0),
         }
         self._analysis_method = "grayscale_and_binary"
@@ -387,6 +418,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._latest_study_summary_rows = []
         self._last_dataset_root_text = ""
         self._last_results_root_text = ""
+        self._slice_scale_bars = {}
+        self._suppress_interactive_preview_updates = False
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -397,6 +430,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_patient_list()
         self._refresh_processing_subjects()
         self._set_3d_background_black()
+        self._ensure_slice_scale_bars()
 
     def _build_ui(self):
         def _cap_width(widget, width=320):
@@ -405,11 +439,20 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception:
                 pass
 
+        def _label(text, help_text):
+            label = qt.QLabel(str(text))
+            label.toolTip = str(help_text)
+            return label
+
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
+        depBox.collapsed = True
+        self.dependencyBox = depBox
         depForm = qt.QFormLayout(depBox)
         depForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
         self.pipelineStatusLabel = qt.QLabel()
+        self.pipelineStatusLabel.wordWrap = False
+        self.pipelineStatusLabel.setMaximumWidth(260)
         self.installBtn = qt.QPushButton("Install / Update timelapsed-hrpqct")
         self.checkBtn = qt.QPushButton("Check")
         self.installBtn.clicked.connect(self._on_install_pipeline)
@@ -419,7 +462,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self.installBtn)
         row.addWidget(self.checkBtn)
-        depForm.addRow("Status", self.pipelineStatusLabel)
+        depForm.addRow(_label("Status", "Installed timelapsed-hrpqct package status inside Slicer Python."), self.pipelineStatusLabel)
         depForm.addRow(rowWidget)
         self.layout.addWidget(depBox)
 
@@ -430,7 +473,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.inputPath.filters = ctk.ctkPathLineEdit.Dirs
         self.inputPath.setCurrentPath("")
         _cap_width(self.inputPath, 360)
-        form.addRow("Dataset root", self.inputPath)
+        form.addRow(_label("Dataset root", "Folder containing raw AIM data or an existing TimelapsedHRpQCT results dataset."), self.inputPath)
         self._connect_path_changed(self.inputPath, self._on_dataset_or_results_root_changed)
 
         parseBtn = qt.QPushButton("Parse input")
@@ -447,9 +490,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.parseSummaryLabel = qt.QLabel("Parse summary: not run")
         self.parseSummaryLabel.wordWrap = True
+        self.parseSummaryLabel.toolTip = "Summary of subjects, sites, sessions, and stacks discovered during parsing."
         form.addRow(self.parseSummaryLabel)
         self.userMessageLabel = qt.QLabel("")
         self.userMessageLabel.wordWrap = True
+        self.userMessageLabel.toolTip = "Important validation messages for the current dataset or settings."
         self.userMessageLabel.setStyleSheet(
             "QLabel { background:#fff6db; border:1px solid #f0c36d; padding:8px; border-radius:4px; }"
         )
@@ -478,16 +523,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         parseLayout = qt.QVBoxLayout(parseBox)
         parseLayout.addWidget(self.parseTable)
 
-        quickBox = qt.QGroupBox("Quick Presets")
+        quickBox = qt.QGroupBox("Study Profile")
         quickForm = qt.QFormLayout(quickBox)
         quickForm.setVerticalSpacing(8)
-        self.presetCombo = qt.QComboBox()
-        self.presetCombo.addItems(["Default", "Fast preview", "High quality"])
-        _cap_width(self.presetCombo, 240)
-        self.applyPresetBtn = qt.QPushButton("Apply preset")
-        self.applyPresetBtn.clicked.connect(self._on_apply_preset)
-        quickForm.addRow("Preset", self.presetCombo)
-        quickForm.addRow(self.applyPresetBtn)
+        self.studyProfileCombo = qt.QComboBox()
+        self._populate_study_profiles()
+        _cap_width(self.studyProfileCombo, 220)
+        self.applyProfileBtn = qt.QPushButton("Apply profile")
+        _cap_width(self.applyProfileBtn, 105)
+        self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
+        self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)
+        profileRow = qt.QWidget()
+        profileLayout = qt.QHBoxLayout(profileRow)
+        profileLayout.setContentsMargins(0, 0, 0, 0)
+        profileLayout.setSpacing(6)
+        profileLayout.addWidget(self.studyProfileCombo, 1)
+        profileLayout.addWidget(self.applyProfileBtn)
+        quickForm.addRow(_label("Profile", "Preset study settings for segmentation and remodelling analysis."), profileRow)
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
@@ -505,7 +557,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         maskForm = qt.QFormLayout(maskBox)
 
         self.maskMethod = qt.QComboBox()
-        self.maskMethod.addItems(["adaptive", "global", "laplace_hamming"])
+        self.maskMethod.addItems(["adaptive", "seg_gauss", "laplace_hamming"])
         self.maskMethod.currentTextChanged.connect(self._on_mask_method_changed)
         _cap_width(self.maskMethod, 220)
         self.maskLow = ctk.ctkDoubleSpinBox()
@@ -522,17 +574,27 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskHigh.value = 300.0
         _cap_width(self.maskLow, 220)
         _cap_width(self.maskHigh, 220)
-        self.maskLowLabel = qt.QLabel("Mask lower threshold")
-        self.maskHighLabel = qt.QLabel("Mask higher threshold")
-        maskForm.addRow("Mask method", self.maskMethod)
+        self.maskLowLabel = _label("Mask lower threshold", "Lower method-specific threshold used when generating masks.")
+        self.maskHighLabel = _label("Mask higher threshold", "Upper method-specific threshold or smoothing parameter used when generating masks.")
+        maskForm.addRow(_label("Mask method", "Method used when automatic mask/segmentation generation is enabled."), self.maskMethod)
         maskForm.addRow(self.maskLowLabel, self.maskLow)
         maskForm.addRow(self.maskHighLabel, self.maskHigh)
+        self.doNotGenerateMasksCheck = qt.QCheckBox()
+        self.doNotGenerateMasksCheck.checked = False
+        skip_masks_tip = (
+            "Skip automatic mask/segmentation generation during Run pipeline. "
+            "Use this only when existing generated outputs or raw provided masks/SEG files should be used as-is. "
+            "If the selected analysis options require segmentations and none are available, the run will stop before launch."
+        )
+        self.doNotGenerateMasksCheck.toolTip = skip_masks_tip
+        _cap_width(self.doNotGenerateMasksCheck, 220)
+        maskForm.addRow(_label("Do not generate masks", skip_masks_tip), self.doNotGenerateMasksCheck)
 
         self.resultsRootPath = ctk.ctkPathLineEdit()
         self.resultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.resultsRootPath.setCurrentPath("")
         _cap_width(self.resultsRootPath, 360)
-        maskForm.addRow("Results folder (optional)", self.resultsRootPath)
+        maskForm.addRow(_label("Results folder (optional)", "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root."), self.resultsRootPath)
         self._connect_path_changed(self.resultsRootPath, self._on_dataset_or_results_root_changed)
 
         self.copyRawInputsCheck = qt.QCheckBox()
@@ -555,9 +617,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.copyRawInputsCheck, 220)
         _cap_width(self.restructureRawCheck, 220)
         _cap_width(self.parseModeCombo, 220)
-        maskForm.addRow("Copy raw inputs", self.copyRawInputsCheck)
-        maskForm.addRow("Restructure raw inputs", self.restructureRawCheck)
-        maskForm.addRow("Parse mode", self.parseModeCombo)
+        maskForm.addRow(_label("Copy raw inputs", "Copy raw AIM files into sourcedata/hrpqct during import."), self.copyRawInputsCheck)
+        maskForm.addRow(_label("Restructure raw inputs", "Move raw AIM files into the results root sub-*/site-*/ses-* layout during import."), self.restructureRawCheck)
+        maskForm.addRow(_label("Parse mode", "Input parsing mode. Auto tries filenames first, then AIM headers."), self.parseModeCombo)
 
         registrationBox = qt.QGroupBox("Registration")
         registrationForm = qt.QFormLayout(registrationBox)
@@ -566,11 +628,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         tlHeader = qt.QLabel("Timelapse registration")
         tlHeader.setStyleSheet("font-weight: 600; color: #3f3f3f; padding-top: 2px;")
+        tlHeader.toolTip = "Settings for registration across longitudinal sessions."
         registrationForm.addRow(tlHeader)
 
         self.regMetric = qt.QComboBox(); self.regMetric.addItems(["mattes", "correlation"])
         _cap_width(self.regMetric, 220)
-        registrationForm.addRow("Registration metric", self.regMetric)
+        registrationForm.addRow(_label("Registration metric", "Similarity metric for timelapse and multistack registration. Options: mattes or correlation."), self.regMetric)
         self.tlSampling = ctk.ctkDoubleSpinBox()
         self.tlSampling.minimum = 0.00001
         self.tlSampling.maximum = 1.0
@@ -578,14 +641,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.tlSampling.singleStep = 0.0001
         self.tlSampling.value = 0.001
         _cap_width(self.tlSampling, 220)
-        registrationForm.addRow("Timelapse sampling", self.tlSampling)
+        registrationForm.addRow(_label("Timelapse sampling", "Random voxel sampling fraction for timelapse registration. Lower is faster; higher may be more robust."), self.tlSampling)
 
         self.tlRes = qt.QSpinBox(); self.tlRes.minimum = 1; self.tlRes.maximum = 10; self.tlRes.value = 6
         self.tlIter = qt.QSpinBox(); self.tlIter.minimum = 1; self.tlIter.maximum = 5000; self.tlIter.value = 250
         _cap_width(self.tlRes, 220)
         _cap_width(self.tlIter, 220)
-        registrationForm.addRow("Timelapse resolutions", self.tlRes)
-        registrationForm.addRow("Timelapse iterations", self.tlIter)
+        registrationForm.addRow(_label("Timelapse resolutions", "Number of image pyramid levels used for pairwise timelapse registration."), self.tlRes)
+        registrationForm.addRow(_label("Timelapse iterations", "Maximum optimizer iterations per registration level."), self.tlIter)
 
         self.msRes = qt.QSpinBox(); self.msRes.minimum = 1; self.msRes.maximum = 10; self.msRes.value = 4
         self.msIter = qt.QSpinBox(); self.msIter.minimum = 1; self.msIter.maximum = 5000; self.msIter.value = 250
@@ -610,6 +673,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         msHeader = qt.QLabel("Multistack correction registration")
         msHeader.setStyleSheet("font-weight: 600; color: #3f3f3f; padding-top: 8px;")
+        msHeader.toolTip = "Settings for correcting multiple overlapping stacks within a scan."
         registrationForm.addRow(msHeader)
         self.msInitTx = ctk.ctkDoubleSpinBox()
         self.msInitTy = ctk.ctkDoubleSpinBox()
@@ -629,6 +693,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for label_text, widget in (("X", self.msInitTx), ("Y", self.msInitTy), ("Z", self.msInitTz)):
             lbl = qt.QLabel(label_text)
             lbl.setMinimumWidth(10)
+            lbl.toolTip = "Initial multistack translation component in voxels."
             initTranslationLayout.addWidget(lbl)
             initTranslationLayout.addWidget(widget)
         _cap_width(self.msSampling, 220)
@@ -639,12 +704,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.msInitTx, 90)
         _cap_width(self.msInitTy, 90)
         _cap_width(self.msInitTz, 90)
-        registrationForm.addRow("Use multistack correction", self.useMultistackCheck)
-        registrationForm.addRow("Multistack correction sampling", self.msSampling)
-        registrationForm.addRow("Multistack correction resolutions", self.msRes)
-        registrationForm.addRow("Multistack correction iterations", self.msIter)
-        registrationForm.addRow("Multistack overlap crop buffer (voxels)", self.msOverlapBuffer)
-        registrationForm.addRow("Multistack initial translation (voxels)", initTranslationRow)
+        registrationForm.addRow(_label("Use multistack correction", "Enable correction/registration for scans acquired as multiple overlapping stacks."), self.useMultistackCheck)
+        registrationForm.addRow(_label("Multistack correction sampling", "Random voxel sampling fraction for multistack correction registration."), self.msSampling)
+        registrationForm.addRow(_label("Multistack correction resolutions", "Number of image pyramid levels used for multistack correction."), self.msRes)
+        registrationForm.addRow(_label("Multistack correction iterations", "Maximum optimizer iterations per multistack correction level."), self.msIter)
+        registrationForm.addRow(_label("Multistack overlap crop buffer (voxels)", "Extra z-slices included around overlap regions for multistack registration."), self.msOverlapBuffer)
+        registrationForm.addRow(_label("Multistack initial translation (voxels)", "Initial X/Y/Z translation offset for multistack registration."), initTranslationRow)
+
+        advancedAnalysisBox = qt.QGroupBox("Advanced analysis")
+        advancedAnalysisForm = qt.QFormLayout(advancedAnalysisBox)
 
         analysisBox = qt.QGroupBox("Remodelling Analysis")
         analysisForm = qt.QFormLayout(analysisBox)
@@ -682,6 +750,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisMethodCombo.addItem("Binary + grayscale", "grayscale_and_binary")
         self.analysisMethodCombo.addItem("Grayscale only", "grayscale_delta_only")
         self.analysisMethodCombo.addItem("Marrow shell + grayscale", "grayscale_marrow_mask")
+        self.analysisMethodCombo.visible = False
+        self.analysisRestrictBoneSupportCheck = qt.QCheckBox()
+        self.analysisRestrictBoneSupportCheck.checked = False
+        restrict_tip = (
+            "Limit formation/resorption candidates to baseline/follow-up bone support. "
+            "Use this for marrow-mask style analysis."
+        )
+        self.analysisRestrictBoneSupportCheck.toolTip = restrict_tip
+        self.analysisBinaryReclassificationCheck = qt.QCheckBox()
+        self.analysisBinaryReclassificationCheck.checked = True
+        binary_tip = (
+            "Require the binary segmentation state to change in addition to the grayscale density change. "
+            "Formation must become bone; resorption must stop being bone."
+        )
+        self.analysisBinaryReclassificationCheck.toolTip = binary_tip
         self.analysisPairModeCombo = qt.QComboBox()
         self.analysisPairModeCombo.addItem("Adjacent", "adjacent")
         self.analysisPairModeCombo.addItem("Baseline", "baseline")
@@ -690,31 +773,60 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisFullMaskDilation.minimum = 0
         self.analysisFullMaskDilation.maximum = 20
         self.analysisFullMaskDilation.value = 2
+        self.analysisBoneSupportDilation = qt.QSpinBox()
+        self.analysisBoneSupportDilation.minimum = 0
+        self.analysisBoneSupportDilation.maximum = 20
+        self.analysisBoneSupportDilation.value = 0
+        self.analysisMarrowMaskDilation = self.analysisBoneSupportDilation
         self.analysisMarrowMaskErosion = qt.QSpinBox()
         self.analysisMarrowMaskErosion.minimum = 0
         self.analysisMarrowMaskErosion.maximum = 20
-        self.analysisMarrowMaskErosion.value = 2
+        self.analysisMarrowMaskErosion.value = 0
+        self.analysisMarrowMaskErosion.visible = False
         _cap_width(self.analysisThreshold, 220)
         _cap_width(self.analysisCluster, 220)
         _cap_width(self.analysisGaussianFilterCheck, 220)
         _cap_width(self.analysisGaussianSigma, 220)
         _cap_width(self.analysisMethodCombo, 220)
+        _cap_width(self.analysisRestrictBoneSupportCheck, 220)
+        _cap_width(self.analysisBinaryReclassificationCheck, 220)
         _cap_width(self.analysisPairModeCombo, 220)
         _cap_width(self.analysisFullMaskDilation, 220)
+        _cap_width(self.analysisBoneSupportDilation, 220)
         _cap_width(self.analysisMarrowMaskErosion, 220)
-        self.analysisHintLabel = qt.QLabel(
-            "Changing these analysis settings updates the loaded remodelling image. "
-            "Binary + grayscale uses bone overlap for state logic, Grayscale only uses grayscale thresholds "
-            "with binary overlap for quiescence when available, and Marrow shell + grayscale restricts the "
-            "grayscale analysis to an endosteal shell derived from shared marrow."
-        )
+        self.analysisHintLabel = qt.QLabel("Hover labels for option details.")
         self.analysisHintLabel.wordWrap = True
         self.analysisHintLabel.styleSheet = "color: #666666;"
         self.analysisStatusLabel = qt.QLabel("Ready")
         self.analysisStatusLabel.styleSheet = "color: #666666;"
         self.analysisPairMetricsMaskLabel = qt.QLabel("Mask: N/A")
-        self.analysisFormationFractionLabel = qt.QLabel("Formation fraction: N/A")
-        self.analysisResorptionFractionLabel = qt.QLabel("Resorption fraction: N/A")
+        self.analysisFormationFractionLabel = qt.QLabel("Formation volume fraction (FV/BV): N/A")
+        self.analysisResorptionFractionLabel = qt.QLabel("Resorption volume fraction (RV/BV): N/A")
+        self.analysisNetChangeFractionLabel = qt.QLabel("Net change volume fraction (NV/BV): N/A")
+        self.analysisActiveFractionLabel = qt.QLabel("Active volume fraction (AV/BV): N/A")
+        for metric_label in (
+            self.analysisPairMetricsMaskLabel,
+            self.analysisFormationFractionLabel,
+            self.analysisResorptionFractionLabel,
+            self.analysisNetChangeFractionLabel,
+            self.analysisActiveFractionLabel,
+        ):
+            metric_label.wordWrap = True
+        self.analysisPairMetricsMaskLabel.toolTip = "Compartment/mask used for the displayed pair metrics."
+        self.analysisFormationFractionLabel.toolTip = "Formation volume fraction for the currently loaded/previewed comparison."
+        self.analysisResorptionFractionLabel.toolTip = "Resorption volume fraction for the currently loaded/previewed comparison."
+        self.analysisNetChangeFractionLabel.toolTip = "Net change volume fraction: FV/BV minus RV/BV."
+        self.analysisActiveFractionLabel.toolTip = "Active volume fraction: FV/BV plus RV/BV."
+        self.runAnalysisBtn = qt.QPushButton("Update all")
+        self.runAnalysisBtn.toolTip = (
+            "Rerun remodelling analysis for all processed samples using the current analysis options."
+        )
+        self.saveAnalysisScenarioBtn = qt.QPushButton("Save current analysis...")
+        self.saveAnalysisScenarioBtn.toolTip = (
+            "Save the currently loaded remodelling comparison and current analysis options as a scenario."
+        )
+        _cap_width(self.runAnalysisBtn, 180)
+        _cap_width(self.saveAnalysisScenarioBtn, 180)
         thresholdRow = qt.QWidget()
         thresholdLayout = qt.QHBoxLayout(thresholdRow)
         thresholdLayout.setContentsMargins(0, 0, 0, 0)
@@ -727,24 +839,53 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         clusterLayout.setSpacing(8)
         clusterLayout.addWidget(self.analysisClusterSlider, 1)
         clusterLayout.addWidget(self.analysisCluster)
-        pairMetricsRow = qt.QWidget()
-        pairMetricsLayout = qt.QVBoxLayout(pairMetricsRow)
-        pairMetricsLayout.setContentsMargins(0, 0, 0, 0)
-        pairMetricsLayout.setSpacing(2)
-        pairMetricsLayout.addWidget(self.analysisPairMetricsMaskLabel)
-        pairMetricsLayout.addWidget(self.analysisFormationFractionLabel)
-        pairMetricsLayout.addWidget(self.analysisResorptionFractionLabel)
-        analysisForm.addRow("Threshold", thresholdRow)
-        analysisForm.addRow("Cluster size", clusterRow)
-        analysisForm.addRow("Method", self.analysisMethodCombo)
-        analysisForm.addRow("Pair mode", self.analysisPairModeCombo)
-        analysisForm.addRow("Full mask dilation (vox)", self.analysisFullMaskDilation)
-        analysisForm.addRow("Marrow mask erosion (vox)", self.analysisMarrowMaskErosion)
-        analysisForm.addRow("Gaussian filter", self.analysisGaussianFilterCheck)
-        analysisForm.addRow("Gaussian sigma (vox)", self.analysisGaussianSigma)
-        analysisForm.addRow("Pair metrics", pairMetricsRow)
-        analysisForm.addRow("Preview status", self.analysisStatusLabel)
+        metricsBox = qt.QGroupBox("Current Comparison")
+        metricsBox.toolTip = "Formation and resorption fractions for the currently loaded or previewed comparison."
+        metricsBox.setStyleSheet(
+            "QGroupBox { font-weight: 600; border: 1px solid #bdbdbd; border-radius: 4px; "
+            "margin-top: 8px; padding: 8px 6px 6px 6px; } "
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
+        )
+        metricsLayout = qt.QVBoxLayout(metricsBox)
+        metricsLayout.setContentsMargins(8, 10, 8, 8)
+        metricsLayout.setSpacing(4)
+        self.analysisFormationFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #c95b00;")
+        self.analysisResorptionFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #b02c83;")
+        self.analysisNetChangeFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #4c5a64;")
+        self.analysisActiveFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #336b5f;")
+        metricsLayout.addWidget(self.analysisPairMetricsMaskLabel)
+        metricsLayout.addWidget(self.analysisFormationFractionLabel)
+        metricsLayout.addWidget(self.analysisResorptionFractionLabel)
+        metricsLayout.addWidget(self.analysisNetChangeFractionLabel)
+        metricsLayout.addWidget(self.analysisActiveFractionLabel)
+        analysisActionsRow = qt.QWidget()
+        analysisActionsLayout = qt.QHBoxLayout(analysisActionsRow)
+        analysisActionsLayout.setContentsMargins(0, 0, 0, 0)
+        analysisActionsLayout.setSpacing(8)
+        analysisActionsLayout.addWidget(self.runAnalysisBtn)
+        analysisActionsLayout.addWidget(self.saveAnalysisScenarioBtn)
+        analysisActionsLayout.addStretch(1)
+        analysisForm.addRow(_label("Pair mode", "Which session comparisons to analyze: adjacent, baseline, or all pairs."), self.analysisPairModeCombo)
+        analysisForm.addRow(_label("Threshold", "Absolute density-change threshold for formation/resorption detection."), thresholdRow)
+        analysisForm.addRow(_label("Cluster size", "Minimum connected event size retained in remodelling maps. Use 0 to disable cluster filtering."), clusterRow)
+        analysisForm.addRow(_label("Restrict changes to bone support", restrict_tip), self.analysisRestrictBoneSupportCheck)
+        analysisForm.addRow(_label("Require binary reclassification", binary_tip), self.analysisBinaryReclassificationCheck)
+        analysisForm.addRow(_label("Gaussian filter remodelling sites", "Smooth grayscale images before subtraction for remodelling-site detection."), self.analysisGaussianFilterCheck)
+        analysisForm.addRow(_label("Analysis actions", "Update all processed analyses or save the current loaded comparison as a scenario."), analysisActionsRow)
+        analysisForm.addRow(_label("Preview status", "Status of the interactive remodelling preview update."), self.analysisStatusLabel)
         analysisForm.addRow(self.analysisHintLabel)
+        advancedAnalysisForm.addRow(
+            _label("Full mask dilation (vox)", "Dilation applied to full masks before common-region construction."),
+            self.analysisFullMaskDilation,
+        )
+        advancedAnalysisForm.addRow(
+            _label("Bone support dilation (vox)", "Dilation of baseline/follow-up bone support when restricting changes to bone support."),
+            self.analysisBoneSupportDilation,
+        )
+        advancedAnalysisForm.addRow(
+            _label("Gaussian sigma (vox)", "Sigma in voxels when Gaussian remodelling-site filtering is enabled."),
+            self.analysisGaussianSigma,
+        )
         self.analysisThresholdSlider.valueChanged.connect(
             lambda value: self._set_analysis_threshold_value(value, from_slider=True, queue_update=False)
         )
@@ -764,7 +905,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             lambda: self._set_analysis_cluster_value(self.analysisCluster.value, queue_update=True)
         )
         self.analysisMethodCombo.currentIndexChanged.connect(self._on_analysis_method_changed)
+        self.analysisRestrictBoneSupportCheck.toggled.connect(self._on_analysis_option_changed)
+        self.analysisBinaryReclassificationCheck.toggled.connect(self._on_analysis_option_changed)
         self.analysisFullMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
+        self.analysisBoneSupportDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisMarrowMaskErosion.valueChanged.connect(self._on_interactive_preview_control_changed)
         self.analysisGaussianFilterCheck.toggled.connect(self._on_interactive_preview_control_changed)
         self.analysisGaussianSigma.editingFinished.connect(self._on_interactive_preview_control_changed)
@@ -778,17 +922,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryPairsList.setMaximumHeight(140)
         self.seriesSummaryPairsHintLabel = qt.QLabel("Select saved comparison pairs to include in the cohort summary.")
         self.seriesSummaryPairsHintLabel.wordWrap = True
+        self.seriesSummaryPairsHintLabel.toolTip = "Saved comparison pairs available for cohort-level export."
         self.seriesSummarySavedStateLabel = qt.QLabel("Saved summary status: N/A")
         self.seriesSummarySavedStateLabel.wordWrap = True
+        self.seriesSummarySavedStateLabel.toolTip = "Status of the saved cohort summary table."
         self.seriesSummaryUpdateBtn = qt.QPushButton("Load saved cohort summary")
         self.seriesSummaryUpdateBtn.clicked.connect(self._refresh_saved_cohort_summary)
-        self.seriesSummaryExportBtn = qt.QPushButton("Export cohort rows")
+        self.seriesSummaryExportBtn = qt.QPushButton("Export CSV")
+        self.seriesSummaryExportBtn.toolTip = (
+            "Export saved pairwise remodelling result rows for the processed cohort."
+        )
         self.seriesSummaryExportBtn.clicked.connect(self._on_export_study_summary)
         self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
+        self.seriesBasisLabel.toolTip = "Comparison pairs currently included in cohort summary calculations."
         self.seriesSummaryTable = qt.QTableWidget()
-        self.seriesSummaryTable.setColumnCount(4)
+        self.seriesSummaryTable.setColumnCount(6)
         self.seriesSummaryTable.setHorizontalHeaderLabels(
-            ["Mask", "Mean Formation", "Mean Resorption", "Subjects"]
+            ["Mask", "Mean FV/BV", "Mean RV/BV", "Mean NV/BV", "Mean AV/BV", "Subjects"]
         )
         self.seriesSummaryTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
         self.seriesSummaryTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
@@ -796,52 +946,82 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryTable.horizontalHeader().setStretchLastSection(True)
         self.seriesSummaryTable.setMinimumHeight(120)
         self.seriesSummaryForm.addRow(self.seriesSummaryPairsHintLabel)
-        self.seriesSummaryForm.addRow("Comparison pairs", self.seriesSummaryPairsList)
+        self.seriesSummaryForm.addRow(_label("Comparison pairs", "Saved adjacent comparison pairs included when computing cohort summary rows."), self.seriesSummaryPairsList)
         self.seriesSummaryForm.addRow(self.seriesSummarySavedStateLabel)
         self.seriesSummaryForm.addRow(self.seriesSummaryUpdateBtn)
         self.seriesSummaryForm.addRow(self.seriesSummaryExportBtn)
-        self.seriesSummaryForm.addRow("Mask summaries", self.seriesSummaryTable)
+        self.seriesSummaryForm.addRow(_label("Mask summaries", "Mean saved remodelling volume fractions by mask/compartment."), self.seriesSummaryTable)
         self.seriesSummaryForm.addRow(self.seriesBasisLabel)
 
-        self.saveAnalysisScenarioBtn = qt.QPushButton("Save Analysis As...")
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
 
-        settingsLayout.addWidget(quickBox)
         settingsLayout.addWidget(maskBox)
         settingsLayout.addWidget(registrationBox)
+        settingsLayout.addWidget(advancedAnalysisBox)
         analysisSectionLayout.addWidget(analysisBox)
-        analysisSectionLayout.addWidget(self.saveAnalysisScenarioBtn)
 
-        actionLayout = qt.QGridLayout()
-        self.runMasksBtn = qt.QPushButton("1. Generate Masks")
-        self.runMasksBtn.toolTip = "Generate/recompute masks from imported stacks."
-        self.runTimelapseBtn = qt.QPushButton("2. Timelapse Pipeline")
-        self.runTimelapseBtn.toolTip = (
-            "Run import + timelapse pipeline (mode controlled by "
-            "'Use multistack correction' in Advanced Settings), "
-            "while skipping automatic mask generation."
+        actionBox = qt.QGroupBox("Pipeline")
+        actionBox.setStyleSheet(
+            "QGroupBox { font-weight: 600; border: 1px solid #b8c7d9; border-radius: 4px; "
+            "margin-top: 8px; padding: 8px 6px 6px 6px; } "
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
         )
-        self.runAnalysisBtn = qt.QPushButton("3. Re-run Analysis")
-        self.runAnalysisBtn.toolTip = "Re-run analysis only."
-        self.cancelRunBtn = qt.QPushButton("Cancel current run")
+        actionLayout = qt.QVBoxLayout(actionBox)
+        actionLayout.setContentsMargins(8, 10, 8, 8)
+        actionLayout.setSpacing(6)
+        self.runMasksBtn = qt.QPushButton("Generate masks")
+        self.runMasksBtn.toolTip = "Generate/recompute masks from imported stacks."
+        self.runMasksBtn.visible = False
+        self.runTimelapseBtn = qt.QPushButton("Run pipeline")
+        self.runTimelapseBtn.toolTip = (
+            "Run the complete workflow. By default this includes mask generation; "
+            "enable 'Do not generate masks' in Advanced Settings to use existing/provided masks."
+        )
+        self.cancelRunBtn = qt.QPushButton("✕ Cancel")
         self.cancelRunBtn.clicked.connect(self._on_cancel_run)
         self.cancelRunBtn.enabled = False
         self.cancelRunBtn.toolTip = "Cancel the currently running pipeline step."
-        buttons = [
-            self.runMasksBtn,
-            self.runTimelapseBtn,
-            self.runAnalysisBtn,
-            self.cancelRunBtn,
-        ]
-        for b in buttons:
-            _cap_width(b, 180)
-        actionLayout.addWidget(self.runMasksBtn, 0, 0)
-        actionLayout.addWidget(self.runTimelapseBtn, 0, 1)
-        actionLayout.addWidget(self.runAnalysisBtn, 1, 0)
-        actionLayout.addWidget(self.cancelRunBtn, 1, 1)
+        self.runTimelapseBtn.setMinimumHeight(34)
+        self.runTimelapseBtn.setStyleSheet(
+            "QPushButton { background:#1f6feb; color:white; border:1px solid #175cc5; "
+            "border-radius:4px; padding:7px 10px; font-weight:600; } "
+            "QPushButton:hover { background:#1a5fd0; } "
+            "QPushButton:pressed { background:#154ea8; } "
+            "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
+        )
+        self.seriesSummaryExportBtn.setStyleSheet(
+            "QPushButton { background:#f5f7fa; color:#222; border:1px solid #b8c0ca; "
+            "border-radius:4px; padding:5px 8px; } "
+            "QPushButton:hover { background:#edf2f7; }"
+        )
+        self.cancelRunBtn.setStyleSheet(
+            "QPushButton { background:#fff5f5; color:#9b1c1c; border:1px solid #e0b4b4; "
+            "border-radius:4px; padding:5px 8px; } "
+            "QPushButton:disabled { background:#eeeeee; color:#9a9a9a; border-color:#d0d0d0; }"
+        )
+        secondaryActionRow = qt.QWidget()
+        secondaryActionLayout = qt.QHBoxLayout(secondaryActionRow)
+        secondaryActionLayout.setContentsMargins(0, 0, 0, 0)
+        secondaryActionLayout.setSpacing(6)
+        secondaryActionLayout.addWidget(self.seriesSummaryExportBtn)
+        secondaryActionLayout.addWidget(self.cancelRunBtn)
+        secondaryActionLayout.addStretch(1)
+        _cap_width(self.seriesSummaryExportBtn, 96)
+        _cap_width(self.cancelRunBtn, 82)
+        processingSubjectRow = qt.QWidget()
+        processingSubjectLayout = qt.QFormLayout(processingSubjectRow)
+        processingSubjectLayout.setContentsMargins(0, 0, 0, 0)
+        processingSubjectLayout.setSpacing(6)
+        processingSubjectLayout.addRow(
+            _label("Processing subject", "Subject selected for pipeline runs. All subjects processes the cohort."),
+            self.processingSubjectCombo,
+        )
+        actionLayout.addWidget(processingSubjectRow)
+        actionLayout.addWidget(self.runTimelapseBtn)
+        actionLayout.addWidget(secondaryActionRow)
 
         self.runMasksBtn.clicked.connect(self._on_run_masks)
-        self.runTimelapseBtn.clicked.connect(self._on_run_timelapse)
+        self.runTimelapseBtn.clicked.connect(self._on_run_full_pipeline)
         self.runAnalysisBtn.clicked.connect(self._on_run_analysis)
 
         statusBox = ctk.ctkCollapsibleButton()
@@ -852,9 +1032,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.progressBar.maximum = 5
         self.progressBar.value = 0
         self.currentStepLabel = qt.QLabel("Current step: idle")
-        statusForm.addRow("Processing subject", self.processingSubjectCombo)
-        statusForm.addRow("Progress", self.progressBar)
-        statusForm.addRow("Current", self.currentStepLabel)
+        self.currentStepLabel.toolTip = "Currently running pipeline command or idle state."
+        statusForm.addRow(_label("Progress", "Current pipeline stage progress."), self.progressBar)
+        statusForm.addRow(_label("Current", "Currently running pipeline step."), self.currentStepLabel)
         self.stageLabels = {}
         for key, title in [
             ("dataset", "Dataset"),
@@ -865,8 +1045,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         ]:
             lbl = qt.QLabel("")
             lbl.wordWrap = True
+            lbl.toolTip = f"Status for the {title.lower()} pipeline stage."
             self.stageLabels[key] = lbl
-            statusForm.addRow(title, lbl)
+            statusForm.addRow(_label(title, f"Status for the {title.lower()} pipeline stage."), lbl)
 
         loadBox = ctk.ctkCollapsibleButton()
         loadBox.text = "Load Processed Data"
@@ -885,12 +1066,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.loadDataBtn.clicked.connect(self._on_load_selected)
         self.patientCombo.currentIndexChanged.connect(self._refresh_remodelling_comparison_list)
         self.loadTypeCombo.currentIndexChanged.connect(self._refresh_remodelling_comparison_list)
-        loadForm.addRow("Patient", self.patientCombo)
-        loadForm.addRow("Data type", self.loadTypeCombo)
-        loadForm.addRow("Comparison", self.remodellingComparisonCombo)
+        loadForm.addRow(_label("Patient", "Processed subject/site available for loading into Slicer."), self.patientCombo)
+        loadForm.addRow(_label("Data type", "Processed output type to load into Slicer."), self.loadTypeCombo)
+        loadForm.addRow(_label("Comparison", "Pairwise remodelling comparison to load when loading remodelling images."), self.remodellingComparisonCombo)
         loadForm.addRow(self.loadDataBtn)
 
-        previewBox = qt.QGroupBox("Advanced Preview Display")
+        previewBox = qt.QGroupBox("Interactive Preview")
         previewForm = qt.QFormLayout(previewBox)
         previewForm.setVerticalSpacing(8)
         self.remodellingFullSegCombo = qt.QComboBox()
@@ -904,38 +1085,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         segRowLayout.setContentsMargins(0, 0, 0, 0)
         segRowLayout.addWidget(self.remodellingFullSegCombo, 1)
         segRowLayout.addWidget(self.remodellingRefreshBtn)
-        self.remodellingAxisCombo = qt.QComboBox()
-        self.remodellingAxisCombo.addItems(["x", "y", "z"])
-        self.remodellingAxisCombo.currentIndex = 0
-        self.remodellingThicknessSpin = qt.QSpinBox()
-        self.remodellingThicknessSpin.minimum = 1
-        self.remodellingThicknessSpin.maximum = 512
-        self.remodellingThicknessSpin.value = 15
-        self.remodellingDetailSlider = ctk.ctkSliderWidget()
-        self.remodellingDetailSlider.minimum = 0
-        self.remodellingDetailSlider.maximum = 100
-        self.remodellingDetailSlider.singleStep = 1
-        self.remodellingDetailSlider.decimals = 0
-        self.remodellingDetailSlider.value = 50
         self.remodellingAutoUpdateCheck = qt.QCheckBox()
         self.remodellingAutoUpdateCheck.checked = True
         self.remodellingApplyInteractiveBtn = qt.QPushButton("Update remodelling image")
-        self.remodellingApplyPreviewBtn = qt.QPushButton("Render 3D preview")
-        _cap_width(self.remodellingAxisCombo, 180)
-        _cap_width(self.remodellingThicknessSpin, 180)
-        _cap_width(self.remodellingDetailSlider, 260)
         _cap_width(self.remodellingAutoUpdateCheck, 180)
         _cap_width(self.remodellingApplyInteractiveBtn, 220)
-        _cap_width(self.remodellingApplyPreviewBtn, 220)
         self.remodellingApplyInteractiveBtn.clicked.connect(self._on_apply_interactive_remodelling)
-        self.remodellingApplyPreviewBtn.clicked.connect(self._on_update_remodelling_preview)
-        previewForm.addRow("Full segmentation", segRow)
-        previewForm.addRow("Axis", self.remodellingAxisCombo)
-        previewForm.addRow("Thickness (vox)", self.remodellingThicknessSpin)
-        previewForm.addRow("3D detail (0-100)", self.remodellingDetailSlider)
-        previewForm.addRow("Auto update", self.remodellingAutoUpdateCheck)
+        previewForm.addRow(_label("Full segmentation", "Loaded remodelling segmentation used for interactive preview updates."), segRow)
+        previewForm.addRow(_label("Auto update", "Automatically update the loaded remodelling image when analysis controls change."), self.remodellingAutoUpdateCheck)
         previewForm.addRow(self.remodellingApplyInteractiveBtn)
-        previewForm.addRow(self.remodellingApplyPreviewBtn)
         settingsLayout.addWidget(previewBox)
 
         self.logText = qt.QPlainTextEdit()
@@ -944,13 +1102,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText.setMaximumHeight(260)
 
         self.layout.addLayout(form)
+        self.layout.addWidget(quickBox)
         self.layout.addWidget(parseBox)
-        self.layout.addWidget(settingsBox)
+        self.layout.addWidget(actionBox)
         self.layout.addWidget(statusBox)
-        self.layout.addLayout(actionLayout)
-        self.layout.addWidget(self.seriesSummaryBox)
+        self.seriesSummaryBox.visible = False
         self.layout.addWidget(loadBox)
         self.layout.addWidget(analysisSectionBox)
+        self.layout.addWidget(metricsBox)
+        self.layout.addWidget(settingsBox)
         self.layout.addWidget(self.logText)
         self.layout.addStretch(1)
         self._update_dependency_ui()
@@ -990,10 +1150,53 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _show(self, text):
         message = text.rstrip()
+        self._update_stage_from_pipeline_output(message)
         if hasattr(self, "logText") and self.logText is not None:
             self.logText.appendPlainText(message)
         else:
             print(message)
+
+    def _update_stage_from_pipeline_output(self, message):
+        if not getattr(self, "_is_full_pipeline_run", False):
+            return
+        text = str(message or "").strip().lower()
+        if not text:
+            return
+
+        def mark_running(stage):
+            order = ["masks", "registration", "analysis"]
+            if stage not in order:
+                return
+            for previous in order[: order.index(stage)]:
+                if self._stage_states.get(previous) not in {"done", "error"}:
+                    self._set_stage_status(previous, "done")
+            if self._stage_states.get(stage) != "error":
+                self._set_stage_status(stage, "running")
+                self._active_stage = stage
+
+        if (
+            "mask generation for" in text
+            or "generate-masks" in text
+            or "reading stack image" in text
+            or "segmentation method" in text
+        ):
+            if not getattr(self, "_run_skips_mask_generation", False):
+                mark_running("masks")
+            return
+
+        if (
+            "register:" in text
+            or "timelapse registration" in text
+            or "stackcorrect:" in text
+            or "stack correction for" in text
+            or "transform:" in text
+            or "[apply]" in text
+        ):
+            mark_running("registration")
+            return
+
+        if "[analysis]" in text or "analyse:" in text:
+            mark_running("analysis")
 
     def _set_user_message(self, level, title, body):
         palette = {
@@ -1239,48 +1442,162 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         self._reset_progress_for_dataset_root()
 
-    def _on_apply_preset(self):
-        preset = str(self.presetCombo.currentText or "Default").strip().lower()
-        if hasattr(self, "advancedSettingsBox") and self.advancedSettingsBox is not None:
-            self.advancedSettingsBox.collapsed = False
+    def _selected_config_profile(self):
+        if not hasattr(self, "studyProfileCombo"):
+            return "standard"
+        data = self.studyProfileCombo.currentData
+        return str(data or "standard")
 
-        def _summary():
-            return (
-                f"Timelapse: sampling={self.tlSampling.value:.5f}, res={int(self.tlRes.value)}, iter={int(self.tlIter.value)}"
-                f"<br>Multistack: sampling={self.msSampling.value:.5f}, res={int(self.msRes.value)}, iter={int(self.msIter.value)}"
-                f"<br>Analysis: cluster={int(self.analysisCluster.value)}"
+    def _available_config_profiles(self):
+        try:
+            from timelapsedhrpqct.config.profiles import list_config_profiles
+
+            profiles = list_config_profiles()
+        except Exception:
+            profiles = [profile for profile in PROFILE_DISPLAY_ORDER if profile != "xct1-standard"]
+        known = [profile for profile in PROFILE_DISPLAY_ORDER if profile in profiles]
+        extra = sorted(profile for profile in profiles if profile not in PROFILE_DISPLAY_ORDER)
+        return known + extra
+
+    def _populate_study_profiles(self):
+        self.studyProfileCombo.clear()
+        for profile in self._available_config_profiles():
+            self.studyProfileCombo.addItem(profile, profile)
+
+    def _profile_cli_args(self):
+        profile = self._selected_config_profile()
+        return ["--profile", profile] if profile else []
+
+    def _apply_config_dict_to_controls(self, cfg, *, source_label):
+        seg_cfg = ((cfg.get("masks") or {}).get("segmentation") or {})
+        method = str(seg_cfg.get("method", self.maskMethod.currentText) or self.maskMethod.currentText)
+        if method == "global":
+            method = "seg_gauss"
+        mask_idx = self.maskMethod.findText(method)
+        if mask_idx < 0 and method == "seg_gauss":
+            mask_idx = self.maskMethod.findText("seg_gauss")
+        if mask_idx >= 0:
+            self.maskMethod.setCurrentIndex(mask_idx)
+
+        adaptive_low = float(seg_cfg.get("adaptive_low_threshold", 100.0))
+        adaptive_high = float(seg_cfg.get("adaptive_high_threshold", 300.0))
+        seg_gauss_threshold = float(seg_cfg.get("seg_gauss_threshold", seg_cfg.get("trab_threshold", 100.0)))
+        seg_gauss_sigma = float(seg_cfg.get("seg_gauss_sigma", seg_cfg.get("cort_threshold", 1.2)))
+        laplace_hamming_threshold = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
+        laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
+        self._mask_method_defaults = {
+            "adaptive": (adaptive_low, adaptive_high),
+            "seg_gauss": (seg_gauss_threshold, seg_gauss_sigma),
+            "laplace_hamming": (laplace_hamming_threshold, laplace_hamming_min_size),
+        }
+
+        tl_cfg = cfg.get("timelapsed_registration") or {}
+        ms_cfg = cfg.get("multistack_correction") or {}
+        self.tlSampling.value = float(tl_cfg.get("sampling_percentage", float(self.tlSampling.value)))
+        self.tlRes.value = int(tl_cfg.get("number_of_resolutions", int(self.tlRes.value)))
+        self.tlIter.value = int(tl_cfg.get("number_of_iterations", int(self.tlIter.value)))
+        self.msSampling.value = float(ms_cfg.get("sampling_percentage", float(self.msSampling.value)))
+        self.msRes.value = int(ms_cfg.get("number_of_resolutions", int(self.msRes.value)))
+        self.msIter.value = int(ms_cfg.get("number_of_iterations", int(self.msIter.value)))
+        self.msOverlapBuffer.value = int(
+            ms_cfg.get("overlap_crop_buffer_voxels", int(self.msOverlapBuffer.value))
+        )
+        init_vox = ms_cfg.get("initial_translation_voxels", [0.0, 0.0, -20.0])
+        if isinstance(init_vox, (list, tuple)) and len(init_vox) >= 3:
+            self.msInitTx.value = float(init_vox[0])
+            self.msInitTy.value = float(init_vox[1])
+            self.msInitTz.value = float(init_vox[2])
+
+        analysis_cfg = cfg.get("analysis") or {}
+        self._analysis_method = self._analysis_method_from_config(analysis_cfg)
+        idx = self.analysisMethodCombo.findData(self._analysis_method)
+        if idx >= 0:
+            self.analysisMethodCombo.setCurrentIndex(idx)
+        change_region_cfg = analysis_cfg.get("change_region") or {}
+        binary_cfg = analysis_cfg.get("binary_reclassification") or {}
+        if str(analysis_cfg.get("method", "") or "") == "auto" or change_region_cfg or binary_cfg:
+            restrict_bone = (
+                str(change_region_cfg.get("source", "common_mask")).strip().lower()
+                in {"bone_union", "segmentation_union"}
             )
+            binary_enabled = bool(binary_cfg.get("enabled", False))
+        else:
+            restrict_bone = self._analysis_method == "grayscale_marrow_mask"
+            binary_enabled = self._analysis_method == "grayscale_and_binary"
+        self.analysisRestrictBoneSupportCheck.checked = bool(restrict_bone)
+        self.analysisBinaryReclassificationCheck.checked = bool(binary_enabled)
+        pair_idx = self.analysisPairModeCombo.findData(str(analysis_cfg.get("pair_mode", "adjacent")))
+        if pair_idx >= 0:
+            self.analysisPairModeCombo.setCurrentIndex(pair_idx)
+        thresholds = analysis_cfg.get("thresholds") or [float(self.analysisThreshold.value)]
+        clusters = analysis_cfg.get("cluster_sizes") or [int(self.analysisCluster.value)]
+        if thresholds:
+            self._set_analysis_threshold_value(float(thresholds[0]), queue_update=False)
+        if clusters:
+            self._set_analysis_cluster_value(int(clusters[0]), queue_update=False)
+        self.analysisGaussianFilterCheck.checked = bool(
+            analysis_cfg.get("gaussian_filter", bool(self.analysisGaussianFilterCheck.checked))
+        )
+        self.analysisGaussianSigma.value = float(
+            analysis_cfg.get("gaussian_sigma", float(self.analysisGaussianSigma.value))
+        )
+        self.analysisFullMaskDilation.value = int(
+            analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))
+        )
+        self.analysisMarrowMaskDilation.value = int(
+            change_region_cfg.get(
+                "dilation_voxels",
+                analysis_cfg.get("marrow_mask_dilation_voxels", int(self.analysisMarrowMaskDilation.value)),
+            )
+        )
+        self.analysisMarrowMaskErosion.value = int(
+            change_region_cfg.get(
+                "erosion_voxels",
+                analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value)),
+            )
+        )
+        self._analysis_erosion_voxels = int(
+            ((analysis_cfg.get("valid_region") or {}).get("erosion_voxels", self._analysis_erosion_voxels))
+        )
+        self._on_mask_method_changed(self.maskMethod.currentText)
+        self._on_analysis_method_changed()
+        if source_label and hasattr(self, "userMessageLabel"):
+            self._set_user_message("info", "Profile applied", source_label)
 
-        if preset == "fast preview":
-            # faster/safer defaults for quick checks
-            self.tlRes.value = 3
-            self.tlIter.value = 100
-            self.tlSampling.value = 0.001
-            self.msRes.value = 3
-            self.msIter.value = 100
-            self.msSampling.value = 0.002
-            self.analysisCluster.value = 20
-            self._set_user_message("info", "Preset applied: Fast preview", _summary())
+    def _on_apply_study_profile(self, *_args):
+        if not self.logic.is_pipeline_available():
+            _ok, detail = self.logic.pipeline_status()
+            self._set_user_message("warn", "Pipeline needs update", detail)
             return
-        if preset == "high quality":
-            self.tlRes.value = 6
-            self.tlIter.value = 400
-            self.tlSampling.value = 0.008
-            self.msRes.value = 6
-            self.msIter.value = 400
-            self.msSampling.value = 0.008
-            self.analysisCluster.value = 8
-            self._set_user_message("info", "Preset applied: High quality", _summary())
-            return
-        # Default
-        self.tlRes.value = 6
-        self.tlIter.value = 250
-        self.tlSampling.value = 0.001
-        self.msRes.value = 4
-        self.msIter.value = 250
-        self.msSampling.value = 0.005
-        self.analysisCluster.value = 12
-        self._set_user_message("info", "Preset applied: Default", _summary())
+        applied = False
+        try:
+            from dataclasses import asdict
+            from timelapsedhrpqct.config.loader import load_config
+
+            profile = self._selected_config_profile()
+            try:
+                cfg_obj = load_config(None, profile=profile)
+            except TypeError as exc:
+                if "profile" not in str(exc):
+                    raise
+                _ok, detail = self.logic.pipeline_status()
+                raise RuntimeError(
+                    "The installed timelapsed-hrpqct package does not support built-in profiles yet. "
+                    f"Install/update to timelapsed-hrpqct >= {MIN_PIPELINE_VERSION}. {detail}"
+                ) from exc
+            cfg = asdict(cfg_obj)
+            self._suppress_interactive_preview_updates = True
+            self._apply_config_dict_to_controls(
+                cfg,
+                source_label=f"Using built-in profile <b>{profile}</b> for new runs and analysis reruns.",
+            )
+            applied = True
+        except Exception as exc:
+            slicer.util.warningDisplay(f"Could not apply profile:\n{exc}")
+        finally:
+            self._suppress_interactive_preview_updates = False
+        if applied:
+            self._queue_interactive_preview_update()
 
     def _load_defaults_from_pipeline_config(self):
         if not self.logic.is_pipeline_available():
@@ -1291,73 +1608,92 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             with open(self.logic.default_config_path(), "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-            seg_cfg = ((cfg.get("masks") or {}).get("segmentation") or {})
-            adaptive_low = float(seg_cfg.get("adaptive_low_threshold", 100.0))
-            adaptive_high = float(seg_cfg.get("adaptive_high_threshold", 300.0))
-            global_low = float(seg_cfg.get("trab_threshold", 100.0))
-            global_high = float(seg_cfg.get("cort_threshold", 300.0))
-            laplace_hamming_threshold = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
-            laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
-            self._mask_method_defaults = {
-                "adaptive": (adaptive_low, adaptive_high),
-                "global": (global_low, global_high),
-                "laplace_hamming": (laplace_hamming_threshold, laplace_hamming_min_size),
-            }
-
-            tl_cfg = cfg.get("timelapsed_registration") or {}
-            ms_cfg = cfg.get("multistack_correction") or {}
-            self.tlSampling.value = float(tl_cfg.get("sampling_percentage", float(self.tlSampling.value)))
-            self.tlRes.value = int(tl_cfg.get("number_of_resolutions", int(self.tlRes.value)))
-            self.tlIter.value = int(tl_cfg.get("number_of_iterations", int(self.tlIter.value)))
-            self.msSampling.value = float(ms_cfg.get("sampling_percentage", float(self.msSampling.value)))
-            self.msRes.value = int(ms_cfg.get("number_of_resolutions", int(self.msRes.value)))
-            self.msIter.value = int(ms_cfg.get("number_of_iterations", int(self.msIter.value)))
-            self.msOverlapBuffer.value = int(
-                ms_cfg.get("overlap_crop_buffer_voxels", int(self.msOverlapBuffer.value))
-            )
-            init_vox = ms_cfg.get("initial_translation_voxels", [0.0, 0.0, -20.0])
-            if isinstance(init_vox, (list, tuple)) and len(init_vox) >= 3:
-                self.msInitTx.value = float(init_vox[0])
-                self.msInitTy.value = float(init_vox[1])
-                self.msInitTz.value = float(init_vox[2])
-            analysis_cfg = cfg.get("analysis") or {}
-            self._analysis_method = str(analysis_cfg.get("method", self._analysis_method))
-            analysis_pair_mode = str(analysis_cfg.get("pair_mode", "adjacent"))
-            self._analysis_erosion_voxels = int(
-                ((analysis_cfg.get("valid_region") or {}).get("erosion_voxels", self._analysis_erosion_voxels))
-            )
-            idx = self.analysisMethodCombo.findData(self._analysis_method)
-            if idx >= 0:
-                self.analysisMethodCombo.setCurrentIndex(idx)
-            pair_idx = self.analysisPairModeCombo.findData(analysis_pair_mode)
-            if pair_idx >= 0:
-                self.analysisPairModeCombo.setCurrentIndex(pair_idx)
-            self.analysisGaussianFilterCheck.checked = bool(
-                analysis_cfg.get("gaussian_filter", bool(self.analysisGaussianFilterCheck.checked))
-            )
-            self.analysisGaussianSigma.value = float(
-                analysis_cfg.get("gaussian_sigma", float(self.analysisGaussianSigma.value))
-            )
-            self.analysisFullMaskDilation.value = int(
-                analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))
-            )
-            self.analysisMarrowMaskErosion.value = int(
-                analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value))
-            )
-            self._on_mask_method_changed(self.maskMethod.currentText)
-            self._on_analysis_method_changed()
+            self._apply_config_dict_to_controls(cfg, source_label="Loaded defaults from timelapsed-hrpqct.")
         except Exception as exc:
             self._show(f"[settings] could not load defaults from pipeline config: {exc}")
 
     def _current_analysis_method(self):
+        restrict_bone = bool(getattr(self, "analysisRestrictBoneSupportCheck", None) and self.analysisRestrictBoneSupportCheck.checked)
+        enforce_binary = bool(getattr(self, "analysisBinaryReclassificationCheck", None) and self.analysisBinaryReclassificationCheck.checked)
+        if enforce_binary:
+            return "grayscale_and_binary"
+        if restrict_bone:
+            return "grayscale_marrow_mask"
+        return "grayscale_delta_only"
+
+    def _legacy_analysis_combo_method(self):
         data = self.analysisMethodCombo.currentData
         if data:
             return str(data)
         return "grayscale_and_binary"
 
+    def _analysis_method_from_config(self, analysis_cfg):
+        method = str((analysis_cfg or {}).get("method", "") or "").strip()
+        if method and method != "auto":
+            return method
+        change_region = (analysis_cfg or {}).get("change_region") or {}
+        binary = (analysis_cfg or {}).get("binary_reclassification") or {}
+        if bool(binary.get("enabled", False)):
+            return "grayscale_and_binary"
+        if str(change_region.get("source", "common_mask")).strip().lower() in {"bone_union", "segmentation_union"}:
+            return "grayscale_marrow_mask"
+        return "grayscale_delta_only"
+
+    def _installed_core_supports_explicit_analysis_config(self):
+        try:
+            from dataclasses import fields
+            from timelapsedhrpqct.config.models import AnalysisConfig
+
+            names = {field.name for field in fields(AnalysisConfig)}
+        except Exception:
+            return False
+        return {"change_detection", "change_region", "binary_reclassification"}.issubset(names)
+
+    def _analysis_config_from_controls(self, pair_mode):
+        use_bone_union = bool(self.analysisRestrictBoneSupportCheck.checked)
+        enforce_binary = bool(self.analysisBinaryReclassificationCheck.checked)
+        base = {
+            "method": "auto",
+            "pair_mode": pair_mode,
+            "compartments": ["full", "trab", "cort"],
+            "thresholds": [float(self.analysisThreshold.value)],
+            "cluster_sizes": [int(self.analysisCluster.value)],
+            "use_filled_images": False,
+            "gaussian_filter": bool(self.analysisGaussianFilterCheck.checked),
+            "gaussian_sigma": float(self.analysisGaussianSigma.value),
+            "full_mask_dilation_voxels": int(self.analysisFullMaskDilation.value),
+        }
+        if self._installed_core_supports_explicit_analysis_config():
+            base.update(
+                {
+                    "change_detection": "grayscale_delta",
+                    "change_region": {
+                        "source": "bone_union" if use_bone_union else "common_mask",
+                        "dilation_voxels": int(self.analysisMarrowMaskDilation.value) if use_bone_union else 0,
+                        "erosion_voxels": int(self.analysisMarrowMaskErosion.value) if use_bone_union else 0,
+                    },
+                    "binary_reclassification": {
+                        "enabled": bool(enforce_binary),
+                    },
+                }
+            )
+        else:
+            # Older released cores warn on the explicit nested analysis keys. Keep legacy keys only.
+            base["method"] = self._current_analysis_method()
+            base["marrow_mask_dilation_voxels"] = int(self.analysisMarrowMaskDilation.value) if use_bone_union else 0
+            base["marrow_mask_erosion_voxels"] = 0
+        return base
+
     def _on_analysis_method_changed(self, *_args):
-        method = self._current_analysis_method()
-        self.analysisMarrowMaskErosion.enabled = method == "grayscale_marrow_mask"
+        method = self._legacy_analysis_combo_method()
+        self.analysisRestrictBoneSupportCheck.checked = method == "grayscale_marrow_mask"
+        self.analysisBinaryReclassificationCheck.checked = method == "grayscale_and_binary"
+        self._on_analysis_option_changed()
+
+    def _on_analysis_option_changed(self, *_args):
+        use_bone_union = bool(self.analysisRestrictBoneSupportCheck.checked)
+        self.analysisMarrowMaskDilation.enabled = use_bone_union
+        self.analysisMarrowMaskErosion.enabled = use_bone_union
         self._on_interactive_preview_control_changed()
 
     def _on_mask_method_changed(self, method_name):
@@ -1366,13 +1702,43 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         if method == "laplace_hamming":
             self.maskLowLabel.text = "LH threshold"
+            self.maskLowLabel.toolTip = "Laplace-Hamming value threshold used to classify bone during mask generation."
             self.maskHighLabel.text = "Min component voxels"
-        elif method == "global":
-            self.maskLowLabel.text = "Trab threshold"
-            self.maskHighLabel.text = "Cort threshold"
+            self.maskHighLabel.toolTip = "Minimum connected component size retained by Laplace-Hamming segmentation."
+            self.maskLow.minimum = 0.0
+            self.maskLow.maximum = 100000.0
+            self.maskLow.decimals = 1
+            self.maskLow.singleStep = 100.0
+            self.maskHigh.minimum = 0.0
+            self.maskHigh.maximum = 1000000.0
+            self.maskHigh.decimals = 0
+            self.maskHigh.singleStep = 1.0
+        elif method == "seg_gauss":
+            self.maskLowLabel.text = "Seg threshold"
+            self.maskLowLabel.toolTip = "Density threshold used after Gaussian smoothing for standard segmentation."
+            self.maskHighLabel.text = "Gaussian sigma"
+            self.maskHighLabel.toolTip = "Gaussian smoothing sigma in voxels for standard segmentation."
+            self.maskLow.minimum = 0.0
+            self.maskLow.maximum = 5000.0
+            self.maskLow.decimals = 1
+            self.maskLow.singleStep = 5.0
+            self.maskHigh.minimum = 0.0
+            self.maskHigh.maximum = 10.0
+            self.maskHigh.decimals = 2
+            self.maskHigh.singleStep = 0.1
         else:
             self.maskLowLabel.text = "Adaptive low threshold"
+            self.maskLowLabel.toolTip = "Lower adaptive segmentation threshold."
             self.maskHighLabel.text = "Adaptive high threshold"
+            self.maskHighLabel.toolTip = "Upper adaptive segmentation threshold."
+            self.maskLow.minimum = -1000.0
+            self.maskLow.maximum = 5000.0
+            self.maskLow.decimals = 1
+            self.maskLow.singleStep = 5.0
+            self.maskHigh.minimum = -1000.0
+            self.maskHigh.maximum = 5000.0
+            self.maskHigh.decimals = 1
+            self.maskHigh.singleStep = 5.0
         low, high = self._mask_method_defaults[method]
         self.maskLow.value = float(low)
         self.maskHigh.value = float(high)
@@ -1430,6 +1796,33 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if pair_mode not in {"adjacent", "baseline", "all_pairs"}:
             pair_mode = "adjacent"
 
+        mask_method = str(self.maskMethod.currentText or "adaptive")
+        mask_low = float(self.maskLow.value)
+        mask_high = float(self.maskHigh.value)
+        segmentation_cfg = {"method": mask_method}
+        if mask_method == "seg_gauss":
+            segmentation_cfg.update(
+                {
+                    "trab_threshold": mask_low,
+                    "cort_threshold": mask_low,
+                    "gaussian_sigma": mask_high,
+                }
+            )
+        elif mask_method == "laplace_hamming":
+            segmentation_cfg.update(
+                {
+                    "laplace_hamming_threshold": mask_low,
+                    "laplace_hamming_min_size_voxels": int(mask_high),
+                }
+            )
+        else:
+            segmentation_cfg.update(
+                {
+                    "adaptive_low_threshold": mask_low,
+                    "adaptive_high_threshold": mask_high,
+                }
+            )
+
         return {
             "import": {
                 # Do not fail when z-slices are not perfectly divisible by stack depth.
@@ -1437,15 +1830,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "on_incomplete_stack": "keep_last",
             },
             "masks": {
-                "segmentation": {
-                    "method": self.maskMethod.currentText,
-                    "trab_threshold": float(self.maskLow.value),
-                    "cort_threshold": float(self.maskHigh.value),
-                    "adaptive_low_threshold": float(self.maskLow.value),
-                    "adaptive_high_threshold": float(self.maskHigh.value),
-                    "laplace_hamming_threshold": float(self.maskLow.value),
-                    "laplace_hamming_min_size_voxels": int(self.maskHigh.value),
-                }
+                "segmentation": segmentation_cfg
             },
             "timelapsed_registration": {
                 "metric": self.regMetric.currentText,
@@ -1465,18 +1850,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     float(self.msInitTz.value),
                 ],
             },
-            "analysis": {
-                "method": self._current_analysis_method(),
-                "pair_mode": pair_mode,
-                "compartments": ["full", "trab", "cort"],
-                "thresholds": [float(self.analysisThreshold.value)],
-                "cluster_sizes": [int(self.analysisCluster.value)],
-                "use_filled_images": False,
-                "gaussian_filter": bool(self.analysisGaussianFilterCheck.checked),
-                "gaussian_sigma": float(self.analysisGaussianSigma.value),
-                "full_mask_dilation_voxels": int(self.analysisFullMaskDilation.value),
-                "marrow_mask_erosion_voxels": int(self.analysisMarrowMaskErosion.value),
-            },
+            "analysis": self._analysis_config_from_controls(pair_mode),
             "fusion": {
                 "enable_filling": False,
             },
@@ -1519,8 +1893,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _set_running_ui(self, is_running):
         running = bool(is_running)
-        for btn in [self.runMasksBtn, self.runTimelapseBtn, self.runAnalysisBtn]:
+        for btn in [
+            self.runMasksBtn,
+            self.runTimelapseBtn,
+            self.runAnalysisBtn,
+            self.seriesSummaryExportBtn,
+            self.saveAnalysisScenarioBtn,
+        ]:
             btn.enabled = not running
+        if hasattr(self, "doNotGenerateMasksCheck"):
+            self.doNotGenerateMasksCheck.enabled = not running
         self.cancelRunBtn.enabled = running
 
     def _set_interactive_preview_busy(self, is_busy, message=None):
@@ -1531,12 +1913,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.analysisClusterSlider,
             self.analysisCluster,
             self.analysisMethodCombo,
+            self.analysisRestrictBoneSupportCheck,
+            self.analysisBinaryReclassificationCheck,
             self.analysisFullMaskDilation,
+            self.analysisMarrowMaskDilation,
             self.analysisMarrowMaskErosion,
             self.analysisGaussianFilterCheck,
             self.analysisGaussianSigma,
             self.remodellingApplyInteractiveBtn,
-            self.remodellingApplyPreviewBtn,
             self.remodellingAutoUpdateCheck,
             self.seriesSummaryUpdateBtn,
             self.seriesSummaryExportBtn,
@@ -2189,8 +2573,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         imported = self._require_results_root("Could not resolve imported dataset path.")
         if imported is None:
             return
+        self._clear_stale_stack_segmentations(imported, scoped_subject, str(self.maskMethod.currentText or ""))
         self._set_stage_status("masks", "pending")
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         self._run_sequence(
             [
@@ -2201,13 +2587,53 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     str(imported),
                     *self._raw_ingest_cli_flags(raw_ingest_mode),
                     *self._raw_discovery_cli_flags(),
+                    *self._profile_cli_args(),
                     "--config",
                     cfg,
                 ],
-                ["generate-masks", str(imported), "--config", cfg],
+                ["generate-masks", str(imported), *self._profile_cli_args(), "--config", cfg],
             ],
             stages=["masks", "masks"],
         )
+
+    def _clear_stale_stack_segmentations(self, imported_root, subject_id=None, current_method=""):
+        root = Path(imported_root)
+        if subject_id:
+            subject_roots = [root / f"sub-{subject_id}"]
+        else:
+            subject_roots = sorted(root.glob("sub-*"))
+        removed = 0
+        for subject_root in subject_roots:
+            if not subject_root.exists():
+                continue
+            for metadata_path in subject_root.glob("site-*/ses-*/stacks/*.json"):
+                try:
+                    with metadata_path.open("r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+                    previous_method = str(
+                        ((metadata.get("mask_generation") or {}).get("segmentation_method") or "")
+                    )
+                except Exception:
+                    previous_method = ""
+                if previous_method == str(current_method):
+                    continue
+                stem = metadata_path.with_suffix("")
+                candidates = [
+                    stem.with_name(f"{stem.name}_seg.nii.gz"),
+                    stem.with_name(f"{stem.name}_seg.mha"),
+                ]
+                for seg_path in candidates:
+                    if not seg_path.exists():
+                        continue
+                    try:
+                        seg_path.unlink()
+                        removed += 1
+                    except Exception as exc:
+                        self._show(f"[masks] could not remove stale segmentation {seg_path}: {exc}")
+        if removed:
+            self._show(
+                f"[masks] removed {removed} stale stack segmentation file(s) because the selected mask method changed."
+            )
 
     def _on_run_timelapse(self):
         if not self._require_pipeline_installed():
@@ -2241,6 +2667,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("analysis", "pending")
         self._active_stage = "registration"
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = True
         cfg = self.logic.create_override_config(self._settings_override())
         self._run(
@@ -2254,6 +2681,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "--skip-mask-generation",
                 *self._raw_ingest_cli_flags(raw_ingest_mode),
                 *self._raw_discovery_cli_flags(),
+                *self._profile_cli_args(),
                 "--config",
                 cfg,
             ]
@@ -2278,6 +2706,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("analysis", "pending")
         self._active_stage = "analysis"
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         cfg = self.logic.create_override_config(self._settings_override())
         self._run([
@@ -2289,9 +2718,75 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             str(float(self.analysisThreshold.value)),
             "--clusters",
             str(int(self.analysisCluster.value)),
+            *self._profile_cli_args(),
             "--config",
             cfg,
         ])
+
+    def _current_analysis_requires_segmentation(self):
+        return self._current_analysis_method() in {"grayscale_and_binary", "grayscale_marrow_mask"}
+
+    def _raw_sessions_have_segmentation_inputs(self, sessions):
+        sessions = list(sessions or [])
+        if not sessions:
+            return False
+        for session in sessions:
+            seg_path = getattr(session, "raw_seg_path", None)
+            if not seg_path or not Path(seg_path).exists():
+                return False
+        return True
+
+    def _existing_imported_segmentations_complete(self, imported, sessions=None, scoped_subject=None):
+        try:
+            from timelapsedhrpqct.dataset.artifacts import iter_imported_stack_records
+        except Exception as exc:
+            self._show(f"[masks] could not inspect existing imported segmentations: {exc}")
+            return False
+
+        session_keys = set()
+        for session in sessions or []:
+            subject = str(getattr(session, "subject_id", "")).strip()
+            site = str(getattr(session, "site", "")).strip().lower()
+            session_id = str(getattr(session, "session_id", "")).strip()
+            stack_index = getattr(session, "stack_index", None)
+            try:
+                stack_index = int(stack_index) if stack_index is not None else None
+            except Exception:
+                stack_index = None
+            if subject and site and session_id:
+                session_keys.add((subject, site, session_id, stack_index))
+
+        records = []
+        for record in iter_imported_stack_records(imported):
+            if scoped_subject is not None and str(getattr(record, "subject_id", "")) != str(scoped_subject):
+                continue
+            if session_keys:
+                key = (
+                    str(getattr(record, "subject_id", "")).strip(),
+                    str(getattr(record, "site", "")).strip().lower(),
+                    str(getattr(record, "session_id", "")).strip(),
+                    int(getattr(record, "stack_index", 0)),
+                )
+                # Single-stack parsed sessions may have no explicit stack index.
+                key_no_stack = (key[0], key[1], key[2], None)
+                if key not in session_keys and key_no_stack not in session_keys:
+                    continue
+            records.append(record)
+
+        if not records:
+            return False
+        return all(getattr(record, "seg_path", None) and Path(record.seg_path).exists() for record in records)
+
+    def _can_skip_mask_generation(self, imported, sessions=None, scoped_subject=None):
+        if not self._current_analysis_requires_segmentation():
+            return True
+        if self._raw_sessions_have_segmentation_inputs(sessions):
+            return True
+        return self._existing_imported_segmentations_complete(
+            imported,
+            sessions=sessions,
+            scoped_subject=scoped_subject,
+        )
 
     def _auto_mode_from_sessions(self, sessions=None):
         candidate_sessions = sessions if sessions is not None else (self._last_parsed_sessions or [])
@@ -2329,34 +2824,60 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if imported is None:
             return
         mode = self._auto_mode_from_sessions(scoped_sessions)
+        skip_mask_generation = bool(getattr(self, "doNotGenerateMasksCheck", None) and self.doNotGenerateMasksCheck.checked)
+        if skip_mask_generation and not self._can_skip_mask_generation(
+            imported,
+            sessions=scoped_sessions,
+            scoped_subject=scoped_subject,
+        ):
+            slicer.util.errorDisplay(
+                "Cannot skip mask generation with the current analysis options.\n\n"
+                "The selected analysis settings require segmentation masks. "
+                "Provide raw *_SEG.AIM files, use an existing imported dataset with generated segmentations, "
+                "or uncheck 'Do not generate masks'. Raw provided masks/SEG files are imported and used as-is."
+            )
+            return
         cfg = self.logic.create_override_config(self._settings_override())
         self._set_user_message(
             "info",
             "Running full pipeline",
             (
-                f"Mode: <b>{mode}</b>. Running unified pipeline command with smart skip detection "
-                "(existing import/masks/registration/analysis outputs are reused when available)."
+                f"Mode: <b>{mode}</b>. "
+                + (
+                    "Using existing/provided masks and segmentations; automatic mask generation is disabled."
+                    if skip_mask_generation
+                    else "Automatic mask generation is enabled; raw provided masks/SEG files are preserved and used as inputs."
+                )
             ),
         )
         for s in ("masks", "registration", "analysis"):
             self._set_stage_status(s, "pending")
-        self._active_stage = "registration"
+        if skip_mask_generation:
+            self._set_stage_status("masks", "done")
+            self._active_stage = "registration"
+        else:
+            self._active_stage = "masks"
         self._is_full_pipeline_run = True
+        self._run_skips_mask_generation = skip_mask_generation
         self._run_includes_analysis = True
-        self._run(
-            [
-                "run",
-                str(run_root),
-                "--output-root",
-                str(imported),
-                "--mode",
-                mode,
-                *self._raw_ingest_cli_flags(raw_ingest_mode),
-                *self._raw_discovery_cli_flags(),
-                "--config",
-                cfg,
-            ]
-        )
+        run_args = [
+            "run",
+            str(run_root),
+            "--output-root",
+            str(imported),
+            "--mode",
+            mode,
+            *self._raw_ingest_cli_flags(raw_ingest_mode),
+            *self._raw_discovery_cli_flags(),
+            *self._profile_cli_args(),
+            "--config",
+            cfg,
+        ]
+        if skip_mask_generation:
+            run_args.insert(6, "--skip-mask-generation")
+        else:
+            self._clear_stale_stack_segmentations(imported, scoped_subject, str(self.maskMethod.currentText or ""))
+        self._run(run_args)
 
     def _on_finished(self, exit_code, exit_status):
         self._show(f"[timelapsed-slicer] finished with exit code {exit_code}")
@@ -2375,6 +2896,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._queued_stages = []
             self._active_stage = None
             self._is_full_pipeline_run = False
+            self._run_skips_mask_generation = False
             self._run_includes_analysis = False
             self._refresh_patient_list()
             return
@@ -2395,6 +2917,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._set_stage_status(s, "done")
         self._active_stage = None
         self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
         self._run_includes_analysis = False
         self.logic.cleanup_temp_files(remove_fallback=False)
         self._refresh_patient_list()
@@ -2419,14 +2942,28 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _on_check_pipeline(self):
         self._update_dependency_ui()
 
+    def _dependency_status_text(self, detail):
+        detail = str(detail or "")
+        if detail.startswith("Installed ("):
+            return detail.split(" from ", 1)[0]
+        if detail.startswith("Out of date"):
+            return detail.split(". Imported from ", 1)[0]
+        if detail.startswith("Not installed"):
+            return "Not installed"
+        return detail[:80] + "..." if len(detail) > 80 else detail
+
     def _update_dependency_ui(self):
-        available = self.logic.is_pipeline_available()
+        available, detail = self.logic.pipeline_status()
+        self.pipelineStatusLabel.text = self._dependency_status_text(detail)
+        self.pipelineStatusLabel.toolTip = str(detail or "")
         if available:
-            self.pipelineStatusLabel.text = "Installed"
             self.pipelineStatusLabel.styleSheet = "color: #228b22;"
+            if hasattr(self, "dependencyBox"):
+                self.dependencyBox.collapsed = True
         else:
-            self.pipelineStatusLabel.text = "Not installed"
             self.pipelineStatusLabel.styleSheet = "color: #cc5500;"
+            if hasattr(self, "dependencyBox"):
+                self.dependencyBox.collapsed = False
 
     def _refresh_patient_list(self):
         self.patientCombo.clear()
@@ -2504,13 +3041,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
 
         if viz_dir.exists():
-            candidates = sorted(viz_dir.glob("*_comp-full_*_remodelling.mha"))
-            if not candidates:
-                candidates = sorted(viz_dir.glob("*_remodelling.mha"))
+            candidates = sorted(viz_dir.glob("*_remodelling.nii.gz")) + sorted(
+                viz_dir.glob("*_remodelling.mha")
+            )
 
         for path in candidates:
             ctx = self._parse_remodelling_source_context(path)
             if ctx is None:
+                continue
+            if str(ctx.get("compartment", "")).strip().lower() != "full":
                 continue
             label = f"{ctx['t0']} -> {ctx['t1']}"
             self._remodelling_comparison_items.append((label, Path(path)))
@@ -2812,7 +3351,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         display.SetVisibility2D(True)
         display.SetVisibility3D(False)
         display.SetOpacity2DFill(0.35)
-        display.SetOpacity2DOutline(1.0)
+        display.SetOpacity2DOutline(0.0)
         display.SetSliceIntersectionThickness(2)
         # Ensure segmentations are shown in all slice views (not bound to a specific view).
         if hasattr(display, "RemoveAllViewNodeIDs"):
@@ -2895,18 +3434,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         display.SetVisibility(True)
         display.SetVisibility2D(bool(show2d))
         display.SetVisibility3D(bool(show3d))
-        display.SetOpacity2DFill(0.35)
-        display.SetOpacity2DOutline(1.0)
+        display.SetOpacity2DFill(1.0)
+        display.SetOpacity2DOutline(0.0)
         display.SetOpacity3D(1.0)
         if hasattr(display, "RemoveAllViewNodeIDs"):
             display.RemoveAllViewNodeIDs()
 
         label_style = {
-            1: ("resorption", (0.98, 0.15, 0.68), 1.0),  # bright pink
-            2: ("quiescent", (0.45, 0.45, 0.45), 0.0),   # lighter gray, keep as 2D fill
-            3: ("formation", (1.00, 0.45, 0.00), 1.0),   # bright orange
-            4: ("formation", (1.00, 0.45, 0.00), 1.0),   # legacy 5-label support
-            5: ("quiescent", (0.45, 0.45, 0.45), 0.0),   # legacy collapsed support
+            1: ("resorption", (1.00, 0.05, 0.70), 1.0, 1.0),  # vivid pink
+            2: ("quiescent", (0.62, 0.62, 0.62), 0.32, 0.0),  # subtle baseline support/no-change label
+            3: ("formation", (1.00, 0.48, 0.00), 1.0, 1.0),   # saturated orange
+            4: ("formation", (1.00, 0.48, 0.00), 1.0, 1.0),   # legacy 5-label support
+            5: ("quiescent", (0.62, 0.62, 0.62), 0.32, 0.0),  # subtle legacy baseline support label
+        }
+        label_name_to_value = {
+            "resorption": 1,
+            "quiescent": 2,
+            "formation": 3,
         }
         seg = seg_node.GetSegmentation()
         ids = vtk.vtkStringArray()
@@ -2918,11 +3462,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 continue
             name = str(segment.GetName() or "")
             m = re.search(r"(\d+)", name)
-            label_val = int(m.group(1)) if m else None
+            label_val = int(m.group(1)) if m else label_name_to_value.get(name.strip().lower())
             if label_val in label_style:
-                disp_name, color, opacity3d = label_style[label_val]
+                disp_name, color, opacity2d, opacity3d = label_style[label_val]
                 segment.SetName(disp_name)
                 segment.SetColor(float(color[0]), float(color[1]), float(color[2]))
+                if hasattr(display, "SetSegmentOpacity2DFill"):
+                    display.SetSegmentOpacity2DFill(seg_id, float(opacity2d))
+                if hasattr(display, "SetSegmentOpacity2DOutline"):
+                    display.SetSegmentOpacity2DOutline(seg_id, 0.0)
                 if hasattr(display, "SetSegmentOpacity3D"):
                     display.SetSegmentOpacity3D(seg_id, float(opacity3d))
                 if hasattr(display, "SetSegmentVisibility"):
@@ -2949,6 +3497,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return out
 
     def _on_interactive_preview_control_changed(self, *_args):
+        if getattr(self, "_suppress_interactive_preview_updates", False):
+            return
         if not self.remodellingAutoUpdateCheck.checked or self.logic.is_running():
             return
         self._interactivePreviewTimer.start()
@@ -2978,12 +3528,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
         self._latest_pair_metric_rows = list(rows)
         comp_text = str(compartment) if rows else "N/A"
+        if formation_frac is not None and resorption_frac is not None:
+            net_change_frac = float(formation_frac) - float(resorption_frac)
+            active_frac = float(formation_frac) + float(resorption_frac)
+        else:
+            net_change_frac = None
+            active_frac = None
         self.analysisPairMetricsMaskLabel.text = f"Mask: {comp_text}"
         self.analysisFormationFractionLabel.text = (
-            f"Formation fraction: {_fmt(formation_frac)}"
+            f"Formation volume fraction (FV/BV): {_fmt(formation_frac)}"
         )
         self.analysisResorptionFractionLabel.text = (
-            f"Resorption fraction: {_fmt(resorption_frac)}"
+            f"Resorption volume fraction (RV/BV): {_fmt(resorption_frac)}"
+        )
+        self.analysisNetChangeFractionLabel.text = (
+            f"Net change volume fraction (NV/BV): {_fmt(net_change_frac)}"
+        )
+        self.analysisActiveFractionLabel.text = (
+            f"Active volume fraction (AV/BV): {_fmt(active_frac)}"
         )
 
     def _set_pair_metric_rows(self, rows=None):
@@ -3017,6 +3579,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 str(row.get("compartment", "")),
                 _fmt_pct(row.get("mean_formation_frac_bv0")),
                 _fmt_pct(row.get("mean_resorption_frac_bv0")),
+                _fmt_pct(row.get("mean_net_change_frac_bv0")),
+                _fmt_pct(row.get("mean_active_frac_bv0")),
                 str(int(row.get("n_subjects", 0))),
             ]
             for col_idx, value in enumerate(values):
@@ -3033,16 +3597,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not metadata:
             return False
         saved_method = str(metadata.get("method", ""))
+        saved_source = str(metadata.get("change_region_source", "")).strip().lower()
+        saved_binary = metadata.get("binary_reclassification_enabled", None)
         saved_thresholds = metadata.get("thresholds") or []
         saved_clusters = metadata.get("cluster_sizes") or []
         return (
             saved_method == self._current_analysis_method()
+            and (not saved_source or saved_source == ("bone_union" if self.analysisRestrictBoneSupportCheck.checked else "common_mask"))
+            and (saved_binary is None or bool(saved_binary) == bool(self.analysisBinaryReclassificationCheck.checked))
             and saved_thresholds[:1] == [float(self.analysisThreshold.value)]
             and saved_clusters[:1] == [int(self.analysisCluster.value)]
             and bool(metadata.get("gaussian_filter", False)) == bool(self.analysisGaussianFilterCheck.checked)
             and float(metadata.get("gaussian_sigma", 0.0)) == float(self.analysisGaussianSigma.value)
             and int(metadata.get("full_mask_dilation_voxels", 2)) == int(self.analysisFullMaskDilation.value)
-            and int(metadata.get("marrow_mask_erosion_voxels", 2)) == int(self.analysisMarrowMaskErosion.value)
+            and int(metadata.get("marrow_mask_dilation_voxels", 2)) == int(self.analysisMarrowMaskDilation.value)
+            and int(metadata.get("marrow_mask_erosion_voxels", 0)) == int(self.analysisMarrowMaskErosion.value)
         )
 
     def _selected_series_adjacent_pairs(self):
@@ -3118,11 +3687,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         patterns = [
             re.compile(
                 r"^sub-(?P<subject_id>.+?)_site-(?P<site>.+?)_comp-(?P<compartment>.+?)_"
-                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.mha$"
+                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.(?:nii\.gz|mha)$"
             ),
             re.compile(
                 r"^sub-(?P<subject_id>.+?)_comp-(?P<compartment>.+?)_"
-                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.mha$"
+                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.(?:nii\.gz|mha)$"
             ),
         ]
         for pattern in patterns:
@@ -3172,6 +3741,84 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         ref_arr = sitk.GetArrayFromImage(sitk.ReadImage(str(reference_image_path)))
         return np.zeros_like(ref_arr, dtype=bool)
 
+    def _infer_stack_seg_path_from_image_path(self, image_path):
+        path = Path(str(image_path))
+        name = path.name
+        replacements = [
+            ("_image.nii.gz", "_seg.nii.gz"),
+            ("_image.mha", "_seg.mha"),
+            ("_image.nrrd", "_seg.nrrd"),
+        ]
+        for old, new in replacements:
+            if name.endswith(old):
+                candidate = path.with_name(name[: -len(old)] + new)
+                if candidate.exists():
+                    return candidate
+        return None
+
+    def _fused_metadata_path_from_image_path(self, image_path):
+        path = Path(str(image_path))
+        name = path.name
+        replacements = [
+            ("_image_fused.nii.gz", "_fused.json"),
+            ("_image_fused.mha", "_fused.json"),
+            ("_image_fused.nrrd", "_fused.json"),
+        ]
+        for old, new in replacements:
+            if name.endswith(old):
+                candidate = path.with_name(name[: -len(old)] + new)
+                if candidate.exists():
+                    return candidate
+        return None
+
+    def _read_seg_array_for_preview(self, session, reference_image):
+        seg_path = getattr(session, "seg_path", None)
+        if seg_path is not None and Path(seg_path).exists():
+            seg_img = sitk.ReadImage(str(seg_path))
+            return (sitk.GetArrayFromImage(seg_img) > 0).astype(bool, copy=False)
+
+        metadata_path = self._fused_metadata_path_from_image_path(getattr(session, "image_path", ""))
+        if metadata_path is None:
+            return None
+        try:
+            metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+        seg_union = None
+        for contributor in metadata.get("contributors", []) or []:
+            stack_seg_path = contributor.get("seg_path")
+            if stack_seg_path:
+                stack_seg_path = Path(str(stack_seg_path))
+            else:
+                stack_seg_path = self._infer_stack_seg_path_from_image_path(contributor.get("image_path", ""))
+            if stack_seg_path is None or not Path(stack_seg_path).exists():
+                continue
+
+            transform_path = contributor.get("transform_source")
+            if transform_path and Path(str(transform_path)).exists():
+                transform = sitk.ReadTransform(str(transform_path))
+            else:
+                transform = sitk.Transform(3, sitk.sitkIdentity)
+
+            seg_img = sitk.Cast(sitk.ReadImage(str(stack_seg_path)) > 0, sitk.sitkUInt8)
+            seg_tx = sitk.Resample(
+                seg_img,
+                reference_image,
+                transform,
+                sitk.sitkNearestNeighbor,
+                0,
+                sitk.sitkUInt8,
+            )
+            if seg_union is None:
+                seg_union = sitk.Cast(seg_tx > 0, sitk.sitkUInt8)
+            else:
+                seg_union = seg_union | sitk.Cast(seg_tx > 0, sitk.sitkUInt8)
+
+        if seg_union is None:
+            return None
+        return (sitk.GetArrayFromImage(seg_union) > 0).astype(bool, copy=False)
+
     def _get_interactive_preview_inputs(self, source_path):
         cache_key = str(Path(source_path).resolve())
         cached = self._interactive_preview_cache.get(cache_key)
@@ -3208,12 +3855,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         ref_img = sitk.ReadImage(str(t0.image_path))
         img_t0 = sitk.GetArrayFromImage(ref_img).astype(np.float32, copy=False)
-        img_t1 = sitk.GetArrayFromImage(sitk.ReadImage(str(t1.image_path))).astype(np.float32, copy=False)
-        seg_t0 = None
-        seg_t1 = None
-        if t0.seg_path is not None and t1.seg_path is not None:
-            seg_t0 = (sitk.GetArrayFromImage(sitk.ReadImage(str(t0.seg_path))) > 0).astype(bool, copy=False)
-            seg_t1 = (sitk.GetArrayFromImage(sitk.ReadImage(str(t1.seg_path))) > 0).astype(bool, copy=False)
+        img_t1_ref = sitk.ReadImage(str(t1.image_path))
+        img_t1 = sitk.GetArrayFromImage(img_t1_ref).astype(np.float32, copy=False)
+        seg_t0 = self._read_seg_array_for_preview(t0, ref_img)
+        seg_t1 = self._read_seg_array_for_preview(t1, img_t1_ref)
 
         support_t0 = self._load_support_mask_array(t0.mask_paths, t0.image_path)
         support_t1 = self._load_support_mask_array(t1.mask_paths, t1.image_path)
@@ -3295,6 +3940,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         cache[compartment] = (mask_t0, mask_t1)
         return cache[compartment]
 
+    def _compute_pair_remodelling_preview_compat(self, compute_pair_remodelling_preview, **kwargs):
+        import inspect
+
+        try:
+            params = inspect.signature(compute_pair_remodelling_preview).parameters
+        except Exception:
+            params = {}
+        if "marrow_mask_dilation_voxels" not in params:
+            kwargs.pop("marrow_mask_dilation_voxels", None)
+            if bool(self.analysisRestrictBoneSupportCheck.checked) and int(self.analysisMarrowMaskDilation.value) > 0:
+                self._show(
+                    "[preview] installed timelapsed-hrpqct does not support bone support dilation yet; "
+                    "update the core package to apply this option."
+                )
+        return compute_pair_remodelling_preview(**kwargs)
+
     def _compute_pair_metric_rows(self, preview_inputs):
         from timelapsedhrpqct.analysis import (
             build_series_common_masks,
@@ -3315,7 +3976,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 int(self._analysis_erosion_voxels),
                 full_mask_dilation_voxels=int(self.analysisFullMaskDilation.value),
             )[compartment]
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=preview_inputs["image_arr_t0"],
                 image_arr_t1=preview_inputs["image_arr_t1"],
                 seg_arr_t0=preview_inputs["seg_arr_t0"],
@@ -3329,6 +3991,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=support_t0,
                 support_mask_t1=support_t1,
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             rows.append(
@@ -3351,7 +4014,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         try:
             preview_inputs = self._get_interactive_preview_inputs(source_path)
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=preview_inputs["image_arr_t0"],
                 image_arr_t1=preview_inputs["image_arr_t1"],
                 seg_arr_t0=preview_inputs["seg_arr_t0"],
@@ -3365,6 +4029,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=preview_inputs.get("support_mask_t0"),
                 support_mask_t1=preview_inputs.get("support_mask_t1"),
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             compartment = str((preview_inputs.get("context") or {}).get("compartment", "full"))
@@ -3403,9 +4068,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for session in sessions:
             image = sitk.ReadImage(str(session.image_path))
             image_arr = sitk.GetArrayFromImage(image).astype(np.float32, copy=False)
-            seg_arr = None
-            if session.seg_path is not None and Path(session.seg_path).exists():
-                seg_arr = (sitk.GetArrayFromImage(sitk.ReadImage(str(session.seg_path))) > 0).astype(bool, copy=False)
+            seg_arr = self._read_seg_array_for_preview(session, image)
             support = self._load_support_mask_array(session.mask_paths, session.image_path)
             ordered.append(
                 {
@@ -3434,6 +4097,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         source_path=None,
         interactive_cache_key=None,
         valid_mask_zyx=None,
+        center_slices=True,
     ):
         filtered_arr = self._apply_preview_label_filters(label_arr_zyx, valid_mask_zyx=valid_mask_zyx)
         full_seg = None
@@ -3453,7 +4117,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(source_path).resolve()))
             if interactive_cache_key is not None:
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingInteractiveCacheKey", str(interactive_cache_key))
-            self._center_slices_on_segmentation(full_seg)
+            if center_slices:
+                self._center_slices_on_segmentation(full_seg)
 
         if create_preview:
             preview_arr = self._create_midplane_preview(
@@ -3477,7 +4142,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 preview_seg.SetAttribute("TimelapsedHRpQCT.RemodellingInteractiveCacheKey", str(interactive_cache_key))
             self._apply_preview_surface_detail(preview_seg, detail=detail)
 
-        self._set_3d_background_black()
         self._refresh_remodelling_full_selector()
         return full_seg, preview_seg
 
@@ -3545,9 +4209,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 spacing_xyz=cache_entry["spacing_xyz"],
                 origin_xyz=cache_entry["origin_xyz"],
                 folder_item_id=folder_id,
-                preview_axis=self.remodellingAxisCombo.currentText,
-                preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                detail=int(self.remodellingDetailSlider.value),
+                preview_axis="x",
+                preview_thickness_vox=15,
+                detail=50,
                 create_full=False,
                 create_preview=True,
                 source_path=source,
@@ -3560,9 +4224,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 segmentation_name=base_name,
                 labelmap_path=source,
                 folder_item_id=folder_id,
-                preview_axis=self.remodellingAxisCombo.currentText,
-                preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                detail=int(self.remodellingDetailSlider.value),
+                preview_axis="x",
+                preview_thickness_vox=15,
+                detail=50,
                 create_full=False,
                 create_preview=True,
             )
@@ -3586,6 +4250,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.warningDisplay("Selected remodelling segmentation is missing source metadata.")
             return
 
+        view_state = self._capture_slice_view_state()
         self._set_interactive_preview_busy(True, "Updating remodelling preview...")
         try:
             preview_inputs = self._get_interactive_preview_inputs(source_path)
@@ -3600,7 +4265,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     support1 = dilate_mask_xy(support1, int(self.analysisFullMaskDilation.value))
                 valid_mask = erode_mask(support0 & support1, int(self._analysis_erosion_voxels))
 
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=preview_inputs["image_arr_t0"],
                 image_arr_t1=preview_inputs["image_arr_t1"],
                 seg_arr_t0=preview_inputs["seg_arr_t0"],
@@ -3614,6 +4280,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=preview_inputs.get("support_mask_t0"),
                 support_mask_t1=preview_inputs.get("support_mask_t1"),
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
         except Exception as exc:
@@ -3638,14 +4305,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 spacing_xyz=preview_inputs["spacing_xyz"],
                 origin_xyz=preview_inputs["origin_xyz"],
                 folder_item_id=folder_id,
-                preview_axis=self.remodellingAxisCombo.currentText,
-                preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                detail=int(self.remodellingDetailSlider.value),
+                preview_axis="x",
+                preview_thickness_vox=15,
+                detail=50,
                 create_full=True,
                 create_preview=False,
                 source_path=source_path,
                 interactive_cache_key=preview_inputs["cache_key"],
                 valid_mask_zyx=preview.valid_mask,
+                center_slices=False,
             )
             self._remove_existing_preview_for_full(full_seg)
             slicer.mrmlScene.RemoveNode(full_seg)
@@ -3653,6 +4321,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 idx = self.remodellingFullSegCombo.findData(new_full.GetID())
                 if idx >= 0:
                     self.remodellingFullSegCombo.setCurrentIndex(idx)
+            self._restore_slice_view_state(view_state)
         except Exception as exc:
             self._set_interactive_preview_busy(False, "Update failed")
             slicer.util.warningDisplay(f"Interactive remodelling display update failed:\n{exc}")
@@ -3671,6 +4340,46 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"gauss={'on' if self.analysisGaussianFilterCheck.checked else 'off'}, "
             f"sigma={float(self.analysisGaussianSigma.value):g})."
         )
+
+    def _capture_slice_view_state(self):
+        state = {}
+        try:
+            lm = slicer.app.layoutManager()
+            if lm is None:
+                return state
+            for name in ("Red", "Yellow", "Green"):
+                widget = lm.sliceWidget(name)
+                node = widget.mrmlSliceNode() if widget is not None else None
+                if node is None:
+                    continue
+                entry = {"field_of_view": tuple(float(v) for v in node.GetFieldOfView())}
+                if hasattr(node, "GetSliceOffset"):
+                    entry["slice_offset"] = float(node.GetSliceOffset())
+                state[name] = entry
+        except Exception:
+            return state
+        return state
+
+    def _restore_slice_view_state(self, state):
+        if not state:
+            return
+        try:
+            lm = slicer.app.layoutManager()
+            if lm is None:
+                return
+            for name, entry in state.items():
+                widget = lm.sliceWidget(name)
+                node = widget.mrmlSliceNode() if widget is not None else None
+                if node is None:
+                    continue
+                fov = entry.get("field_of_view")
+                if fov is not None and len(fov) >= 3:
+                    node.SetFieldOfView(float(fov[0]), float(fov[1]), float(fov[2]))
+                if "slice_offset" in entry and hasattr(node, "SetSliceOffset"):
+                    node.SetSliceOffset(float(entry["slice_offset"]))
+            self._ensure_slice_scale_bars()
+        except Exception:
+            pass
 
     def _compute_series_summary_for_current_subject(self):
         patient_key = self._current_patient_key()
@@ -3702,7 +4411,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 support0 = dilate_mask_xy(support0, int(self.analysisFullMaskDilation.value))
                 support1 = dilate_mask_xy(support1, int(self.analysisFullMaskDilation.value))
             valid_mask = erode_mask(support0 & support1, int(self._analysis_erosion_voxels))
-            preview = compute_pair_remodelling_preview(
+            preview = self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
                 image_arr_t0=t0["image_arr"],
                 image_arr_t1=t1["image_arr"],
                 seg_arr_t0=t0["seg_arr"],
@@ -3716,6 +4426,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 label_map=self._interactive_preview_label_map(),
                 support_mask_t0=t0["support_mask"],
                 support_mask_t1=t1["support_mask"],
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             if key in selected_pairs:
@@ -3808,6 +4519,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     "mean_resorption_frac_bv0": float(
                         np.nanmean([row["resorption_frac_bv0"] for row in rows_for_compartment])
                     ),
+                    "mean_net_change_frac_bv0": float(
+                        np.nanmean([row["NV_BV"] for row in rows_for_compartment])
+                    ),
+                    "mean_active_frac_bv0": float(
+                        np.nanmean([row["AV_BV"] for row in rows_for_compartment])
+                    ),
                     "n_subjects": len(
                         {(row["subject_id"], row["site"]) for row in rows_for_compartment}
                     ),
@@ -3848,7 +4565,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     pair_key = f"{row.get('t0')}->{row.get('t1')}"
                     if selected_pairs and pair_key not in selected_pairs:
                         continue
-                    cohort_rows.append(
+                    base_row = dict(row)
+                    base_row.update(
                         {
                             "subject_id": subject_id,
                             "site": site,
@@ -3860,6 +4578,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                             "resorption_frac_bv0": float(row.get("resorption_frac_bv0", "nan")),
                         }
                     )
+                    cohort_rows.append(enrich_cohort_export_row(base_row))
         return cohort_rows
 
     def _csv_fieldnames(self, rows):
@@ -4055,11 +4774,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "site": site,
                 "scenario_name": scenario_name,
                 "method": self._current_analysis_method(),
+                "change_region_source": "bone_union" if self.analysisRestrictBoneSupportCheck.checked else "common_mask",
+                "binary_reclassification_enabled": bool(self.analysisBinaryReclassificationCheck.checked),
                 "threshold": float(self.analysisThreshold.value),
                 "cluster_size": int(self.analysisCluster.value),
                 "gaussian_filter": bool(self.analysisGaussianFilterCheck.checked),
                 "gaussian_sigma": float(self.analysisGaussianSigma.value),
                 "full_mask_dilation_voxels": int(self.analysisFullMaskDilation.value),
+                "marrow_mask_dilation_voxels": int(self.analysisMarrowMaskDilation.value),
                 "marrow_mask_erosion_voxels": int(self.analysisMarrowMaskErosion.value),
                 "trajectory_selected_adjacent_pairs": self._selected_series_adjacent_pairs(),
                 "source_remodelling_path": source_path or None,
@@ -4112,11 +4834,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return True
 
     def _center_slices_on_segmentation(self, seg_node):
-        if seg_node is None:
+        self._center_slices_on_node(seg_node, fit_to_bounds=True)
+
+    def _center_slices_on_node(self, node_to_center, fit_to_bounds=False):
+        if node_to_center is None:
             return
         try:
             bounds = [0.0] * 6
-            seg_node.GetBounds(bounds)
+            node_to_center.GetBounds(bounds)
             if not all(np.isfinite(bounds)):
                 return
             cx = 0.5 * (bounds[0] + bounds[1])
@@ -4132,6 +4857,169 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 node = widget.mrmlSliceNode()
                 if node is not None:
                     node.JumpSliceByCentering(cx, cy, cz)
+                    if fit_to_bounds:
+                        self._fit_slice_node_to_bounds(node, widget, bounds, name)
+            self._ensure_slice_scale_bars()
+        except Exception:
+            pass
+
+    def _fit_slice_node_to_bounds(self, slice_node, widget, bounds, view_name):
+        try:
+            dims = {
+                "Red": (abs(bounds[1] - bounds[0]), abs(bounds[3] - bounds[2])),
+                "Yellow": (abs(bounds[1] - bounds[0]), abs(bounds[5] - bounds[4])),
+                "Green": (abs(bounds[3] - bounds[2]), abs(bounds[5] - bounds[4])),
+            }.get(str(view_name), (abs(bounds[1] - bounds[0]), abs(bounds[3] - bounds[2])))
+            dim_x = max(float(dims[0]), 1.0)
+            dim_y = max(float(dims[1]), 1.0)
+            view = widget.sliceView() if widget is not None else None
+            render_window = view.renderWindow() if view is not None else None
+            size = render_window.GetSize() if render_window is not None else (1, 1)
+            aspect = max(0.1, float(max(1, int(size[0]))) / float(max(1, int(size[1]))))
+            target_x = max(dim_x * 1.18, 8.0)
+            target_y = max(dim_y * 1.18, 8.0)
+            if target_x / target_y < aspect:
+                target_x = target_y * aspect
+            else:
+                target_y = target_x / aspect
+            slice_node.SetFieldOfView(float(target_x), float(target_y), 1.0)
+        except Exception:
+            pass
+
+    def _ensure_slice_scale_bars(self):
+        try:
+            lm = slicer.app.layoutManager()
+            if lm is None:
+                return
+            for name in ("Red", "Yellow", "Green"):
+                widget = lm.sliceWidget(name)
+                if widget is None:
+                    continue
+                view = widget.sliceView()
+                render_window = view.renderWindow() if view is not None else None
+                renderers = render_window.GetRenderers() if render_window is not None else None
+                renderer = renderers.GetFirstRenderer() if renderers is not None else None
+                if renderer is None:
+                    continue
+                record = self._slice_scale_bars.get(name)
+                if record is None:
+                    points = vtk.vtkPoints()
+                    points.SetNumberOfPoints(6)
+                    cells = vtk.vtkCellArray()
+                    for p0, p1 in ((0, 1), (2, 3), (4, 5)):
+                        line = vtk.vtkLine()
+                        line.GetPointIds().SetId(0, p0)
+                        line.GetPointIds().SetId(1, p1)
+                        cells.InsertNextCell(line)
+                    polydata = vtk.vtkPolyData()
+                    polydata.SetPoints(points)
+                    polydata.SetLines(cells)
+                    coordinate = vtk.vtkCoordinate()
+                    coordinate.SetCoordinateSystemToDisplay()
+                    mapper = vtk.vtkPolyDataMapper2D()
+                    mapper.SetInputData(polydata)
+                    mapper.SetTransformCoordinate(coordinate)
+                    line_actor = vtk.vtkActor2D()
+                    line_actor.SetMapper(mapper)
+                    line_actor.GetProperty().SetColor(1.0, 1.0, 1.0)
+                    line_actor.GetProperty().SetLineWidth(3.0)
+                    text_actor = vtk.vtkTextActor()
+                    text_actor.GetTextProperty().SetColor(1.0, 1.0, 1.0)
+                    text_actor.GetTextProperty().SetFontSize(13)
+                    text_actor.GetTextProperty().BoldOn()
+                    renderer.AddActor2D(line_actor)
+                    renderer.AddActor2D(text_actor)
+                    record = {
+                        "points": points,
+                        "polydata": polydata,
+                        "line_actor": line_actor,
+                        "text_actor": text_actor,
+                        "observer_node": None,
+                        "observer_tag": None,
+                    }
+                    self._slice_scale_bars[name] = record
+                slice_node = widget.mrmlSliceNode()
+                if (
+                    slice_node is not None
+                    and record.get("observer_node") is not slice_node
+                ):
+                    old_node = record.get("observer_node")
+                    old_tag = record.get("observer_tag")
+                    if old_node is not None and old_tag is not None:
+                        try:
+                            old_node.RemoveObserver(old_tag)
+                        except Exception:
+                            pass
+                    try:
+                        record["observer_tag"] = slice_node.AddObserver(
+                            vtk.vtkCommand.ModifiedEvent,
+                            lambda _caller, _event, view_name=name: self._update_slice_scale_bar(view_name),
+                        )
+                        record["observer_node"] = slice_node
+                    except Exception:
+                        record["observer_node"] = None
+                        record["observer_tag"] = None
+                self._update_slice_scale_bar(name, widget, render_window)
+        except Exception:
+            pass
+
+    def _update_slice_scale_bar(self, name, widget=None, render_window=None):
+        try:
+            record = self._slice_scale_bars.get(name)
+            if record is None:
+                return
+            if widget is None or render_window is None:
+                lm = slicer.app.layoutManager()
+                widget = lm.sliceWidget(name) if lm is not None else None
+                view = widget.sliceView() if widget is not None else None
+                render_window = view.renderWindow() if view is not None else None
+            if widget is None or render_window is None:
+                return
+            slice_node = widget.mrmlSliceNode()
+            if slice_node is None:
+                return
+            size = render_window.GetSize()
+            width_px = max(1, int(size[0]))
+            fov = slice_node.GetFieldOfView()
+            fov_x_mm = abs(float(fov[0])) if fov is not None else 0.0
+            if fov_x_mm <= 0:
+                return
+            mm_per_px = fov_x_mm / float(width_px)
+            candidates_mm = (0.5, 1.0, 2.0, 5.0, 10.0)
+            target_px = 105.0
+            visible_candidates = [
+                mm for mm in candidates_mm if 45.0 <= (mm / mm_per_px) <= 170.0
+            ]
+            if visible_candidates:
+                bar_mm = min(visible_candidates, key=lambda mm: abs((mm / mm_per_px) - target_px))
+            else:
+                bar_mm = min(candidates_mm, key=lambda mm: abs((mm / mm_per_px) - target_px))
+            bar_px = max(24.0, min(180.0, bar_mm / mm_per_px))
+            x0 = 24.0
+            y0 = 28.0
+            x1 = x0 + bar_px
+            tick = 5.0
+            points = record["points"]
+            for idx, point in enumerate(
+                (
+                    (x0, y0, 0.0),
+                    (x1, y0, 0.0),
+                    (x0, y0 - tick, 0.0),
+                    (x0, y0 + tick, 0.0),
+                    (x1, y0 - tick, 0.0),
+                    (x1, y0 + tick, 0.0),
+                )
+            ):
+                points.SetPoint(idx, point)
+            points.Modified()
+            record["polydata"].Modified()
+            label = f"{int(bar_mm)} mm" if float(bar_mm).is_integer() else f"{bar_mm:g} mm"
+            text_actor = record["text_actor"]
+            text_actor.SetInput(label)
+            text_actor.SetPosition(x0, y0 + 8.0)
+            record["line_actor"].SetVisibility(True)
+            text_actor.SetVisibility(True)
+            render_window.Render()
         except Exception:
             pass
 
@@ -4403,6 +5291,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         loaded = 0
+        first_loaded_node = None
 
         if image_records:
             for rec in sorted(
@@ -4417,6 +5306,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 ok, node = self._load_volume_node(p)
                 if ok and node is not None:
                     loaded += 1
+                    if first_loaded_node is None:
+                        first_loaded_node = node
                     session_id = str(getattr(rec, "session_id", ""))
                     stack_index = getattr(rec, "stack_index", None)
                     folder_id = self._ensure_load_folder(subject_id, site, session_id, stack_index)
@@ -4472,9 +5363,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         seg_name,
                         Path(p),
                         folder_item_id=folder_id,
-                        preview_axis=self.remodellingAxisCombo.currentText,
-                        preview_thickness_vox=int(self.remodellingThicknessSpin.value),
-                        detail=int(self.remodellingDetailSlider.value),
+                        preview_axis="x",
+                        preview_thickness_vox=15,
+                        detail=50,
                         create_full=True,
                         create_preview=False,
                     )
@@ -4485,6 +5376,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     ok, node = self._load_volume_node(p)
                     if ok and node is not None:
                         loaded += 1
+                        if first_loaded_node is None:
+                            first_loaded_node = node
                         self._place_node_in_folder(node, folder_id)
                         try:
                             origin = tuple(float(x) for x in node.GetOrigin())
@@ -4499,6 +5392,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"[load] loaded {loaded}/{len(candidates)} files for "
             f"sub-{subject_id} site-{site} ({data_type})"
         )
+        if first_loaded_node is not None:
+            self._center_slices_on_node(first_loaded_node, fit_to_bounds=True)
         if is_remodelling_load and loaded:
             if self.remodellingFullSegCombo.count > 0 and self.remodellingFullSegCombo.currentIndex < 0:
                 self.remodellingFullSegCombo.setCurrentIndex(0)

@@ -16,5 +16,5 @@ status Experimental
 iconurl https://raw.githubusercontent.com/wallematthias/SlicerTimelapsedHRpQCT/main/resources/icon.png
 screenshoturls https://raw.githubusercontent.com/wallematthias/SlicerTimelapsedHRpQCT/main/resources/TimelapsedHRpQCTSlicer.png
 
-description 3D Slicer GUI wrapper for timelapsed-hrpqct longitudinal HR-pQCT workflows.
+description HR-pQCT toolbox for 3D Slicer with longitudinal timelapsed analysis, motion scoring, Scanco AIM I/O, and contouring/segmentation workflow modules.
 enabled 1

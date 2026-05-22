@@ -1,8 +1,9 @@
-set(MODULE_NAME TimelapsedHRpQCT)
+set(MODULE_NAME ScancoIO)
 
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
-  ${MODULE_NAME}Reporting.py
+  ScancoIOLib/__init__.py
+  ScancoIOLib/aim_io.py
 )
 
 set(MODULE_PYTHON_RESOURCES

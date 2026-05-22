@@ -1,8 +1,7 @@
-set(MODULE_NAME TimelapsedHRpQCT)
+set(MODULE_NAME HRpQCTSegmentation)
 
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
-  ${MODULE_NAME}Reporting.py
 )
 
 set(MODULE_PYTHON_RESOURCES
