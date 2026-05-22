@@ -29,7 +29,7 @@ from slicer.ScriptedLoadableModule import (
 
 
 MODULE_VERSION = "0.1.6"
-MIN_CORE_VERSION = "2.5.4"
+MIN_CORE_VERSION = "2.5.5"
 DEFAULT_MODEL_CATALOG_URL = (
     "https://github.com/wallematthias/MotionScoreHRpQCT/releases/latest/download/model_catalog.json"
 )
