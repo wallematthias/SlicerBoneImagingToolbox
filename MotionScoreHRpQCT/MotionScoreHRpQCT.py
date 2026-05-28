@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from datetime import datetime
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from pathlib import Path
@@ -20,6 +21,12 @@ import ctk
 import qt
 import slicer
 import vtk
+
+_TOOLBOX_ROOT = Path(__file__).resolve().parent.parent
+if str(_TOOLBOX_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TOOLBOX_ROOT))
+
+from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -233,7 +240,11 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modelVersionEdit.setText(self._settings().value("MotionScore/ModelVersion", "v1"))
 
         self.quickSetupButton = qt.QPushButton("Install / Download Models")
-        licenseLayout.addWidget(self.quickSetupButton)
+        self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
+        setupRow = qt.QHBoxLayout()
+        setupRow.addWidget(self.quickSetupButton)
+        setupRow.addWidget(self.updateToolboxButton)
+        licenseLayout.addLayout(setupRow)
 
         self.licenseFlowHelpLabel = qt.QLabel(
             "Install the MotionScore package and download the default model weights."
@@ -598,6 +609,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.exportButton.clicked.connect(self.onExport)
         self.importButton.clicked.connect(self.onImportFinalGrades)
         self.quickSetupButton.clicked.connect(self.onQuickSetup)
+        self.updateToolboxButton.clicked.connect(self.onCheckToolboxUpdates)
         self.backButton.clicked.connect(self.onBackToPreviousScan)
         self.clearButton.clicked.connect(self.onClearGrades)
         self.loadScanButton.clicked.connect(self.onLoadSelectedScan)
@@ -1477,6 +1489,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._log("[setup] complete: package force-reinstalled and local models ready\n")
         self._refresh_model_profiles()
 
+    def onCheckToolboxUpdates(self):
+        run_toolbox_update_dialog(__file__, log=self._log)
+
     def onDownloadModelBundle(self):
         if not self._ensure_core_package():
             return False
@@ -2067,10 +2082,26 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if derivatives is None:
             slicer.util.errorDisplay("Cannot resolve results root")
             return
+        default_path = derivatives / f"motionscore_final_grades_{datetime.now().strftime('%Y%m%d_%H%M%S')}.tsv"
+        file_path = qt.QFileDialog.getSaveFileName(
+            slicer.util.mainWindow(),
+            "Export Final Grades",
+            str(default_path),
+            "TSV table (*.tsv);;CSV table (*.csv);;All Files (*)",
+        )
+        if isinstance(file_path, tuple):
+            file_path = file_path[0]
+        if not str(file_path).strip():
+            return
+        output_path = Path(str(file_path))
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(".tsv")
 
         args = [
             "export",
             str(derivatives),
+            "--output",
+            str(output_path),
         ]
         self._run_cli(args)
 

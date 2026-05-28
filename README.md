@@ -120,15 +120,15 @@ Do not add only the top-level repository folder. Slicer needs the four module fo
 6. If you do not already have valid masks/contours, click `1. Generate Masks`.
 7. Click `2. Timelapse Pipeline` to run the timelapse processing and create remodelling outputs.
 8. Load `remodelling image` from `Load Processed Data` and inspect in 2D/3D.
-9. If you change analysis settings (for example density threshold or cluster size), click `3. Re-run Analysis`.
+9. If you change analysis settings for the loaded remodelling image, click `Update remodelling image`. To recompute saved outputs for the whole processed cohort, click `Rerun cohort analysis`.
 10. Use `Load Processed Data` to load different processing stages (`raw`, `transformed`, `remodelling image`) for quick comparison.
 
 ## Interactive Remodelling Review
 
-The Timelapsed module lists the profiles bundled with the installed `timelapsed-hrpqct` package, including standard, XCT1 standard, ETH/UofC, UCSF, Shriners, and workflow profiles such as multistack.
-Applying a profile updates the visible analysis controls and passes the selected core profile to new runs.
+The Timelapsed module lists the profiles bundled with the installed `timelapsed-hrpqct` package, including standard, XCT1 standard, ETH/UofC, pediatric fracture, and workflow profiles such as multistack.
+Selecting a profile does not change the current view until `Apply profile` is clicked. Applying a profile updates the visible analysis controls, refreshes the loaded remodelling image when one is selected, and passes the selected core profile to new runs.
 After loading a saved remodelling image, the module exposes the key review parameters used by the pipeline: threshold, cluster size, analysis method, pair mode, full-mask dilation, marrow-mask erosion, Gaussian filtering, and Gaussian sigma.
-When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
+By default, loaded remodelling images update only when `Update remodelling image` or `Apply profile` is clicked. When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk, so exploratory threshold/filter changes do not require rerunning the full command-line analysis.
 The series summary panel can load saved cohort-level pairwise outputs and export the available cohort rows with subject/site, timepoint pair, compartment, formation volume fraction (`FV/BV`), resorption volume fraction (`RV/BV`), net change volume fraction (`NV/BV = FV/BV - RV/BV`), and active volume fraction (`AV/BV = FV/BV + RV/BV`).
 When scan interval metadata is already present in pairwise outputs, the export also carries `scan_period_days` and `scan_period_years`; these interval fields are reported for context and are not used to normalize remodelling metrics.
 Mask segmentation can be generated with adaptive, seg_gauss, or Laplace-Hamming binarization.
@@ -209,7 +209,7 @@ Imported AIM metadata is stored on the loaded Slicer volume. The processing log 
 
 ## Contours And Segmentation
 
-The `Contours and Segmentation` module wraps the core `timelapsed-hrpqct` contour-generation code. It can generate full, trabecular, cortical, and binary segmentation outputs from a selected HR-pQCT volume using radius, tibia, or knee presets. Segmentation methods include standard Gaussian thresholding, Laplace-Hamming, and adaptive thresholding. Expert thresholds and morphology settings are available in a collapsed panel for method validation and scanner-specific tuning.
+The `Contours and Segmentation` module wraps the core `timelapsed-hrpqct` contour-generation code. It can generate full, trabecular, cortical, and binary segmentation outputs from a selected HR-pQCT volume using radius, tibia, or knee presets. The interface separates bone segmentation from contour generation: choose a bone segmentation method (Gaussian, Laplace-Hamming, adaptive, or none), then choose periosteal/outer and endosteal/inner contour strategies. Standard contours follow the selected bone segmentation method as their support; the local geodesic fracture contour can be selected as the periosteal contour for radius fracture cases. Expert thresholds and morphology settings are available in a collapsed panel for method validation and scanner-specific tuning.
 
 ## Results Layout
 
@@ -273,11 +273,6 @@ Related applications using the method include:
 For multistack registration, cite:
 
 Whittier DE, Walle M, Schenk D, Atkins PR, Collins CJ, Zysset P, Lippuner K, Müller R. A multi-stack registration technique to improve measurement accuracy and precision across longitudinal HR-pQCT scans. *Bone*. 2023;176:116893. doi: 10.1016/j.bone.2023.116893.
-
-For adapted profile variants, cite the profile-specific paper when relevant:
-
-- `shriners`: Hosseinitabatabaei S, Vitienes I, Rummler M, Birkhold A, Rauch F, Willie BM. Non-invasive quantification of bone (re)modeling dynamics in adults with osteogenesis imperfecta treated with setrusumab using timelapse high-resolution peripheral-quantitative computed tomography. *Journal of Bone and Mineral Research*. 2025;40(3):348. https://academic.oup.com/jbmr/article/40/3/348/7978263
-- `ucsf`: Zhou M, Sadoughi S, Go L, Ramil G, Yu I, Saeed I, Fan B, Wu PH, Salusky IB, Nickolas TL, Ix JH, Kazakia GJ. Time-lapse HR-pQCT reliably assesses and monitors local bone turnover in patients with chronic kidney disease. *Journal of Bone and Mineral Research*. 2025;40(6):738-752. doi: 10.1093/jbmr/zjaf006.
 
 For Laplace-Hamming segmentation, refer to the Galateia Kazakia lab implementation and related work: https://github.com/gkazakia
 

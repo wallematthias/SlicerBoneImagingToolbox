@@ -1,11 +1,27 @@
 import tempfile
+import sys
+import importlib
+import inspect
+from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import ctk
 import numpy as np
 import qt
 import slicer
 import SimpleITK as sitk
+
+_TOOLBOX_ROOT = Path(__file__).resolve().parent.parent
+if str(_TOOLBOX_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TOOLBOX_ROOT))
+
+_GEODESIC_CONTOUR_LOCAL_REPO = _TOOLBOX_ROOT.parent / "hrpqct-geodesic-contour"
+_GEODESIC_CONTOUR_LOCAL_SRC = _GEODESIC_CONTOUR_LOCAL_REPO / "src"
+if _GEODESIC_CONTOUR_LOCAL_SRC.exists() and str(_GEODESIC_CONTOUR_LOCAL_SRC) not in sys.path:
+    sys.path.insert(0, str(_GEODESIC_CONTOUR_LOCAL_SRC))
+
+from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -120,6 +136,10 @@ METHOD_PRESETS = {
     },
 }
 
+SEGMENTATION_METHODS = {"seg_gauss", "adaptive", "laplace_hamming", "none"}
+PERIOSTEAL_CONTOUR_METHODS = {"standard", "geodesic_fracture", "none"}
+ENDOSTEAL_CONTOUR_METHODS = {"standard", "none"}
+
 
 class HRpQCTSegmentation(ScriptedLoadableModule):
     def __init__(self, parent):
@@ -144,8 +164,42 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         except Exception:
             return False
 
+    def is_geodesic_contour_available(self):
+        try:
+            import hrpqct_geodesic_contour  # noqa: F401
+
+            return True
+        except Exception:
+            return False
+
     def install_or_update_pipeline(self):
         slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct")
+
+    def install_or_update_geodesic_contour(self):
+        if _GEODESIC_CONTOUR_LOCAL_REPO.exists():
+            slicer.util.pip_install("edt>=2.4")
+            slicer.util.pip_install(f"--no-deps -e {_GEODESIC_CONTOUR_LOCAL_REPO}")
+        else:
+            slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir hrpqct-geodesic-contour")
+        self._reload_and_validate_geodesic_contour()
+
+    def install_or_update_contouring_dependencies(self):
+        self.install_or_update_pipeline()
+        self.install_or_update_geodesic_contour()
+
+    def _reload_and_validate_geodesic_contour(self):
+        importlib.invalidate_caches()
+        sys.modules.pop("hrpqct_geodesic_contour.core", None)
+        sys.modules.pop("hrpqct_geodesic_contour", None)
+        geodesic_contour = importlib.import_module("hrpqct_geodesic_contour")
+        contour_parameters = inspect.signature(geodesic_contour.contour).parameters
+        required_parameters = {"fill_holes", "progress_callback", "cancel_callback"}
+        missing_parameters = sorted(required_parameters.difference(contour_parameters))
+        if missing_parameters:
+            raise RuntimeError(
+                "Installed hrpqct-geodesic-contour is missing required API arguments: "
+                + ", ".join(missing_parameters)
+            )
 
     def _volume_to_sitk(self, volume_node):
         if volume_node is None:
@@ -156,12 +210,12 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 raise RuntimeError("Could not save selected Slicer volume for processing.")
             return sitk.ReadImage(str(path))
 
-    def _laplace_hamming_native_image(self, volume_node, reference_image):
+    def _laplace_hamming_support_image(self, volume_node, reference_image):
         source_path = volume_node.GetAttribute(AIM_SOURCE_ATTRIBUTE) if volume_node is not None else None
         if not source_path:
             raise ValueError(
                 "Laplace-Hamming segmentation needs the original AIM source. "
-                "Load the image with the Scanco I/O module first so native scanner values are attached."
+                "Load the image with the Scanco I/O module first so scanner-source metadata is attached."
             )
         source_path = Path(source_path)
         if not source_path.exists():
@@ -169,9 +223,9 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
 
         from timelapsedhrpqct.io.aim import read_aim
 
-        native_image, _metadata = read_aim(source_path, scaling="native")
-        native_arr = sitk.GetArrayFromImage(native_image).astype(np.int16, copy=False)
-        image = sitk.GetImageFromArray(native_arr)
+        hu_image, _metadata = read_aim(source_path, scaling="hu")
+        hu_arr = np.rint(sitk.GetArrayFromImage(hu_image)).astype(np.int16, copy=False)
+        image = sitk.GetImageFromArray(hu_arr)
         if image.GetSize() != reference_image.GetSize():
             raise ValueError(
                 "Original AIM source size does not match the selected Slicer volume. "
@@ -204,78 +258,217 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             segment_id = segmentation.GetNthSegmentID(segmentation.GetNumberOfSegments() - 1)
             segmentation.GetSegment(segment_id).SetName(segment_name)
 
+    def _geodesic_full_mask_xyz(
+        self,
+        image,
+        *,
+        params=None,
+        progress_callback=None,
+        cancel_callback=None,
+    ):
+        from hrpqct_geodesic_contour import contour
+
+        params = dict(params or {})
+        geodesic_params = dict(params.get("geodesic", {}))
+        arr_zyx = sitk.GetArrayFromImage(image)
+        arr_xyz = np.transpose(arr_zyx, (2, 1, 0))
+
+        mask_xyz, support_masks = contour(
+            arr_xyz,
+            voxel_size_mm=tuple(float(value) for value in image.GetSpacing()),
+            bone_threshold=float(geodesic_params.get("bone_threshold", 250.0)),
+            fill_holes=bool(geodesic_params.get("fill_holes", True)),
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
+        return mask_xyz.astype(bool, copy=False), len(support_masks)
+
     def generate_hrpqct_masks(
         self,
         volume_node,
         *,
         site,
-        method,
+        segmentation_method=None,
+        periosteal_contour_method="standard",
+        endosteal_contour_method="standard",
+        method=None,
         output_prefix=None,
         create_labelmaps=True,
         open_segment_editor=False,
         params=None,
+        progress_callback=None,
+        cancel_callback=None,
     ):
+        image = self._volume_to_sitk(volume_node)
+        if segmentation_method is None:
+            segmentation_method = "seg_gauss" if method is None else str(method)
+        segmentation_method = str(segmentation_method)
+        periosteal_contour_method = str(periosteal_contour_method)
+        endosteal_contour_method = str(endosteal_contour_method)
+        if segmentation_method not in SEGMENTATION_METHODS:
+            raise ValueError(f"Unsupported bone segmentation method: {segmentation_method}")
+        if periosteal_contour_method not in PERIOSTEAL_CONTOUR_METHODS:
+            raise ValueError(f"Unsupported periosteal contour method: {periosteal_contour_method}")
+        if endosteal_contour_method not in ENDOSTEAL_CONTOUR_METHODS:
+            raise ValueError(f"Unsupported endosteal contour method: {endosteal_contour_method}")
+        if periosteal_contour_method == "none" and endosteal_contour_method == "standard":
+            raise ValueError("Standard endosteal contour requires a periosteal contour.")
+
         from timelapsedhrpqct.processing.contour_generation import (
             ContourGenerationParams,
             InnerContourParams,
             OuterContourParams,
             SegmentationParams,
-            generate_seg_from_existing_masks,
+            _contour_support_binarization_xyz,
+            _ensure_bool,
+            _segment_bone_xyz,
             generate_masks_from_image,
+            inner_contour,
+            numpy_xyz_to_sitk_binary,
+            outer_contour,
+            sitk_to_numpy_xyz,
         )
 
-        image = self._volume_to_sitk(volume_node)
         params = dict(params or {})
         site_defaults = SITE_PRESETS[str(site)]
-        method_defaults = METHOD_PRESETS[str(method)]
+        method_defaults = METHOD_PRESETS.get(segmentation_method, METHOD_PRESETS["seg_gauss"])
 
         inner_params = dict(site_defaults["inner"])
         outer_params = dict(site_defaults["outer"])
         segmentation_params = dict(method_defaults)
         segmentation_params.update(params.get("segmentation", {}))
-        segmentation_params["method"] = str(method)
+        segmentation_params["method"] = "seg_gauss" if segmentation_method == "none" else segmentation_method
+        segmentation_params["enabled"] = segmentation_method != "none"
 
         inner_params.update(params.get("inner", {}))
         outer_params.update(params.get("outer", {}))
         inner_params["site"] = str(site)
 
-        segmentation_params_for_masks = dict(segmentation_params)
-        if str(method) == "laplace_hamming":
-            # Match the main TimelapsedHRpQCT pipeline: contours are generated
-            # from the selected density image, while the LH bone segmentation is
-            # generated from native Scanco AIM values using the same masks.
-            segmentation_params_for_masks["enabled"] = False
-
         contour_params = ContourGenerationParams(
-            outer=OuterContourParams(**outer_params),
-            inner=InnerContourParams(**inner_params),
-            segmentation=SegmentationParams(**segmentation_params_for_masks),
-        )
-        segmentation_only_params = ContourGenerationParams(
             outer=OuterContourParams(**outer_params),
             inner=InnerContourParams(**inner_params),
             segmentation=SegmentationParams(**segmentation_params),
         )
+        outer_options = asdict(contour_params.outer)
+        inner_options = asdict(contour_params.inner)
+        segmentation_support_params = contour_params.segmentation
 
-        generated = generate_masks_from_image(
-            image,
-            contour_params,
-            verbose=False,
-        )
-        if str(method) == "laplace_hamming":
-            lh_image, source_path = self._laplace_hamming_native_image(volume_node, image)
-            generated.seg = generate_seg_from_existing_masks(
-                image=lh_image,
-                full_mask=generated.full,
-                trab_mask=generated.trab,
-                cort_mask=generated.cort,
-                params=segmentation_only_params,
+        segmentation_image = None
+        source_path = None
+        if segmentation_method == "laplace_hamming":
+            segmentation_image, source_path = self._laplace_hamming_support_image(volume_node, image)
+
+        if (
+            periosteal_contour_method == "standard"
+            and endosteal_contour_method == "standard"
+            and segmentation_method != "none"
+        ):
+            generated = generate_masks_from_image(
+                image,
+                contour_params,
+                segmentation_image=segmentation_image,
                 verbose=False,
             )
+        else:
+            image_xyz = sitk_to_numpy_xyz(image)
+            segmentation_source = segmentation_image if segmentation_image is not None else image
+            segmentation_image_xyz = sitk_to_numpy_xyz(segmentation_source)
+            spacing_xyz = tuple(float(value) for value in image.GetSpacing())
+
+            geodesic_support_count = 0
+            outer_refine_meta = {}
+            if periosteal_contour_method == "geodesic_fracture":
+                full_xyz, geodesic_support_count = self._geodesic_full_mask_xyz(
+                    image,
+                    params=params,
+                    progress_callback=progress_callback,
+                    cancel_callback=cancel_callback,
+                )
+            elif periosteal_contour_method == "standard":
+                outer_support_xyz = _contour_support_binarization_xyz(
+                    segmentation_image_xyz,
+                    params=segmentation_support_params,
+                    spacing_xyz=spacing_xyz,
+                    role="outer",
+                )
+                full_xyz, outer_refine_meta = outer_contour(
+                    image_xyz,
+                    spacing_xyz=spacing_xyz,
+                    options=outer_options,
+                    support_mask_xyz=outer_support_xyz,
+                    verbose=False,
+                )
+            else:
+                full_xyz = np.asarray(image_xyz > 0, dtype=bool)
+
+            inner_support_xyz = _contour_support_binarization_xyz(
+                segmentation_image_xyz,
+                params=segmentation_support_params,
+                spacing_xyz=spacing_xyz,
+                full_mask_xyz=full_xyz,
+                role="inner",
+            )
+            if endosteal_contour_method == "standard":
+                trab_xyz, cort_xyz = inner_contour(
+                    image_xyz,
+                    full_xyz,
+                    site=str(site),
+                    spacing_xyz=spacing_xyz,
+                    options=inner_options,
+                    support_mask_xyz=inner_support_xyz,
+                    verbose=False,
+                )
+            else:
+                trab_xyz = np.zeros_like(full_xyz, dtype=bool)
+                cort_xyz = _ensure_bool(full_xyz)
+
+            full_xyz = _ensure_bool(full_xyz)
+            trab_xyz = _ensure_bool(trab_xyz) & full_xyz
+            cort_xyz = _ensure_bool(cort_xyz) & full_xyz
+            if segmentation_method == "none":
+                seg_xyz = np.zeros_like(full_xyz, dtype=bool)
+            elif segmentation_method in {"adaptive", "laplace_hamming"} and inner_support_xyz is not None:
+                seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
+            else:
+                seg_xyz = _segment_bone_xyz(
+                    image_xyz=segmentation_image_xyz,
+                    full_mask_xyz=full_xyz,
+                    trab_mask_xyz=trab_xyz,
+                    cort_mask_xyz=cort_xyz,
+                    params=segmentation_support_params,
+                    spacing_xyz=spacing_xyz,
+                )
+                seg_xyz = _ensure_bool(seg_xyz) & full_xyz
+
+            generated = SimpleNamespace(
+                full=numpy_xyz_to_sitk_binary(full_xyz, image),
+                trab=numpy_xyz_to_sitk_binary(trab_xyz, image),
+                cort=numpy_xyz_to_sitk_binary(cort_xyz, image),
+                seg=numpy_xyz_to_sitk_binary(seg_xyz, image),
+                metadata={
+                    "contour_method": "split_contour_generation",
+                    "segmentation_method": segmentation_method,
+                    "periosteal_contour_method": periosteal_contour_method,
+                    "endosteal_contour_method": endosteal_contour_method,
+                    "geodesic_support_mask_count": geodesic_support_count,
+                    "outer_edge_refinement": outer_refine_meta,
+                    "voxel_counts": {
+                        "seg": int(seg_xyz.sum()),
+                        "full": int(full_xyz.sum()),
+                        "trab": int(trab_xyz.sum()),
+                        "cort": int(cort_xyz.sum()),
+                    },
+                },
+            )
+
+        generated.metadata["segmentation_method"] = segmentation_method
+        generated.metadata["periosteal_contour_method"] = periosteal_contour_method
+        generated.metadata["endosteal_contour_method"] = endosteal_contour_method
+        if segmentation_method == "laplace_hamming":
             generated.metadata["segmentation_method"] = "laplace_hamming"
-            generated.metadata["segmentation_input_unit"] = "scanco_native_int16"
+            generated.metadata["segmentation_input_unit"] = "scanco_hu_int16"
             generated.metadata["segmentation_input_path"] = str(source_path)
-            generated.metadata["segmentation_input_reader"] = "timelapsedhrpqct.io.aim_native_int16"
+            generated.metadata["segmentation_input_reader"] = "py_aimio_hu_int16"
             generated.metadata["voxel_counts"]["seg"] = int(
                 sitk.GetArrayFromImage(generated.seg).astype(bool, copy=False).sum()
             )
@@ -311,11 +504,12 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
     def setup(self):
         super().setup()
         self.logic = HRpQCTSegmentationLogic()
+        self._geodesic_cancel_requested = False
         self._build_segmentation_section()
         self._build_log_section()
         self.layout.addStretch(1)
         self._apply_site_preset()
-        self._apply_method_preset()
+        self._apply_segmentation_preset()
         self._update_dependency_ui()
         self._log("Ready.")
 
@@ -326,10 +520,17 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         form = qt.QFormLayout(collapsible)
 
         self.pipelineStatusLabel = qt.QLabel()
-        self.installButton = qt.QPushButton("Install / Update timelapsed-hrpqct")
-        self.installButton.clicked.connect(self._install_pipeline)
+        self.installButton = qt.QPushButton("Install / Update contouring dependencies")
+        self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
+        self.installButton.clicked.connect(self._install_contouring_dependencies)
+        self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
+        installRowWidget = qt.QWidget()
+        installRow = qt.QHBoxLayout(installRowWidget)
+        installRow.setContentsMargins(0, 0, 0, 0)
+        installRow.addWidget(self.installButton)
+        installRow.addWidget(self.updateToolboxButton)
         form.addRow("Status", self.pipelineStatusLabel)
-        form.addRow(self.installButton)
+        form.addRow(installRowWidget)
 
         self.volumeSelector = slicer.qMRMLNodeComboBox()
         self.volumeSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
@@ -346,15 +547,33 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         self.siteCombo.currentIndexChanged.connect(self._apply_site_preset)
         form.addRow("Site preset", self.siteCombo)
 
-        self.methodCombo = qt.QComboBox()
+        self.segmentationMethodCombo = qt.QComboBox()
         for label, value in [
             ("Standard Gaussian (trab 320 / cort 450)", "seg_gauss"),
             ("Laplace-Hamming", "laplace_hamming"),
             ("Adaptive threshold", "adaptive"),
+            ("None", "none"),
         ]:
-            self.methodCombo.addItem(label, value)
-        self.methodCombo.currentIndexChanged.connect(self._apply_method_preset)
-        form.addRow("Segmentation method", self.methodCombo)
+            self.segmentationMethodCombo.addItem(label, value)
+        self.segmentationMethodCombo.currentIndexChanged.connect(self._apply_segmentation_preset)
+        form.addRow("Bone segmentation", self.segmentationMethodCombo)
+
+        self.periostealContourCombo = qt.QComboBox()
+        for label, value in [
+            ("Standard", "standard"),
+            ("Geodesic fracture", "geodesic_fracture"),
+            ("None", "none"),
+        ]:
+            self.periostealContourCombo.addItem(label, value)
+        form.addRow("Periosteal (outer) contour", self.periostealContourCombo)
+
+        self.endostealContourCombo = qt.QComboBox()
+        for label, value in [
+            ("Standard", "standard"),
+            ("None", "none"),
+        ]:
+            self.endostealContourCombo.addItem(label, value)
+        form.addRow("Endosteal (inner) contour", self.endostealContourCombo)
 
         self.outputPrefixEdit = qt.QLineEdit()
         form.addRow("Output prefix", self.outputPrefixEdit)
@@ -407,8 +626,12 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         expert_form.addRow("Min component voxels", self.minSizeSpin)
         expert_form.addRow("Keep largest", self.keepLargestCheck)
 
-        self.outerThresholdSpin = self._double_spin(-1000, 5000, 1, 300.0)
-        self.innerThresholdSpin = self._double_spin(-1000, 5000, 1, 500.0)
+        self.geodesicBoneThresholdSpin = self._double_spin(0, 5000, 1, 250.0)
+        self.geodesicFillHolesCheck = qt.QCheckBox()
+        self.geodesicFillHolesCheck.checked = True
+        expert_form.addRow("Geodesic bone threshold", self.geodesicBoneThresholdSpin)
+        expert_form.addRow("Fill geodesic holes", self.geodesicFillHolesCheck)
+
         self.trabCloseSpin = qt.QSpinBox()
         self.trabCloseSpin.minimum = 0
         self.trabCloseSpin.maximum = 200
@@ -423,8 +646,6 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         self.peelSpin.minimum = 0
         self.peelSpin.maximum = 50
         self.peelSpin.value = 3
-        expert_form.addRow("Periosteal threshold", self.outerThresholdSpin)
-        expert_form.addRow("Endosteal threshold", self.innerThresholdSpin)
         expert_form.addRow("Trab close radius", self.trabCloseSpin)
         expert_form.addRow("Periosteal kernel", self.outerKernelSpin)
         expert_form.addRow("Endosteal kernel", self.innerKernelSpin)
@@ -466,18 +687,18 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         preset = SITE_PRESETS[self.siteCombo.currentData]
         inner = preset["inner"]
         outer = preset["outer"]
-        self.outerThresholdSpin.value = float(outer["periosteal_threshold"])
-        self.innerThresholdSpin.value = float(inner["endosteal_threshold"])
         self.trabCloseSpin.value = int(inner["trabecular_close_radius"])
         self.outerKernelSpin.value = int(outer["periosteal_kernelsize"])
         self.innerKernelSpin.value = int(inner["endosteal_kernelsize"])
         self.outerOpenSpin.value = int(outer["periosteal_open_radius"])
         self.peelSpin.value = int(inner["peel"])
 
-    def _apply_method_preset(self):
-        if not hasattr(self, "methodCombo"):
+    def _apply_segmentation_preset(self):
+        if not hasattr(self, "segmentationMethodCombo"):
             return
-        preset = METHOD_PRESETS[self.methodCombo.currentData]
+        if str(self.segmentationMethodCombo.currentData) == "none":
+            return
+        preset = METHOD_PRESETS[self.segmentationMethodCombo.currentData]
         self.gaussSigmaSpin.value = float(preset["gaussian_sigma"])
         self.trabThresholdSpin.value = float(preset["trab_threshold"])
         self.cortThresholdSpin.value = float(preset["cort_threshold"])
@@ -514,31 +735,55 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
                 "laplace_hamming_backend": str(self.lhBackendCombo.currentData),
             },
             "outer": {
-                "periosteal_threshold": float(self.outerThresholdSpin.value),
                 "periosteal_kernelsize": int(self.outerKernelSpin.value),
                 "periosteal_open_radius": int(self.outerOpenSpin.value),
             },
             "inner": {
-                "endosteal_threshold": float(self.innerThresholdSpin.value),
                 "endosteal_kernelsize": int(self.innerKernelSpin.value),
                 "peel": int(self.peelSpin.value),
                 "trabecular_close_radius": int(self.trabCloseSpin.value),
+            },
+            "geodesic": {
+                "bone_threshold": float(self.geodesicBoneThresholdSpin.value),
+                "fill_holes": bool(self.geodesicFillHolesCheck.checked),
             },
         }
 
     def _create_segmentation(self):
         try:
-            if not self.logic.is_pipeline_available():
+            segmentation_method = str(self.segmentationMethodCombo.currentData)
+            periosteal_method = str(self.periostealContourCombo.currentData)
+            endosteal_method = str(self.endostealContourCombo.currentData)
+            progress_callback = None
+            cancel_callback = None
+            progress_dialog = None
+            if periosteal_method == "geodesic_fracture":
+                if not self.logic.is_geodesic_contour_available():
+                    raise RuntimeError("Install or update contouring dependencies first.")
+                progress_dialog, progress_callback, cancel_callback = self._create_geodesic_progress_dialog()
+            if (
+                segmentation_method != "none"
+                or periosteal_method == "standard"
+                or endosteal_method == "standard"
+            ) and not self.logic.is_pipeline_available():
                 raise RuntimeError("Install or update timelapsed-hrpqct first.")
-            segmentation_node, labelmaps, metadata = self.logic.generate_hrpqct_masks(
-                self.volumeSelector.currentNode(),
-                site=str(self.siteCombo.currentData),
-                method=str(self.methodCombo.currentData),
-                output_prefix=self.outputPrefixEdit.text.strip() or None,
-                create_labelmaps=bool(self.createLabelmapsCheck.checked),
-                open_segment_editor=bool(self.openEditorCheck.checked),
-                params=self._collect_params(),
-            )
+            try:
+                segmentation_node, labelmaps, metadata = self.logic.generate_hrpqct_masks(
+                    self.volumeSelector.currentNode(),
+                    site=str(self.siteCombo.currentData),
+                    segmentation_method=segmentation_method,
+                    periosteal_contour_method=periosteal_method,
+                    endosteal_contour_method=endosteal_method,
+                    output_prefix=self.outputPrefixEdit.text.strip() or None,
+                    create_labelmaps=bool(self.createLabelmapsCheck.checked),
+                    open_segment_editor=bool(self.openEditorCheck.checked),
+                    params=self._collect_params(),
+                    progress_callback=progress_callback,
+                    cancel_callback=cancel_callback,
+                )
+            finally:
+                if progress_dialog is not None:
+                    progress_dialog.close()
             counts = metadata.get("voxel_counts", {})
             label_text = f" Created {len(labelmaps)} labelmaps." if labelmaps else ""
             self._log(
@@ -549,19 +794,68 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._error(exc)
 
-    def _install_pipeline(self):
+    def _create_geodesic_progress_dialog(self):
+        self._geodesic_cancel_requested = False
+        dialog = qt.QProgressDialog(
+            "Preparing geodesic fracture contour...",
+            "Cancel",
+            0,
+            0,
+            slicer.util.mainWindow(),
+        )
+        dialog.setWindowTitle("Geodesic Fracture Contour")
+        dialog.setWindowModality(qt.Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.canceled.connect(self._request_geodesic_cancel)
+        dialog.show()
+        slicer.app.processEvents()
+
+        def progress_callback(event):
+            message = str(event.get("message") or event.get("stage") or "Working...")
+            dialog.setLabelText(message)
+            total = event.get("total")
+            current = event.get("current")
+            if total:
+                dialog.setRange(0, int(total))
+                dialog.setValue(min(int(current or 0), int(total)))
+            else:
+                dialog.setRange(0, 0)
+            slicer.app.processEvents()
+            if self._geodesic_cancel_requested or dialog.wasCanceled:
+                raise RuntimeError("Geodesic contour generation was cancelled.")
+
+        def cancel_callback():
+            slicer.app.processEvents()
+            return bool(self._geodesic_cancel_requested or dialog.wasCanceled)
+
+        return dialog, progress_callback, cancel_callback
+
+    def _request_geodesic_cancel(self):
+        self._geodesic_cancel_requested = True
+        self._log("Cancelling geodesic contour...")
+
+    def _install_contouring_dependencies(self):
         try:
-            self._log("Installing timelapsed-hrpqct...")
-            self.logic.install_or_update_pipeline()
+            self._log("Installing contouring dependencies...")
+            self.logic.install_or_update_contouring_dependencies()
             self._update_dependency_ui()
-            self._log("timelapsed-hrpqct is installed.")
+            self._log("Contouring dependencies are installed.")
         except Exception as exc:
             self._error(exc)
 
+    def _check_toolbox_updates(self):
+        run_toolbox_update_dialog(__file__, log=self._log)
+
     def _update_dependency_ui(self):
-        if self.logic.is_pipeline_available():
+        pipeline_available = self.logic.is_pipeline_available()
+        geodesic_available = self.logic.is_geodesic_contour_available()
+        if pipeline_available and geodesic_available:
             self.pipelineStatusLabel.text = "Installed"
             self.pipelineStatusLabel.styleSheet = "color: #228b22;"
+        elif pipeline_available or geodesic_available:
+            missing = "geodesic contour" if pipeline_available else "timelapsed-hrpqct"
+            self.pipelineStatusLabel.text = f"Partly installed; missing {missing}"
+            self.pipelineStatusLabel.styleSheet = "color: #cc5500;"
         else:
             self.pipelineStatusLabel.text = "Not installed"
             self.pipelineStatusLabel.styleSheet = "color: #cc5500;"

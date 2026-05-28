@@ -21,6 +21,11 @@ MODULE_VERSION = "0.1.0"
 MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
+TOOLBOX_ROOT = MODULE_DIR.parent
+if str(TOOLBOX_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLBOX_ROOT))
+
+from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
 
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
@@ -226,8 +231,15 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         form = qt.QFormLayout(collapsible)
 
         self.installButton = qt.QPushButton("Install / Update AIM I/O")
+        self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
         self.installButton.clicked.connect(self._install_core)
-        form.addRow(self.installButton)
+        self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
+        installRowWidget = qt.QWidget()
+        installRow = qt.QHBoxLayout(installRowWidget)
+        installRow.setContentsMargins(0, 0, 0, 0)
+        installRow.addWidget(self.installButton)
+        installRow.addWidget(self.updateToolboxButton)
+        form.addRow(installRowWidget)
 
         self.importPathEdit = qt.QLineEdit()
         browse = qt.QPushButton("Browse...")
@@ -466,6 +478,9 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
             self._log("AIM I/O dependency is installed.")
         except Exception as exc:
             self._error(exc)
+
+    def _check_toolbox_updates(self):
+        run_toolbox_update_dialog(__file__, log=self._log)
 
     def _import_aim(self):
         try:

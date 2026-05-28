@@ -7,6 +7,7 @@ import tempfile
 import json
 import csv
 import sys
+import importlib
 from pathlib import Path
 
 import numpy as np
@@ -25,10 +26,31 @@ for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
         pass
 
 import SimpleITK as sitk
-from TimelapsedHRpQCTLib.Reporting import (
-    PROFILE_DISPLAY_ORDER,
-    enrich_cohort_export_row,
-)
+
+_TOOLBOX_ROOT = Path(__file__).resolve().parent.parent
+if str(_TOOLBOX_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TOOLBOX_ROOT))
+_PIPELINE_LOCAL_REPO = _TOOLBOX_ROOT.parent / "TimelapsedHRpQCT"
+_PIPELINE_LOCAL_SRC = _PIPELINE_LOCAL_REPO / "src"
+if _PIPELINE_LOCAL_SRC.exists() and str(_PIPELINE_LOCAL_SRC) not in sys.path:
+    sys.path.insert(0, str(_PIPELINE_LOCAL_SRC))
+    _existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = (
+        str(_PIPELINE_LOCAL_SRC)
+        if not _existing_pythonpath
+        else str(_PIPELINE_LOCAL_SRC) + os.pathsep + _existing_pythonpath
+    )
+
+_reporting = importlib.import_module("TimelapsedHRpQCTLib.Reporting")
+if not hasattr(_reporting, "COHORT_DEFAULT_EXPORT_FIELDS"):
+    _reporting = importlib.reload(_reporting)
+COHORT_DEFAULT_EXPORT_FIELDS = _reporting.COHORT_DEFAULT_EXPORT_FIELDS
+COHORT_EXTRA_EXPORT_FIELD_SPECS = _reporting.COHORT_EXTRA_EXPORT_FIELD_SPECS
+PROFILE_DISPLAY_ORDER = _reporting.PROFILE_DISPLAY_ORDER
+default_export_filename = _reporting.default_export_filename
+enrich_cohort_export_row = _reporting.enrich_cohort_export_row
+project_rows_to_fields = _reporting.project_rows_to_fields
+from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
     ScriptedLoadableModuleWidget,
@@ -37,7 +59,7 @@ from slicer.ScriptedLoadableModule import (
 )
 
 MODULE_VERSION = "0.2.1"
-MIN_PIPELINE_VERSION = "2.0.25"
+MIN_PIPELINE_VERSION = "2.0.33"
 
 
 def _version_tuple(version_text):
@@ -92,6 +114,7 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         return ok
 
     def pipeline_status(self):
+        importlib.invalidate_caches()
         try:
             import timelapsedhrpqct
         except Exception as exc:
@@ -108,10 +131,15 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         return True, f"Installed ({version}) from {package_path}"
 
     def install_or_update_pipeline(self):
-        # Force-refresh from PyPI so "Install / Update" always pulls latest.
-        slicer.util.pip_install(
-            "--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct"
-        )
+        if (_PIPELINE_LOCAL_REPO / "pyproject.toml").exists():
+            # Local development: import from the sibling checkout directly, and install the
+            # published contour dependency without letting pip replace the local source tree.
+            slicer.util.pip_install("hrpqct-geodesic-contour>=0.1.1")
+        else:
+            # Force-refresh from PyPI so "Install / Update" always pulls latest.
+            slicer.util.pip_install(
+                "--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct"
+            )
         for name in list(sys.modules):
             if name == "timelapsedhrpqct" or name.startswith("timelapsedhrpqct."):
                 sys.modules.pop(name, None)
@@ -143,22 +171,10 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         import yaml
 
         self.cleanup_temp_files(remove_fallback=False)
-        with open(self.default_config_path(), "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-
-        def deep_update(dst, src):
-            for k, v in src.items():
-                if isinstance(v, dict) and isinstance(dst.get(k), dict):
-                    deep_update(dst[k], v)
-                else:
-                    dst[k] = v
-
-        deep_update(cfg, settings_dict)
-
         fd, path = tempfile.mkstemp(prefix="timelapsed_slicer_", suffix=".yml")
         os.close(fd)
         with open(path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(cfg, f, sort_keys=False)
+            yaml.safe_dump(settings_dict, f, sort_keys=False)
 
         self._temp_config_path = path
         return path
@@ -406,9 +422,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._temp_input_root = None
         self._mask_method_defaults = {
             "adaptive": (100.0, 300.0),
-            "seg_gauss": (225.0, 1.2),
+            "seg_gauss": (320.0, 450.0),
             "laplace_hamming": (15564.0, 70.0),
         }
+        self._seg_gauss_sigma = 0.8
         self._analysis_method = "grayscale_and_binary"
         self._analysis_erosion_voxels = 1
         self._interactive_preview_cache = {}
@@ -455,13 +472,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.pipelineStatusLabel.setMaximumWidth(260)
         self.installBtn = qt.QPushButton("Install / Update timelapsed-hrpqct")
         self.checkBtn = qt.QPushButton("Check")
+        self.updateToolboxBtn = qt.QPushButton("Check toolbox updates")
         self.installBtn.clicked.connect(self._on_install_pipeline)
         self.checkBtn.clicked.connect(self._on_check_pipeline)
+        self.updateToolboxBtn.clicked.connect(self._on_check_toolbox_updates)
         rowWidget = qt.QWidget()
         row = qt.QHBoxLayout(rowWidget)
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self.installBtn)
         row.addWidget(self.checkBtn)
+        row.addWidget(self.updateToolboxBtn)
         depForm.addRow(_label("Status", "Installed timelapsed-hrpqct package status inside Slicer Python."), self.pipelineStatusLabel)
         depForm.addRow(rowWidget)
         self.layout.addWidget(depBox)
@@ -560,6 +580,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskMethod.addItems(["adaptive", "seg_gauss", "laplace_hamming"])
         self.maskMethod.currentTextChanged.connect(self._on_mask_method_changed)
         _cap_width(self.maskMethod, 220)
+        self.maskPeriostealContour = qt.QComboBox()
+        self.maskPeriostealContour.addItem("standard", "standard")
+        self.maskPeriostealContour.addItem("geodesic_fracture", "geodesic_fracture")
+        _cap_width(self.maskPeriostealContour, 220)
         self.maskLow = ctk.ctkDoubleSpinBox()
         self.maskLow.minimum = -10000.0
         self.maskLow.maximum = 10000.0
@@ -576,9 +600,31 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.maskHigh, 220)
         self.maskLowLabel = _label("Mask lower threshold", "Lower method-specific threshold used when generating masks.")
         self.maskHighLabel = _label("Mask higher threshold", "Upper method-specific threshold or smoothing parameter used when generating masks.")
+        self.maskGeodesicThreshold = ctk.ctkDoubleSpinBox()
+        self.maskGeodesicThreshold.minimum = 0.0
+        self.maskGeodesicThreshold.maximum = 5000.0
+        self.maskGeodesicThreshold.decimals = 1
+        self.maskGeodesicThreshold.singleStep = 5.0
+        self.maskGeodesicThreshold.value = 250.0
+        _cap_width(self.maskGeodesicThreshold, 220)
+        self.maskGeodesicFillHoles = qt.QCheckBox()
+        self.maskGeodesicFillHoles.checked = True
+        _cap_width(self.maskGeodesicFillHoles, 220)
         maskForm.addRow(_label("Mask method", "Method used when automatic mask/segmentation generation is enabled."), self.maskMethod)
+        maskForm.addRow(
+            _label("Periosteal contour", "Outer/full mask contour method used during automatic mask generation."),
+            self.maskPeriostealContour,
+        )
         maskForm.addRow(self.maskLowLabel, self.maskLow)
         maskForm.addRow(self.maskHighLabel, self.maskHigh)
+        maskForm.addRow(
+            _label("Geodesic bone threshold", "Bone threshold passed to the geodesic fracture periosteal contour method."),
+            self.maskGeodesicThreshold,
+        )
+        maskForm.addRow(
+            _label("Geodesic fill holes", "Fill internal holes in the geodesic fracture periosteal mask."),
+            self.maskGeodesicFillHoles,
+        )
         self.doNotGenerateMasksCheck = qt.QCheckBox()
         self.doNotGenerateMasksCheck.checked = False
         skip_masks_tip = (
@@ -794,9 +840,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.analysisFullMaskDilation, 220)
         _cap_width(self.analysisBoneSupportDilation, 220)
         _cap_width(self.analysisMarrowMaskErosion, 220)
-        self.analysisHintLabel = qt.QLabel("Hover labels for option details.")
-        self.analysisHintLabel.wordWrap = True
-        self.analysisHintLabel.styleSheet = "color: #666666;"
         self.analysisStatusLabel = qt.QLabel("Ready")
         self.analysisStatusLabel.styleSheet = "color: #666666;"
         self.analysisPairMetricsMaskLabel = qt.QLabel("Mask: N/A")
@@ -817,7 +860,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisResorptionFractionLabel.toolTip = "Resorption volume fraction for the currently loaded/previewed comparison."
         self.analysisNetChangeFractionLabel.toolTip = "Net change volume fraction: FV/BV minus RV/BV."
         self.analysisActiveFractionLabel.toolTip = "Active volume fraction: FV/BV plus RV/BV."
-        self.runAnalysisBtn = qt.QPushButton("Update all")
+        self.runAnalysisBtn = qt.QPushButton("Rerun cohort analysis")
         self.runAnalysisBtn.toolTip = (
             "Rerun remodelling analysis for all processed samples using the current analysis options."
         )
@@ -871,9 +914,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         analysisForm.addRow(_label("Restrict changes to bone support", restrict_tip), self.analysisRestrictBoneSupportCheck)
         analysisForm.addRow(_label("Require binary reclassification", binary_tip), self.analysisBinaryReclassificationCheck)
         analysisForm.addRow(_label("Gaussian filter remodelling sites", "Smooth grayscale images before subtraction for remodelling-site detection."), self.analysisGaussianFilterCheck)
-        analysisForm.addRow(_label("Analysis actions", "Update all processed analyses or save the current loaded comparison as a scenario."), analysisActionsRow)
+        analysisForm.addRow(_label("Cohort analysis", "Rerun saved remodelling analyses for the processed cohort or save the current loaded comparison as a scenario."), analysisActionsRow)
         analysisForm.addRow(_label("Preview status", "Status of the interactive remodelling preview update."), self.analysisStatusLabel)
-        analysisForm.addRow(self.analysisHintLabel)
         advancedAnalysisForm.addRow(
             _label("Full mask dilation (vox)", "Dilation applied to full masks before common-region construction."),
             self.analysisFullMaskDilation,
@@ -1086,7 +1128,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         segRowLayout.addWidget(self.remodellingFullSegCombo, 1)
         segRowLayout.addWidget(self.remodellingRefreshBtn)
         self.remodellingAutoUpdateCheck = qt.QCheckBox()
-        self.remodellingAutoUpdateCheck.checked = True
+        self.remodellingAutoUpdateCheck.checked = False
         self.remodellingApplyInteractiveBtn = qt.QPushButton("Update remodelling image")
         _cap_width(self.remodellingAutoUpdateCheck, 180)
         _cap_width(self.remodellingApplyInteractiveBtn, 220)
@@ -1468,8 +1510,56 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         profile = self._selected_config_profile()
         return ["--profile", profile] if profile else []
 
+    def _selected_profile_enables_multistack(self):
+        profile = self._selected_config_profile()
+        if not profile:
+            return False
+        try:
+            from timelapsedhrpqct.config.loader import load_config
+
+            cfg_obj = load_config(None, profile=profile)
+            ms_cfg = getattr(cfg_obj, "multistack_correction", None)
+            return bool(getattr(ms_cfg, "enabled", False))
+        except Exception:
+            return profile in {"multistack", "ped-fx"}
+
+    def _selected_run_mode(self, sessions=None):
+        if self._selected_profile_enables_multistack():
+            return "multistack"
+        if bool(getattr(self, "useMultistackCheck", None) and self.useMultistackCheck.checked):
+            return "multistack"
+        return self._auto_mode_from_sessions(sessions)
+
+    def _selected_profile_multistack_metric(self):
+        profile = self._selected_config_profile()
+        if not profile:
+            return None
+        try:
+            from timelapsedhrpqct.config.loader import load_config
+
+            cfg_obj = load_config(None, profile=profile)
+            ms_cfg = getattr(cfg_obj, "multistack_correction", None)
+            metric = str(getattr(ms_cfg, "metric", "") or "").strip()
+            return metric or None
+        except Exception:
+            return None
+
+    def _cohort_export_profile(self):
+        profile = self._selected_config_profile()
+        return str(profile or "").strip()
+
+    def _selected_profile_config_dict(self):
+        try:
+            from dataclasses import asdict
+            from timelapsedhrpqct.config.loader import load_config
+
+            return asdict(load_config(None, profile=self._selected_config_profile()))
+        except Exception:
+            return {}
+
     def _apply_config_dict_to_controls(self, cfg, *, source_label):
         seg_cfg = ((cfg.get("masks") or {}).get("segmentation") or {})
+        outer_cfg = ((cfg.get("masks") or {}).get("outer") or {})
         method = str(seg_cfg.get("method", self.maskMethod.currentText) or self.maskMethod.currentText)
         if method == "global":
             method = "seg_gauss"
@@ -1481,15 +1571,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         adaptive_low = float(seg_cfg.get("adaptive_low_threshold", 100.0))
         adaptive_high = float(seg_cfg.get("adaptive_high_threshold", 300.0))
-        seg_gauss_threshold = float(seg_cfg.get("seg_gauss_threshold", seg_cfg.get("trab_threshold", 100.0)))
-        seg_gauss_sigma = float(seg_cfg.get("seg_gauss_sigma", seg_cfg.get("cort_threshold", 1.2)))
+        seg_gauss_threshold = float(seg_cfg.get("seg_gauss_threshold", seg_cfg.get("trab_threshold", 320.0)))
+        seg_gauss_cort_threshold = float(seg_cfg.get("cort_threshold", 450.0))
+        self._seg_gauss_sigma = float(seg_cfg.get("gaussian_sigma", seg_cfg.get("seg_gauss_sigma", 0.8)))
         laplace_hamming_threshold = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
         laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
         self._mask_method_defaults = {
             "adaptive": (adaptive_low, adaptive_high),
-            "seg_gauss": (seg_gauss_threshold, seg_gauss_sigma),
+            "seg_gauss": (seg_gauss_threshold, seg_gauss_cort_threshold),
             "laplace_hamming": (laplace_hamming_threshold, laplace_hamming_min_size),
         }
+        periosteal_method = str(outer_cfg.get("contour_method", "standard") or "standard")
+        periosteal_idx = self.maskPeriostealContour.findData(periosteal_method)
+        if periosteal_idx < 0:
+            periosteal_idx = self.maskPeriostealContour.findText(periosteal_method)
+        if periosteal_idx >= 0:
+            self.maskPeriostealContour.setCurrentIndex(periosteal_idx)
+        self.maskGeodesicThreshold.value = float(outer_cfg.get("geodesic_bone_threshold", 250.0))
+        self.maskGeodesicFillHoles.checked = bool(outer_cfg.get("geodesic_fill_holes", True))
 
         tl_cfg = cfg.get("timelapsed_registration") or {}
         ms_cfg = cfg.get("multistack_correction") or {}
@@ -1587,6 +1686,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 ) from exc
             cfg = asdict(cfg_obj)
             self._suppress_interactive_preview_updates = True
+            self.useMultistackCheck.checked = self._selected_profile_enables_multistack()
             self._apply_config_dict_to_controls(
                 cfg,
                 source_label=f"Using built-in profile <b>{profile}</b> for new runs and analysis reruns.",
@@ -1597,7 +1697,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         finally:
             self._suppress_interactive_preview_updates = False
         if applied:
-            self._queue_interactive_preview_update()
+            self._on_apply_interactive_remodelling()
 
     def _load_defaults_from_pipeline_config(self):
         if not self.logic.is_pipeline_available():
@@ -1714,18 +1814,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.maskHigh.decimals = 0
             self.maskHigh.singleStep = 1.0
         elif method == "seg_gauss":
-            self.maskLowLabel.text = "Seg threshold"
-            self.maskLowLabel.toolTip = "Density threshold used after Gaussian smoothing for standard segmentation."
-            self.maskHighLabel.text = "Gaussian sigma"
-            self.maskHighLabel.toolTip = "Gaussian smoothing sigma in voxels for standard segmentation."
+            self.maskLowLabel.text = "Trab threshold"
+            self.maskLowLabel.toolTip = "Trabecular density threshold used after Gaussian smoothing for standard segmentation."
+            self.maskHighLabel.text = "Cort threshold"
+            self.maskHighLabel.toolTip = "Cortical density threshold used after Gaussian smoothing for standard segmentation."
             self.maskLow.minimum = 0.0
             self.maskLow.maximum = 5000.0
             self.maskLow.decimals = 1
             self.maskLow.singleStep = 5.0
             self.maskHigh.minimum = 0.0
-            self.maskHigh.maximum = 10.0
-            self.maskHigh.decimals = 2
-            self.maskHigh.singleStep = 0.1
+            self.maskHigh.maximum = 5000.0
+            self.maskHigh.decimals = 1
+            self.maskHigh.singleStep = 5.0
         else:
             self.maskLowLabel.text = "Adaptive low threshold"
             self.maskLowLabel.toolTip = "Lower adaptive segmentation threshold."
@@ -1778,7 +1878,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if queue_update:
             self._queue_interactive_preview_update()
 
-    def _settings_override(self):
+    def _settings_override(self, multistack_enabled=None):
         label_map = {
             "resorption": 1,
             "demineralisation": 2,
@@ -1795,8 +1895,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         pair_mode = str(self.analysisPairModeCombo.currentData or "adjacent")
         if pair_mode not in {"adjacent", "baseline", "all_pairs"}:
             pair_mode = "adjacent"
+        if multistack_enabled is None:
+            multistack_enabled = self._selected_profile_enables_multistack() or bool(
+                getattr(self, "useMultistackCheck", None) and self.useMultistackCheck.checked
+            )
+        multistack_metric = self._selected_profile_multistack_metric() or self.regMetric.currentText
+
+        selected_profile = self._selected_config_profile()
+        profile_cfg = self._selected_profile_config_dict()
+        profile_masks_cfg = (profile_cfg.get("masks") or {}) if isinstance(profile_cfg, dict) else {}
+        profile_multistack_cfg = (
+            (profile_cfg.get("multistack_correction") or {}) if isinstance(profile_cfg, dict) else {}
+        )
 
         mask_method = str(self.maskMethod.currentText or "adaptive")
+        if selected_profile == "ped-fx":
+            mask_method = "seg_gauss"
         mask_low = float(self.maskLow.value)
         mask_high = float(self.maskHigh.value)
         segmentation_cfg = {"method": mask_method}
@@ -1804,8 +1918,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             segmentation_cfg.update(
                 {
                     "trab_threshold": mask_low,
-                    "cort_threshold": mask_low,
-                    "gaussian_sigma": mask_high,
+                    "cort_threshold": mask_high,
+                    "gaussian_sigma": float(getattr(self, "_seg_gauss_sigma", 0.8)),
                 }
             )
         elif mask_method == "laplace_hamming":
@@ -1822,6 +1936,35 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     "adaptive_high_threshold": mask_high,
                 }
             )
+        periosteal_contour_method = str(self.maskPeriostealContour.currentData or "standard")
+        if selected_profile == "ped-fx":
+            periosteal_contour_method = "geodesic_fracture"
+        outer_cfg = {
+            "contour_method": periosteal_contour_method,
+            "geodesic_bone_threshold": float(self.maskGeodesicThreshold.value),
+            "geodesic_fill_holes": bool(self.maskGeodesicFillHoles.checked),
+        }
+        masks_override = {
+            "outer": outer_cfg,
+            "segmentation": segmentation_cfg,
+        }
+        if isinstance(profile_masks_cfg.get("roles"), list):
+            masks_override["roles"] = list(profile_masks_cfg["roles"])
+        profile_inner_cfg = profile_masks_cfg.get("inner") or {}
+        if isinstance(profile_inner_cfg, dict) and profile_inner_cfg.get("contour_method"):
+            masks_override["inner"] = {"contour_method": str(profile_inner_cfg["contour_method"])}
+        if selected_profile == "ped-fx":
+            masks_override["roles"] = ["full"]
+            masks_override["inner"] = {"contour_method": "none"}
+        initial_translation_voxels = [
+            float(self.msInitTx.value),
+            float(self.msInitTy.value),
+            float(self.msInitTz.value),
+        ]
+        if selected_profile == "ped-fx":
+            profile_initial_translation = profile_multistack_cfg.get("initial_translation_voxels")
+            if isinstance(profile_initial_translation, (list, tuple)) and len(profile_initial_translation) >= 3:
+                initial_translation_voxels = [float(v) for v in profile_initial_translation[:3]]
 
         return {
             "import": {
@@ -1829,9 +1972,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 # Keep the last partial stack to preserve data coverage.
                 "on_incomplete_stack": "keep_last",
             },
-            "masks": {
-                "segmentation": segmentation_cfg
-            },
+            "masks": masks_override,
             "timelapsed_registration": {
                 "metric": self.regMetric.currentText,
                 "sampling_percentage": float(self.tlSampling.value),
@@ -1839,16 +1980,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "number_of_iterations": int(self.tlIter.value),
             },
             "multistack_correction": {
-                "metric": self.regMetric.currentText,
+                "enabled": bool(multistack_enabled),
+                "metric": multistack_metric,
                 "sampling_percentage": float(self.msSampling.value),
                 "number_of_resolutions": int(self.msRes.value),
                 "number_of_iterations": int(self.msIter.value),
                 "overlap_crop_buffer_voxels": int(self.msOverlapBuffer.value),
-                "initial_translation_voxels": [
-                    float(self.msInitTx.value),
-                    float(self.msInitTy.value),
-                    float(self.msInitTz.value),
-                ],
+                "initial_translation_voxels": initial_translation_voxels,
             },
             "analysis": self._analysis_config_from_controls(pair_mode),
             "fusion": {
@@ -2573,7 +2711,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         imported = self._require_results_root("Could not resolve imported dataset path.")
         if imported is None:
             return
-        self._clear_stale_stack_segmentations(imported, scoped_subject, str(self.maskMethod.currentText or ""))
         self._set_stage_status("masks", "pending")
         self._is_full_pipeline_run = False
         self._run_skips_mask_generation = False
@@ -2595,45 +2732,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ],
             stages=["masks", "masks"],
         )
-
-    def _clear_stale_stack_segmentations(self, imported_root, subject_id=None, current_method=""):
-        root = Path(imported_root)
-        if subject_id:
-            subject_roots = [root / f"sub-{subject_id}"]
-        else:
-            subject_roots = sorted(root.glob("sub-*"))
-        removed = 0
-        for subject_root in subject_roots:
-            if not subject_root.exists():
-                continue
-            for metadata_path in subject_root.glob("site-*/ses-*/stacks/*.json"):
-                try:
-                    with metadata_path.open("r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                    previous_method = str(
-                        ((metadata.get("mask_generation") or {}).get("segmentation_method") or "")
-                    )
-                except Exception:
-                    previous_method = ""
-                if previous_method == str(current_method):
-                    continue
-                stem = metadata_path.with_suffix("")
-                candidates = [
-                    stem.with_name(f"{stem.name}_seg.nii.gz"),
-                    stem.with_name(f"{stem.name}_seg.mha"),
-                ]
-                for seg_path in candidates:
-                    if not seg_path.exists():
-                        continue
-                    try:
-                        seg_path.unlink()
-                        removed += 1
-                    except Exception as exc:
-                        self._show(f"[masks] could not remove stale segmentation {seg_path}: {exc}")
-        if removed:
-            self._show(
-                f"[masks] removed {removed} stale stack segmentation file(s) because the selected mask method changed."
-            )
 
     def _on_run_timelapse(self):
         if not self._require_pipeline_installed():
@@ -2658,7 +2756,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         if run_root is None:
             return
-        mode = "multistack" if bool(self.useMultistackCheck.checked) else "regular"
+        mode = self._selected_run_mode(scoped_sessions)
 
         imported = self._require_results_root()
         if imported is None:
@@ -2669,7 +2767,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._is_full_pipeline_run = False
         self._run_skips_mask_generation = False
         self._run_includes_analysis = True
-        cfg = self.logic.create_override_config(self._settings_override())
+        cfg = self.logic.create_override_config(
+            self._settings_override(multistack_enabled=(mode == "multistack"))
+        )
         self._run(
             [
                 "run",
@@ -2823,7 +2923,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         imported = self._require_results_root("Could not resolve imported dataset path.")
         if imported is None:
             return
-        mode = self._auto_mode_from_sessions(scoped_sessions)
+        mode = self._selected_run_mode(scoped_sessions)
         skip_mask_generation = bool(getattr(self, "doNotGenerateMasksCheck", None) and self.doNotGenerateMasksCheck.checked)
         if skip_mask_generation and not self._can_skip_mask_generation(
             imported,
@@ -2837,7 +2937,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "or uncheck 'Do not generate masks'. Raw provided masks/SEG files are imported and used as-is."
             )
             return
-        cfg = self.logic.create_override_config(self._settings_override())
+        cfg = self.logic.create_override_config(
+            self._settings_override(multistack_enabled=(mode == "multistack"))
+        )
         self._set_user_message(
             "info",
             "Running full pipeline",
@@ -2875,8 +2977,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         ]
         if skip_mask_generation:
             run_args.insert(6, "--skip-mask-generation")
-        else:
-            self._clear_stale_stack_segmentations(imported, scoped_subject, str(self.maskMethod.currentText or ""))
         self._run(run_args)
 
     def _on_finished(self, exit_code, exit_status):
@@ -2924,13 +3024,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_user_message("success", "Completed", "Requested step(s) finished successfully.")
 
     def _on_install_pipeline(self):
-        self._show("[dependency] Installing/updating timelapsed-hrpqct ...")
+        self._show("[dependency] Installing/updating timelapsed-hrpqct and contour dependencies ...")
         try:
             slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
             self.logic.install_or_update_pipeline()
             self._show("[dependency] Installation finished.")
             slicer.util.infoDisplay(
-                "timelapsed-hrpqct installation finished.\\n"
+                "timelapsed-hrpqct and contour dependency installation finished.\\n"
                 "If import problems persist, restart Slicer."
             )
         except Exception as exc:
@@ -2942,6 +3042,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _on_check_pipeline(self):
         self._update_dependency_ui()
 
+    def _on_check_toolbox_updates(self):
+        run_toolbox_update_dialog(__file__, log=self._show)
+
     def _dependency_status_text(self, detail):
         detail = str(detail or "")
         if detail.startswith("Installed ("):
@@ -2949,7 +3052,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if detail.startswith("Out of date"):
             return detail.split(". Imported from ", 1)[0]
         if detail.startswith("Not installed"):
-            return "Not installed"
+            return detail[:120] + "..." if len(detail) > 120 else detail
         return detail[:80] + "..." if len(detail) > 80 else detail
 
     def _update_dependency_ui(self):
@@ -3370,131 +3473,73 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     seg_id = segment_ids.GetValue(i)
                     display.SetSegmentVisibility(seg_id, True)
 
-    def _create_segmentation_from_label_array(
+    def _remodelling_color_node(self):
+        name = "TimelapsedHRpQCT_RemodellingColors"
+        existing = slicer.mrmlScene.GetFirstNodeByName(name)
+        if existing is not None:
+            return existing
+        color_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLColorTableNode", name)
+        if hasattr(color_node, "SetTypeToUser"):
+            color_node.SetTypeToUser()
+        if hasattr(color_node, "SetNumberOfColors"):
+            color_node.SetNumberOfColors(6)
+        colors = {
+            0: ("background", 0.0, 0.0, 0.0, 0.0),
+            1: ("resorption", 1.00, 0.05, 0.70, 1.0),
+            2: ("quiescent", 0.62, 0.62, 0.62, 0.32),
+            3: ("formation", 1.00, 0.48, 0.00, 1.0),
+            4: ("formation", 1.00, 0.48, 0.00, 1.0),
+            5: ("quiescent", 0.62, 0.62, 0.62, 0.32),
+        }
+        for value, color in colors.items():
+            try:
+                color_node.SetColor(int(value), color[0], float(color[1]), float(color[2]), float(color[3]), float(color[4]))
+            except Exception:
+                pass
+        try:
+            color_node.NamesInitialisedOn()
+            color_node.HideFromEditorsOn()
+        except Exception:
+            pass
+        return color_node
+
+    def _create_labelmap_from_label_array(
         self,
-        segmentation_name,
+        name,
         label_arr_zyx,
         spacing_xyz,
         origin_xyz,
         folder_item_id=None,
     ):
-        label_node = slicer.mrmlScene.AddNewNodeByClass(
-            "vtkMRMLLabelMapVolumeNode",
-            f"{segmentation_name}_tmp",
-        )
-        slicer.util.updateVolumeFromArray(label_node, label_arr_zyx)
-        label_node.SetSpacing(float(spacing_xyz[0]), float(spacing_xyz[1]), float(spacing_xyz[2]))
-        label_node.SetOrigin(float(origin_xyz[0]), float(origin_xyz[1]), float(origin_xyz[2]))
-
-        seg_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", segmentation_name)
-        seg_node.CreateDefaultDisplayNodes()
-        display = seg_node.GetDisplayNode()
-        if display is not None:
-            display.SetVisibility(False)
-        seg_node.SetReferenceImageGeometryParameterFromVolumeNode(label_node)
-        seg_logic = slicer.modules.segmentations.logic()
-        seg_logic.ImportLabelmapToSegmentationNode(label_node, seg_node)
-        slicer.mrmlScene.RemoveNode(label_node)
+        node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", name)
+        slicer.util.updateVolumeFromArray(node, label_arr_zyx.astype(np.uint8, copy=False))
+        node.SetSpacing(float(spacing_xyz[0]), float(spacing_xyz[1]), float(spacing_xyz[2]))
+        node.SetOrigin(float(origin_xyz[0]), float(origin_xyz[1]), float(origin_xyz[2]))
+        node.CreateDefaultDisplayNodes()
+        self._style_remodelling_labelmap(node)
         if folder_item_id is not None:
-            self._place_node_in_folder(seg_node, folder_item_id)
-        return seg_node
+            self._place_node_in_folder(node, folder_item_id)
+        return node
 
-    def _detail_to_surface_params(self, detail):
-        # detail=50 matches previous default behavior (0.5 / 0.5).
-        d = max(0.0, min(100.0, float(detail))) / 100.0
-        simplify = 1.0 - d
-        return simplify, simplify
-
-    def _apply_preview_surface_detail(self, seg_node, detail):
-        segmentation = seg_node.GetSegmentation()
-        if segmentation is None:
+    def _style_remodelling_labelmap(self, label_node):
+        if label_node is None:
             return
-        smoothing, decimation = self._detail_to_surface_params(detail)
-        try:
-            segmentation.SetConversionParameter("Smoothing factor", f"{float(smoothing):.4f}")
-            segmentation.SetConversionParameter("Decimation factor", f"{float(decimation):.4f}")
-        except Exception:
-            return
-        try:
-            seg_node.RemoveClosedSurfaceRepresentation()
-        except Exception:
-            pass
-        try:
-            seg_node.CreateClosedSurfaceRepresentation()
-        except Exception:
-            pass
-
-    def _style_remodelling_segmentation(self, seg_node, show2d=True, show3d=True):
-        display = seg_node.GetDisplayNode()
+        display = label_node.GetDisplayNode()
         if display is None:
-            seg_node.CreateDefaultDisplayNodes()
-            display = seg_node.GetDisplayNode()
+            label_node.CreateDefaultDisplayNodes()
+            display = label_node.GetDisplayNode()
         if display is None:
             return
+        color_node = self._remodelling_color_node()
+        if color_node is not None and hasattr(display, "SetAndObserveColorNodeID"):
+            display.SetAndObserveColorNodeID(color_node.GetID())
         display.SetVisibility(True)
-        display.SetVisibility2D(bool(show2d))
-        display.SetVisibility3D(bool(show3d))
-        display.SetOpacity2DFill(1.0)
-        display.SetOpacity2DOutline(0.0)
-        display.SetOpacity3D(1.0)
-        if hasattr(display, "RemoveAllViewNodeIDs"):
-            display.RemoveAllViewNodeIDs()
-
-        label_style = {
-            1: ("resorption", (1.00, 0.05, 0.70), 1.0, 1.0),  # vivid pink
-            2: ("quiescent", (0.62, 0.62, 0.62), 0.32, 0.0),  # subtle baseline support/no-change label
-            3: ("formation", (1.00, 0.48, 0.00), 1.0, 1.0),   # saturated orange
-            4: ("formation", (1.00, 0.48, 0.00), 1.0, 1.0),   # legacy 5-label support
-            5: ("quiescent", (0.62, 0.62, 0.62), 0.32, 0.0),  # subtle legacy baseline support label
-        }
-        label_name_to_value = {
-            "resorption": 1,
-            "quiescent": 2,
-            "formation": 3,
-        }
-        seg = seg_node.GetSegmentation()
-        ids = vtk.vtkStringArray()
-        seg.GetSegmentIDs(ids)
-        for i in range(ids.GetNumberOfValues()):
-            seg_id = ids.GetValue(i)
-            segment = seg.GetSegment(seg_id)
-            if segment is None:
-                continue
-            name = str(segment.GetName() or "")
-            m = re.search(r"(\d+)", name)
-            label_val = int(m.group(1)) if m else label_name_to_value.get(name.strip().lower())
-            if label_val in label_style:
-                disp_name, color, opacity2d, opacity3d = label_style[label_val]
-                segment.SetName(disp_name)
-                segment.SetColor(float(color[0]), float(color[1]), float(color[2]))
-                if hasattr(display, "SetSegmentOpacity2DFill"):
-                    display.SetSegmentOpacity2DFill(seg_id, float(opacity2d))
-                if hasattr(display, "SetSegmentOpacity2DOutline"):
-                    display.SetSegmentOpacity2DOutline(seg_id, 0.0)
-                if hasattr(display, "SetSegmentOpacity3D"):
-                    display.SetSegmentOpacity3D(seg_id, float(opacity3d))
-                if hasattr(display, "SetSegmentVisibility"):
-                    display.SetSegmentVisibility(seg_id, True)
-
-    def _create_midplane_preview(self, arr_zyx, axis, thickness_vox):
-        axis_token = str(axis).strip().lower()
-        t = max(1, int(thickness_vox))
-        half = max(0, t // 2)
-        out = np.zeros_like(arr_zyx)
-        zdim, ydim, xdim = (int(arr_zyx.shape[0]), int(arr_zyx.shape[1]), int(arr_zyx.shape[2]))
-        if axis_token == "z":
-            c = zdim // 2
-            a0, a1 = max(0, c - half), min(zdim, c + half + 1)
-            out[a0:a1, :, :] = arr_zyx[a0:a1, :, :]
-        elif axis_token == "y":
-            c = ydim // 2
-            a0, a1 = max(0, c - half), min(ydim, c + half + 1)
-            out[:, a0:a1, :] = arr_zyx[:, a0:a1, :]
-        else:
-            c = xdim // 2
-            a0, a1 = max(0, c - half), min(xdim, c + half + 1)
-            out[:, :, a0:a1] = arr_zyx[:, :, a0:a1]
-        return out
+        if hasattr(display, "SetOpacity"):
+            display.SetOpacity(1.0)
+        try:
+            slicer.util.setSliceViewerLayers(label=label_node, fit=False)
+        except Exception:
+            pass
 
     def _on_interactive_preview_control_changed(self, *_args):
         if getattr(self, "_suppress_interactive_preview_updates", False):
@@ -4089,11 +4134,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         spacing_xyz,
         origin_xyz,
         folder_item_id=None,
-        preview_axis="x",
-        preview_thickness_vox=15,
-        detail=50,
         create_full=True,
-        create_preview=True,
         source_path=None,
         interactive_cache_key=None,
         valid_mask_zyx=None,
@@ -4101,17 +4142,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     ):
         filtered_arr = self._apply_preview_label_filters(label_arr_zyx, valid_mask_zyx=valid_mask_zyx)
         full_seg = None
-        preview_seg = None
 
         if create_full:
-            full_seg = self._create_segmentation_from_label_array(
-                segmentation_name=f"{segmentation_name}_full",
+            full_seg = self._create_labelmap_from_label_array(
+                name=f"{segmentation_name}_full",
                 label_arr_zyx=filtered_arr,
                 spacing_xyz=spacing_xyz,
                 origin_xyz=origin_xyz,
                 folder_item_id=folder_item_id,
             )
-            self._style_remodelling_segmentation(full_seg, show2d=True, show3d=False)
             full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingFull", "1")
             if source_path is not None:
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(source_path).resolve()))
@@ -4120,118 +4159,20 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             if center_slices:
                 self._center_slices_on_segmentation(full_seg)
 
-        if create_preview:
-            preview_arr = self._create_midplane_preview(
-                filtered_arr,
-                axis=preview_axis,
-                thickness_vox=preview_thickness_vox,
-            )
-            preview_seg = self._create_segmentation_from_label_array(
-                segmentation_name=f"{segmentation_name}_midslice_{str(preview_axis).lower()}_{int(preview_thickness_vox)}",
-                label_arr_zyx=preview_arr,
-                spacing_xyz=spacing_xyz,
-                origin_xyz=origin_xyz,
-                folder_item_id=folder_item_id,
-            )
-            self._style_remodelling_segmentation(preview_seg, show2d=False, show3d=True)
-            preview_seg.SetAttribute("TimelapsedHRpQCT.RemodellingPreview", "1")
-            if source_path is not None:
-                preview_seg.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(source_path).resolve()))
-            preview_seg.SetAttribute("TimelapsedHRpQCT.RemodellingSourceBase", f"{segmentation_name}_full")
-            if interactive_cache_key is not None:
-                preview_seg.SetAttribute("TimelapsedHRpQCT.RemodellingInteractiveCacheKey", str(interactive_cache_key))
-            self._apply_preview_surface_detail(preview_seg, detail=detail)
-
         self._refresh_remodelling_full_selector()
-        return full_seg, preview_seg
+        return full_seg, None
 
     def _refresh_remodelling_full_selector(self):
         self.remodellingFullSegCombo.clear()
         scene = slicer.mrmlScene
-        for i in range(scene.GetNumberOfNodesByClass("vtkMRMLSegmentationNode")):
-            node = scene.GetNthNodeByClass(i, "vtkMRMLSegmentationNode")
-            if node is None:
-                continue
-            if not str(node.GetAttribute("TimelapsedHRpQCT.RemodellingFull") or "") == "1":
-                continue
-            self.remodellingFullSegCombo.addItem(node.GetName(), node.GetID())
-
-    def _remove_existing_preview_for_full(self, full_seg_node):
-        base = str(full_seg_node.GetName() or "")
-        if base.endswith("_full"):
-            prefix = base[:-5] + "_midslice_"
-        else:
-            prefix = base + "_midslice_"
-        to_remove = []
-        scene = slicer.mrmlScene
-        for i in range(scene.GetNumberOfNodesByClass("vtkMRMLSegmentationNode")):
-            node = scene.GetNthNodeByClass(i, "vtkMRMLSegmentationNode")
-            if node is None:
-                continue
-            if str(node.GetName() or "").startswith(prefix):
-                to_remove.append(node)
-        for node in to_remove:
-            slicer.mrmlScene.RemoveNode(node)
-
-    def _on_update_remodelling_preview(self):
-        node_id = self.remodellingFullSegCombo.currentData
-        if node_id is None:
-            slicer.util.warningDisplay("No remodelling full segmentation selected.")
-            return
-        full_seg = slicer.mrmlScene.GetNodeByID(str(node_id))
-        if full_seg is None:
-            slicer.util.warningDisplay("Selected remodelling segmentation no longer exists.")
-            return
-        source_path = str(full_seg.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
-        if not source_path:
-            slicer.util.warningDisplay("Selected segmentation is missing source path metadata.")
-            return
-        source = Path(source_path)
-        if not source.exists():
-            slicer.util.warningDisplay(f"Source file not found:\n{source}")
-            return
-        sh = self._subject_hierarchy()
-        folder_id = None
-        if sh is not None:
-            item_id = sh.GetItemByDataNode(full_seg)
-            if item_id:
-                folder_id = sh.GetItemParent(item_id)
-        base_name = str(full_seg.GetName() or "")
-        if base_name.endswith("_full"):
-            base_name = base_name[:-5]
-        self._remove_existing_preview_for_full(full_seg)
-        cache_key = str(full_seg.GetAttribute("TimelapsedHRpQCT.RemodellingInteractiveCacheKey") or "")
-        cache_entry = self._interactive_preview_cache.get(cache_key) if cache_key else None
-        if cache_entry is not None and cache_entry.get("current_label_arr") is not None:
-            _full, preview_seg = self._create_remodelling_segmentations_from_array(
-                segmentation_name=base_name,
-                label_arr_zyx=cache_entry["current_label_arr"],
-                spacing_xyz=cache_entry["spacing_xyz"],
-                origin_xyz=cache_entry["origin_xyz"],
-                folder_item_id=folder_id,
-                preview_axis="x",
-                preview_thickness_vox=15,
-                detail=50,
-                create_full=False,
-                create_preview=True,
-                source_path=source,
-                interactive_cache_key=cache_key,
-                valid_mask_zyx=cache_entry.get("valid_mask"),
-            )
-            ok = preview_seg is not None
-        else:
-            ok = self._load_remodelling_as_segmentation(
-                segmentation_name=base_name,
-                labelmap_path=source,
-                folder_item_id=folder_id,
-                preview_axis="x",
-                preview_thickness_vox=15,
-                detail=50,
-                create_full=False,
-                create_preview=True,
-            )
-        if ok:
-            self._show("[load] remodelling midslice preview updated.")
+        for class_name in ("vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
+            for i in range(scene.GetNumberOfNodesByClass(class_name)):
+                node = scene.GetNthNodeByClass(i, class_name)
+                if node is None:
+                    continue
+                if not str(node.GetAttribute("TimelapsedHRpQCT.RemodellingFull") or "") == "1":
+                    continue
+                self.remodellingFullSegCombo.addItem(node.GetName(), node.GetID())
 
     def _on_apply_interactive_remodelling(self):
         if self.logic.is_running():
@@ -4305,17 +4246,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 spacing_xyz=preview_inputs["spacing_xyz"],
                 origin_xyz=preview_inputs["origin_xyz"],
                 folder_item_id=folder_id,
-                preview_axis="x",
-                preview_thickness_vox=15,
-                detail=50,
                 create_full=True,
-                create_preview=False,
                 source_path=source_path,
                 interactive_cache_key=preview_inputs["cache_key"],
                 valid_mask_zyx=preview.valid_mask,
                 center_slices=False,
             )
-            self._remove_existing_preview_for_full(full_seg)
             slicer.mrmlScene.RemoveNode(full_seg)
             if new_full is not None:
                 idx = self.remodellingFullSegCombo.findData(new_full.GetID())
@@ -4546,6 +4482,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _read_saved_pairwise_cohort_rows(self, imported, selected_pairs=None):
         from timelapsedhrpqct.dataset.derivative_paths import (
+            analysis_metadata_path,
             pairwise_remodelling_csv_path,
         )
 
@@ -4557,6 +4494,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             pairwise_path = pairwise_remodelling_csv_path(imported, subject_id, site)
             if not pairwise_path.exists():
                 continue
+            metadata_profile = ""
+            try:
+                meta_path = analysis_metadata_path(imported, subject_id, site)
+                if meta_path.exists():
+                    metadata_profile = str((json.loads(meta_path.read_text(encoding="utf-8")) or {}).get("profile") or "")
+            except Exception as exc:
+                self._show(f"[export] could not read analysis metadata profile for sub-{subject_id} site-{site}: {exc}")
             with pairwise_path.open("r", encoding="utf-8", newline="") as f:
                 for row in csv.DictReader(f):
                     compartment = str(row.get("compartment", "")).strip()
@@ -4571,6 +4515,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                             "subject_id": subject_id,
                             "site": site,
                             "compartment": compartment,
+                            "profile": row.get("profile") or row.get("config_profile") or metadata_profile or self._cohort_export_profile(),
                             "t0": row.get("t0"),
                             "t1": row.get("t1"),
                             "pair_key": pair_key,
@@ -4625,36 +4570,110 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         path.parent.mkdir(parents=True, exist_ok=True)
         wb.save(str(path))
 
+    def _select_cohort_export_options(self, rows, default_path):
+        available = set()
+        for row in rows:
+            available.update(row.keys())
+
+        default_fields = list(COHORT_DEFAULT_EXPORT_FIELDS)
+
+        extra_specs = [
+            (field, tooltip)
+            for field, tooltip in COHORT_EXTRA_EXPORT_FIELD_SPECS
+            if field in available and field not in default_fields
+        ]
+        dialog = qt.QDialog(slicer.util.mainWindow())
+        dialog.setWindowTitle("Export Timelapsed HR-pQCT Results")
+        layout = qt.QVBoxLayout(dialog)
+
+        message = qt.QLabel(
+            "The CSV will include the standard reporting fields. "
+            "Optionally add extra diagnostic or provenance fields."
+        )
+        message.wordWrap = True
+        layout.addWidget(message)
+
+        path_row = qt.QHBoxLayout()
+        path_edit = qt.QLineEdit()
+        path_edit.text = str(default_path)
+        browse_button = qt.QPushButton("Browse...")
+        path_row.addWidget(path_edit)
+        path_row.addWidget(browse_button)
+        layout.addLayout(path_row)
+
+        def _browse_output_path():
+            result = qt.QFileDialog.getSaveFileName(
+                dialog,
+                "Export Timelapsed HR-pQCT Results",
+                path_edit.text,
+                "CSV files (*.csv);;Excel workbook (*.xlsx)",
+            )
+            if isinstance(result, (tuple, list)):
+                selected = result[0] if result else ""
+            else:
+                selected = result
+            if str(selected).strip():
+                path_edit.text = str(selected)
+
+        browse_button.clicked.connect(_browse_output_path)
+
+        checkboxes = []
+        if extra_specs:
+            scroll = qt.QScrollArea()
+            scroll.setWidgetResizable(True)
+            content = qt.QWidget()
+            form = qt.QFormLayout(content)
+            for field, tooltip in extra_specs:
+                checkbox = qt.QCheckBox(field)
+                checkbox.toolTip = tooltip
+                form.addRow(checkbox)
+                checkboxes.append((field, checkbox))
+            scroll.setWidget(content)
+            scroll.setMinimumHeight(260)
+            layout.addWidget(scroll)
+
+        button_row = qt.QHBoxLayout()
+        button_row.addStretch(1)
+        cancel_button = qt.QPushButton("Cancel")
+        save_button = qt.QPushButton("Export CSV")
+        cancel_button.connect("clicked()", dialog, "reject()")
+        save_button.connect("clicked()", dialog, "accept()")
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(save_button)
+        layout.addLayout(button_row)
+
+        if dialog.exec_() != qt.QDialog.Accepted:
+            return None
+        selected_path = Path(str(path_edit.text).strip())
+        if not str(selected_path).strip():
+            return None
+        fields = default_fields + [field for field, checkbox in checkboxes if bool(checkbox.checked)]
+        return fields, selected_path
+
     def _on_export_study_summary(self):
         imported = self._imported_dataset_root()
         if imported is None:
             self._set_series_summary_saved_state("Results root not available.")
             return
         try:
-            export_cohort_rows = self._read_saved_pairwise_cohort_rows(imported)
+            selected_pairs = self._selected_series_adjacent_pairs()
+            export_cohort_rows = self._read_saved_pairwise_cohort_rows(imported, selected_pairs=selected_pairs)
         except Exception as exc:
             self._set_series_summary_saved_state(f"Could not read cohort rows: {exc}")
+            slicer.util.warningDisplay(f"Could not read cohort rows:\n{exc}")
             return
         if not export_cohort_rows:
             self._set_series_summary_saved_state("No saved cohort rows found to export.")
             return
 
         default_dir = imported if imported is not None else Path.home()
-        default_path = default_dir / "cohort_rows.csv"
-        result = qt.QFileDialog.getSaveFileName(
-            slicer.util.mainWindow(),
-            "Export Cohort Rows",
-            str(default_path),
-            "CSV files (*.csv);;Excel workbook (*.xlsx)",
-        )
-        if isinstance(result, (tuple, list)):
-            selected = result[0] if result else ""
-        else:
-            selected = result
-        if not str(selected).strip():
+        default_path = default_dir / default_export_filename("timelapsed_hrpqct_results")
+        export_options = self._select_cohort_export_options(export_cohort_rows, default_path)
+        if export_options is None:
             return
+        export_fields, selected_path = export_options
+        export_rows = project_rows_to_fields(export_cohort_rows, export_fields)
 
-        selected_path = Path(str(selected))
         if selected_path.suffix.lower() == ".xlsx":
             csv_path = selected_path.with_suffix(".csv")
         elif selected_path.suffix:
@@ -4663,7 +4682,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             csv_path = selected_path.with_suffix(".csv")
 
         try:
-            self._write_csv_rows(csv_path, export_cohort_rows)
+            self._write_csv_rows(csv_path, export_rows)
         except Exception as exc:
             self._set_series_summary_saved_state(f"CSV export failed: {exc}")
             return
@@ -4674,7 +4693,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._write_xlsx_rows(
                     selected_path,
                     [
-                        ("cohort_rows", export_cohort_rows),
+                        ("timelapsed_results", export_rows),
                     ],
                 )
                 xlsx_message = f" XLSX: {selected_path}"
@@ -4799,11 +4818,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         segmentation_name,
         labelmap_path,
         folder_item_id=None,
-        preview_axis="x",
-        preview_thickness_vox=15,
-        detail=50,
         create_full=True,
-        create_preview=True,
     ):
         try:
             remodelling_img = sitk.ReadImage(str(labelmap_path))
@@ -4817,20 +4832,36 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         spacing_xyz = (float(spacing[0]), float(spacing[1]), float(spacing[2]))
         origin_xyz = (float(origin[0]), float(origin[1]), float(origin[2]))
         valid_mask = self._get_valid_mask_for_source(labelmap_path)
+        reference_node = None
+        try:
+            reference_node = self._create_scalar_node_from_array(
+                f"{segmentation_name}_slice_reference",
+                np.zeros_like(remodelling_arr, dtype=np.uint8),
+                spacing_xyz,
+                origin_xyz,
+            )
+            reference_node.SetAttribute("TimelapsedHRpQCT.SliceReference", "1")
+            if folder_item_id is not None:
+                self._place_node_in_folder(reference_node, folder_item_id)
+            display = reference_node.GetDisplayNode()
+            if display is not None:
+                display.SetVisibility(False)
+            slicer.util.setSliceViewerLayers(background=reference_node, fit=False)
+        except Exception as exc:
+            self._show(f"[load] could not create remodelling slice reference: {exc}")
         self._create_remodelling_segmentations_from_array(
             segmentation_name=segmentation_name,
             label_arr_zyx=remodelling_arr,
             spacing_xyz=spacing_xyz,
             origin_xyz=origin_xyz,
             folder_item_id=folder_item_id,
-            preview_axis=preview_axis,
-            preview_thickness_vox=preview_thickness_vox,
-            detail=detail,
             create_full=create_full,
-            create_preview=create_preview,
             source_path=labelmap_path,
             valid_mask_zyx=valid_mask,
+            center_slices=False,
         )
+        if reference_node is not None:
+            self._center_slices_on_node(reference_node, fit_to_bounds=True)
         return True
 
     def _center_slices_on_segmentation(self, seg_node):
@@ -5365,11 +5396,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         seg_name,
                         Path(p),
                         folder_item_id=folder_id,
-                        preview_axis="x",
-                        preview_thickness_vox=15,
-                        detail=50,
                         create_full=True,
-                        create_preview=False,
                     )
                     if ok:
                         loaded += 1

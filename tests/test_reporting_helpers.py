@@ -9,8 +9,11 @@ MODULE_DIR = Path(__file__).resolve().parents[1] / "TimelapsedHRpQCT"
 sys.path.insert(0, str(MODULE_DIR))
 
 from TimelapsedHRpQCTLib.Reporting import (  # noqa: E402
+    COHORT_DEFAULT_EXPORT_FIELDS,
     PROFILE_DISPLAY_ORDER,
+    default_export_filename,
     enrich_cohort_export_row,
+    project_rows_to_fields,
 )
 from TimelapsedHRpQCTReporting import (  # noqa: E402
     PROFILE_DISPLAY_ORDER as LEGACY_PROFILE_DISPLAY_ORDER,
@@ -20,7 +23,9 @@ from TimelapsedHRpQCTReporting import (  # noqa: E402
 
 def test_profile_order_leads_with_eth_uofc_then_multistack() -> None:
     assert PROFILE_DISPLAY_ORDER[:2] == ["eth-uofc", "multistack"]
-    assert PROFILE_DISPLAY_ORDER.index("shriners") < PROFILE_DISPLAY_ORDER.index("ucsf")
+    assert PROFILE_DISPLAY_ORDER.index("ped-fx") < PROFILE_DISPLAY_ORDER.index("standard")
+    assert "shriners" not in PROFILE_DISPLAY_ORDER
+    assert "ucsf" not in PROFILE_DISPLAY_ORDER
 
 
 def test_legacy_reporting_module_reexports_helpers() -> None:
@@ -72,14 +77,56 @@ def test_enrich_cohort_export_row_derives_scan_period_from_dates() -> None:
     assert enriched["scan_period_days"] == 90.0
 
 
+def test_cohort_default_export_fields_are_curated_for_end_users() -> None:
+    assert "formation_volume_fraction" in COHORT_DEFAULT_EXPORT_FIELDS
+    assert "resorption_volume_fraction" in COHORT_DEFAULT_EXPORT_FIELDS
+    assert "net_change_volume_fraction" in COHORT_DEFAULT_EXPORT_FIELDS
+    assert "active_volume_fraction" in COHORT_DEFAULT_EXPORT_FIELDS
+    assert "FV_BV" not in COHORT_DEFAULT_EXPORT_FIELDS
+    assert "RV_BV" not in COHORT_DEFAULT_EXPORT_FIELDS
+    assert "formation_vox" not in COHORT_DEFAULT_EXPORT_FIELDS
+
+
+def test_project_rows_to_fields_keeps_selected_order_and_blanks_missing_values() -> None:
+    rows = [
+        {
+            "subject_id": "S1",
+            "compartment": "full",
+            "formation_volume_fraction": 0.1,
+            "resorption_volume_fraction": 0.02,
+            "formation_vox": 12,
+        }
+    ]
+
+    projected = project_rows_to_fields(rows, ["subject_id", "compartment", "missing", "formation_vox"])
+
+    assert projected == [
+        {
+            "subject_id": "S1",
+            "compartment": "full",
+            "missing": "",
+            "formation_vox": 12,
+        }
+    ]
+
+
+def test_default_export_filename_uses_timestamp_and_clear_prefix() -> None:
+    from datetime import datetime
+
+    assert (
+        default_export_filename("timelapsed_hrpqct_results", now=datetime(2026, 5, 22, 14, 3, 4))
+        == "timelapsed_hrpqct_results_20260522_140304.csv"
+    )
+
+
 def test_method_citations_are_documented_without_ui_citation_text() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
     module_text = (repo_root / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py").read_text(encoding="utf-8")
 
     assert "## Method Citations" in readme
-    assert "Hosseinitabatabaei" in readme
-    assert "Zhou M" in readme
+    assert "Hosseinitabatabaei" not in readme
+    assert "Zhou M" not in readme
     assert "Galateia Kazakia lab" in readme
     assert "Motion grading of high-resolution quantitative computed tomography" in readme
     assert "Hosseinitabatabaei" not in module_text

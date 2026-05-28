@@ -7,13 +7,54 @@ from math import isfinite
 PROFILE_DISPLAY_ORDER = [
     "eth-uofc",
     "multistack",
+    "ped-fx",
     "standard",
     "single-stack",
     "low-memory",
     "xct1-standard",
-    "shriners",
-    "ucsf",
 ]
+
+COHORT_DEFAULT_EXPORT_FIELDS = (
+    "subject_id",
+    "site",
+    "compartment",
+    "profile",
+    "t0",
+    "t1",
+    "threshold",
+    "cluster_min_size",
+    "formation_volume_fraction",
+    "resorption_volume_fraction",
+    "net_change_volume_fraction",
+    "active_volume_fraction",
+    "BVTV_t0",
+    "BVTV_t1",
+    "followup_days",
+)
+
+COHORT_EXTRA_EXPORT_FIELD_SPECS = (
+    ("scan_period_years", "Scan interval in years, reported for context and not used for normalization."),
+    ("scan_date_t0", "Baseline scan date, when available in the saved pairwise output."),
+    ("scan_date_t1", "Follow-up scan date, when available in the saved pairwise output."),
+    ("pair_key", "Session comparison key used to identify the baseline-to-follow-up pair."),
+    ("fraction_denominator_vox", "Bone-volume denominator voxel count used for remodelling fractions."),
+    ("TV_valid_vox", "Valid total-volume voxel count in the common analysis region."),
+    ("BV0_vox", "Baseline bone voxel count."),
+    ("BV1_vox", "Follow-up bone voxel count."),
+    ("real_overlap_vox", "Voxel count in the real overlapping scan region."),
+    ("real_overlap_frac_of_union", "Real overlap as a fraction of the scan-region union."),
+    ("formation_vox", "Formation event voxel count after thresholding and cluster filtering."),
+    ("resorption_vox", "Resorption event voxel count after thresholding and cluster filtering."),
+    ("formation_n_clusters", "Number of retained formation clusters."),
+    ("resorption_n_clusters", "Number of retained resorption clusters."),
+    ("formation_largest_cluster_vox", "Largest retained formation cluster size in voxels."),
+    ("resorption_largest_cluster_vox", "Largest retained resorption cluster size in voxels."),
+    ("mean_inside_valid_t0", "Mean baseline density inside the valid common region."),
+    ("mean_inside_valid_t1", "Mean follow-up density inside the valid common region."),
+    ("delta_mean_valid", "Follow-up minus baseline mean density inside the valid common region."),
+    ("corr_valid", "Baseline-follow-up density correlation inside the valid common region."),
+    ("rmse_valid", "Baseline-follow-up density RMSE inside the valid common region."),
+)
 
 
 def _as_float(value):
@@ -116,4 +157,20 @@ def enrich_cohort_export_row(row):
     days = scan_period_days_from_row(row)
     enriched["scan_period_days"] = days if isfinite(days) else ""
     enriched["scan_period_years"] = days / 365.25 if isfinite(days) else ""
+    if not str(enriched.get("followup_days", "")).strip():
+        enriched["followup_days"] = enriched["scan_period_days"]
     return enriched
+
+
+def project_rows_to_fields(rows, fields):
+    selected = list(fields)
+    return [{field: row.get(field, "") for field in selected} for row in rows]
+
+
+def default_export_filename(prefix, *, now=None, suffix=".csv"):
+    timestamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    clean_prefix = str(prefix or "exported_results").strip().replace(" ", "_")
+    clean_suffix = str(suffix or ".csv")
+    if not clean_suffix.startswith("."):
+        clean_suffix = f".{clean_suffix}"
+    return f"{clean_prefix}_{timestamp}{clean_suffix}"
