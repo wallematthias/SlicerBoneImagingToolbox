@@ -860,6 +860,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisResorptionFractionLabel.toolTip = "Resorption volume fraction for the currently loaded/previewed comparison."
         self.analysisNetChangeFractionLabel.toolTip = "Net change volume fraction: FV/BV minus RV/BV."
         self.analysisActiveFractionLabel.toolTip = "Active volume fraction: FV/BV plus RV/BV."
+        self.applyAnalysisSettingsBtn = qt.QPushButton("Apply settings")
+        self.applyAnalysisSettingsBtn.toolTip = (
+            "Apply the current remodelling analysis options to the loaded comparison."
+        )
         self.runAnalysisBtn = qt.QPushButton("Rerun cohort analysis")
         self.runAnalysisBtn.toolTip = (
             "Rerun remodelling analysis for all processed samples using the current analysis options."
@@ -868,6 +872,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.saveAnalysisScenarioBtn.toolTip = (
             "Save the currently loaded remodelling comparison and current analysis options as a scenario."
         )
+        _cap_width(self.applyAnalysisSettingsBtn, 140)
         _cap_width(self.runAnalysisBtn, 180)
         _cap_width(self.saveAnalysisScenarioBtn, 180)
         thresholdRow = qt.QWidget()
@@ -905,6 +910,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         analysisActionsLayout = qt.QHBoxLayout(analysisActionsRow)
         analysisActionsLayout.setContentsMargins(0, 0, 0, 0)
         analysisActionsLayout.setSpacing(8)
+        analysisActionsLayout.addWidget(self.applyAnalysisSettingsBtn)
         analysisActionsLayout.addWidget(self.runAnalysisBtn)
         analysisActionsLayout.addWidget(self.saveAnalysisScenarioBtn)
         analysisActionsLayout.addStretch(1)
@@ -914,7 +920,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         analysisForm.addRow(_label("Restrict changes to bone support", restrict_tip), self.analysisRestrictBoneSupportCheck)
         analysisForm.addRow(_label("Require binary reclassification", binary_tip), self.analysisBinaryReclassificationCheck)
         analysisForm.addRow(_label("Gaussian filter remodelling sites", "Smooth grayscale images before subtraction for remodelling-site detection."), self.analysisGaussianFilterCheck)
-        analysisForm.addRow(_label("Cohort analysis", "Rerun saved remodelling analyses for the processed cohort or save the current loaded comparison as a scenario."), analysisActionsRow)
+        analysisForm.addRow(_label("Actions", "Apply current options to the loaded comparison, rerun cohort analysis, or save the current analysis as a scenario."), analysisActionsRow)
         analysisForm.addRow(_label("Preview status", "Status of the interactive remodelling preview update."), self.analysisStatusLabel)
         advancedAnalysisForm.addRow(
             _label("Full mask dilation (vox)", "Dilation applied to full masks before common-region construction."),
@@ -996,6 +1002,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryForm.addRow(self.seriesBasisLabel)
 
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
+        self.applyAnalysisSettingsBtn.clicked.connect(self._on_apply_interactive_remodelling)
 
         settingsLayout.addWidget(maskBox)
         settingsLayout.addWidget(registrationBox)
@@ -1574,12 +1581,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         seg_gauss_threshold = float(seg_cfg.get("seg_gauss_threshold", seg_cfg.get("trab_threshold", 320.0)))
         seg_gauss_cort_threshold = float(seg_cfg.get("cort_threshold", 450.0))
         self._seg_gauss_sigma = float(seg_cfg.get("gaussian_sigma", seg_cfg.get("seg_gauss_sigma", 0.8)))
-        laplace_hamming_threshold = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
         laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
         self._mask_method_defaults = {
             "adaptive": (adaptive_low, adaptive_high),
             "seg_gauss": (seg_gauss_threshold, seg_gauss_cort_threshold),
-            "laplace_hamming": (laplace_hamming_threshold, laplace_hamming_min_size),
+            "laplace_hamming": (15564.0, laplace_hamming_min_size),
         }
         periosteal_method = str(outer_cfg.get("contour_method", "standard") or "standard")
         periosteal_idx = self.maskPeriostealContour.findData(periosteal_method)
@@ -1801,19 +1807,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if method not in self._mask_method_defaults:
             return
         if method == "laplace_hamming":
-            self.maskLowLabel.text = "LH threshold"
-            self.maskLowLabel.toolTip = "Laplace-Hamming value threshold used to classify bone during mask generation."
+            self.maskLowLabel.visible = False
+            self.maskLow.visible = False
             self.maskHighLabel.text = "Min component voxels"
             self.maskHighLabel.toolTip = "Minimum connected component size retained by Laplace-Hamming segmentation."
-            self.maskLow.minimum = 0.0
-            self.maskLow.maximum = 100000.0
-            self.maskLow.decimals = 1
-            self.maskLow.singleStep = 100.0
             self.maskHigh.minimum = 0.0
             self.maskHigh.maximum = 1000000.0
             self.maskHigh.decimals = 0
             self.maskHigh.singleStep = 1.0
         elif method == "seg_gauss":
+            self.maskLowLabel.visible = True
+            self.maskLow.visible = True
             self.maskLowLabel.text = "Trab threshold"
             self.maskLowLabel.toolTip = "Trabecular density threshold used after Gaussian smoothing for standard segmentation."
             self.maskHighLabel.text = "Cort threshold"
@@ -1827,6 +1831,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.maskHigh.decimals = 1
             self.maskHigh.singleStep = 5.0
         else:
+            self.maskLowLabel.visible = True
+            self.maskLow.visible = True
             self.maskLowLabel.text = "Adaptive low threshold"
             self.maskLowLabel.toolTip = "Lower adaptive segmentation threshold."
             self.maskHighLabel.text = "Adaptive high threshold"
@@ -1844,9 +1850,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskHigh.value = float(high)
 
     def _queue_interactive_preview_update(self):
-        if not self.remodellingAutoUpdateCheck.checked or self.logic.is_running():
+        if self.logic.is_running():
+            return
+        if not self.remodellingAutoUpdateCheck.checked:
+            self._mark_analysis_settings_dirty()
             return
         self._interactivePreviewTimer.start()
+
+    def _mark_analysis_settings_dirty(self):
+        if not hasattr(self, "analysisStatusLabel") or self.analysisStatusLabel is None:
+            return
+        self.analysisStatusLabel.text = "Settings changed - click Apply settings"
+        self.analysisStatusLabel.styleSheet = "color: #996600;"
 
     def _set_analysis_threshold_value(self, value, *, from_slider=False, queue_update=False):
         clamped = max(0, min(1000, int(round(float(value) / 5.0) * 5)))
@@ -1925,7 +1940,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         elif mask_method == "laplace_hamming":
             segmentation_cfg.update(
                 {
-                    "laplace_hamming_threshold": mask_low,
                     "laplace_hamming_min_size_voxels": int(mask_high),
                 }
             )
@@ -2034,6 +2048,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for btn in [
             self.runMasksBtn,
             self.runTimelapseBtn,
+            self.applyAnalysisSettingsBtn,
             self.runAnalysisBtn,
             self.seriesSummaryExportBtn,
             self.saveAnalysisScenarioBtn,
@@ -2058,6 +2073,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.analysisMarrowMaskErosion,
             self.analysisGaussianFilterCheck,
             self.analysisGaussianSigma,
+            self.applyAnalysisSettingsBtn,
             self.remodellingApplyInteractiveBtn,
             self.remodellingAutoUpdateCheck,
             self.seriesSummaryUpdateBtn,
@@ -3544,7 +3560,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _on_interactive_preview_control_changed(self, *_args):
         if getattr(self, "_suppress_interactive_preview_updates", False):
             return
-        if not self.remodellingAutoUpdateCheck.checked or self.logic.is_running():
+        if self.logic.is_running():
+            return
+        if not self.remodellingAutoUpdateCheck.checked:
+            self._mark_analysis_settings_dirty()
             return
         self._interactivePreviewTimer.start()
 
