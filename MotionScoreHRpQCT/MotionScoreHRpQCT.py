@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -35,7 +36,7 @@ from slicer.ScriptedLoadableModule import (
 )
 
 
-MODULE_VERSION = "0.1.6"
+MODULE_VERSION = "0.1.7"
 MIN_CORE_VERSION = "2.5.8"
 DEFAULT_MODEL_CATALOG_URL = (
     "https://github.com/wallematthias/MotionScoreHRpQCT/releases/latest/download/model_catalog.json"
@@ -218,6 +219,11 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._model_audit_rows = {}
         self._live_review_timer = None
         self._live_review_refreshing = False
+        self._preload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motionscore-preload")
+        self._preload_future = None
+        self._preload_future_scan_id = ""
+        self._preload_timer = None
+        self._preload_cache = {}
 
     def setup(self):
         super().setup()
@@ -439,6 +445,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.autoLoadCheck = qt.QCheckBox("Auto-load selected scan")
         self.autoLoadCheck.setChecked(True)
         self.autoLoadCheck.setToolTip("Automatically load/reload the selected scan to reduce clicks.")
+        self.preloadNextScanCheck = qt.QCheckBox("Preload next scan")
+        self.preloadNextScanCheck.setChecked(bool(int(self._settings().value("MotionScore/PreloadNextScan", 1) or 1)))
+        self.preloadNextScanCheck.setToolTip("Read the next AIM in the background so grading can advance more smoothly.")
 
         reviewActionRow = qt.QHBoxLayout()
         self.backButton = qt.QPushButton("Back")
@@ -477,6 +486,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         additionalForm.addRow("Fast: Every N-th Slice", self.sliceStepSpin)
         additionalForm.addRow("Run Scope", self.runScopeCombo)
         additionalForm.addRow("Auto Load", self.autoLoadCheck)
+        additionalForm.addRow("Review Buffer", self.preloadNextScanCheck)
         additionalLayout.addLayout(additionalForm)
 
         additionalRunButtons = qt.QHBoxLayout()
@@ -629,6 +639,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.datasetPathEdit.currentPathChanged.connect(self.onDatasetPathChanged)
         self.trainingModeCheck.toggled.connect(self.onTrainingModeToggled)
         self.forcePredictCheck.toggled.connect(self._persist_runtime_settings)
+        self.preloadNextScanCheck.toggled.connect(self._on_preload_setting_changed)
         self.reviewerEdit.editingFinished.connect(self._persist_reviewer_setting)
         self.deviceCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.runModeCombo.currentTextChanged.connect(self._persist_runtime_settings)
@@ -656,6 +667,18 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_model_profiles()
         qt.QTimer.singleShot(0, self._install_slice_observer)
         qt.QTimer.singleShot(0, self._install_profile_wheel_filter)
+
+    def cleanup(self):
+        self._clear_preload_cache()
+        try:
+            if self._preload_timer is not None:
+                self._preload_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._preload_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
 
     def _install_profile_wheel_filter(self):
         try:
@@ -697,6 +720,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._settings().setValue("MotionScore/SliceStep", int(self.sliceStepSpin.value))
         force_attr = self.forcePredictCheck.checked
         self._settings().setValue("MotionScore/ReprocessExisting", 1 if bool(force_attr() if callable(force_attr) else force_attr) else 0)
+        preload_attr = self.preloadNextScanCheck.checked
+        self._settings().setValue("MotionScore/PreloadNextScan", 1 if bool(preload_attr() if callable(preload_attr) else preload_attr) else 0)
         self._settings().setValue("MotionScore/RetrainModelId", self.retrainModelIdEdit.text.strip())
         self._settings().setValue("MotionScore/RetrainDisplayName", self.retrainDisplayNameEdit.text.strip())
         self._settings().setValue("MotionScore/RetrainBaseModel", self._selected_retrain_base_model_id())
@@ -729,6 +754,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _auto_load_enabled(self):
         checked_attr = self.autoLoadCheck.checked
+        return bool(checked_attr() if callable(checked_attr) else checked_attr)
+
+    def _preload_enabled(self):
+        checked_attr = self.preloadNextScanCheck.checked
         return bool(checked_attr() if callable(checked_attr) else checked_attr)
 
     def _set_selected_manual_grade(self, grade, suggested=False):
@@ -1407,6 +1436,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.scanCombo.enabled = review_enabled
         self.clearReviewerCombo.enabled = enabled
         self.autoLoadCheck.enabled = review_enabled
+        self.preloadNextScanCheck.enabled = review_enabled
         self.prepareRetrainButton.enabled = enabled
         self.trainHeadButton.enabled = enabled
         self.trainFullButton.enabled = enabled
@@ -1853,14 +1883,18 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._run_cli(args, on_finish=self.refreshReview)
 
     def onReviewScopeChanged(self, _scope_text):
+        self._clear_preload_cache()
         self._rebuild_scan_combo(preferred_scan_id=self._combo_text(self.scanCombo))
         self._update_review_queue_label()
+        self._schedule_preload_next_scan(self._combo_text(self.scanCombo))
 
     def onConfidenceThresholdChanged(self, *_args):
         if self.logic.is_running():
             return
+        self._clear_preload_cache()
         self._rebuild_scan_combo(preferred_scan_id=self._combo_text(self.scanCombo))
         self._update_review_queue_label()
+        self._schedule_preload_next_scan(self._combo_text(self.scanCombo))
 
     def _update_review_queue_label(self):
         shown_count = len(self._scan_ids_for_scope())
@@ -1953,6 +1987,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def onDatasetPathChanged(self, *_args):
         if self.logic.is_running():
             return
+        self._clear_preload_cache()
         self._grade_history = []
         self.backButton.enabled = False
         self._refresh_model_profiles()
@@ -2083,26 +2118,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay("Cannot resolve results root")
             return
 
-        if self.logic.is_running() and self._active_task_name == "predict":
-            self._apply_manual_review_in_process(
-                derivatives=derivatives,
-                scan_id=scan_id,
-                manual_grade=manual_grade,
-                reviewer=reviewer,
-            )
-            return
-
-        args = [
-            "review-apply",
-            str(derivatives),
-            "--scan-id",
-            scan_id,
-            "--manual-grade",
-            str(manual_grade),
-            "--reviewer",
-            reviewer,
-        ]
-        self._run_cli(args, on_finish=lambda sid=scan_id: self._on_manual_applied(sid))
+        self._apply_manual_review_in_process(
+            derivatives=derivatives,
+            scan_id=scan_id,
+            manual_grade=manual_grade,
+            reviewer=reviewer,
+        )
 
     def _review_artifact_path(self, derivatives, row, key, *, required=True):
         rel = str(row.get(key, "")).strip()
@@ -2144,14 +2165,18 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"[review-apply] {scan_id}: manual={updated.get('manual_grade', '')} "
             f"final={updated.get('final_grade', '')} reviewer={reviewer}\n"
         )
-        self._refresh_review_during_predict(force=True)
-        self._on_manual_applied(scan_id)
+        self._on_manual_applied_fast(scan_id, updated)
+
+    def _on_manual_applied_fast(self, scan_id, updated_row):
+        if scan_id:
+            self._review_rows[scan_id] = dict(updated_row)
+            index_row = self._index_rows.get(scan_id, {})
+            active_model_id = str(index_row.get("model_id", "")).strip() or "base-v1"
+            self._model_review_rows.setdefault(scan_id, {})[active_model_id] = dict(updated_row)
+        self._refresh_and_load_next(previous_scan_id=scan_id, refresh=False)
 
     def _on_manual_applied(self, scan_id):
-        if scan_id:
-            self._grade_history.append(scan_id)
-        self.backButton.enabled = bool(self._grade_history)
-        self._refresh_and_load_next(previous_scan_id=scan_id)
+        self._refresh_and_load_next(previous_scan_id=scan_id, refresh=True)
 
     def onProfileModelChanged(self, *_args):
         scan_id = self._combo_text(self.scanCombo)
@@ -2389,11 +2414,21 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         primary_error = None
         loaded_node = None
-        try:
-            loaded_node = slicer.util.loadVolume(raw_path)
-        except Exception as exc:
-            primary_error = exc
-            self._log(f"[load] native volume load failed for {raw_path}: {exc}\n")
+        preloaded = self._try_get_preloaded_scan(scan_id)
+        if preloaded:
+            try:
+                loaded_node = self._load_preloaded_aim(preloaded)
+                self._log(f"[preload] used cached scan: {scan_id}\n")
+            except Exception as exc:
+                primary_error = exc
+                self._log(f"[preload] cached load failed for {scan_id}: {exc}\n")
+
+        if loaded_node is None:
+            try:
+                loaded_node = slicer.util.loadVolume(raw_path)
+            except Exception as exc:
+                primary_error = exc
+                self._log(f"[load] native volume load failed for {raw_path}: {exc}\n")
 
         if loaded_node is None or loaded_node is False:
             try:
@@ -2419,6 +2454,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._loaded_scan_id = scan_id
         self._loaded_volume_node = loaded_node
         self._render_profile_plot(scan_id)
+        self._schedule_preload_next_scan(scan_id)
 
     def _remove_loaded_scan_volume(self):
         node = self._loaded_volume_node
@@ -2433,9 +2469,15 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._log(f"[load] failed to remove previous volume: {exc}\n")
 
-    def _refresh_and_load_next(self, previous_scan_id=None):
-        self.refreshReview(quiet=bool(self._active_task_name == "predict"))
+    def _refresh_and_load_next(self, previous_scan_id=None, refresh=True):
+        if refresh:
+            self.refreshReview(quiet=bool(self._active_task_name == "predict"))
+        else:
+            self._rebuild_scan_combo(preferred_scan_id="")
         self._show_training_reveal(previous_scan_id)
+        if previous_scan_id:
+            self._grade_history.append(previous_scan_id)
+        self.backButton.enabled = bool(self._grade_history)
         count_attr = self.scanCombo.count
         count = int(count_attr() if callable(count_attr) else count_attr)
         if count <= 0:
@@ -2450,8 +2492,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if idx < 0:
             idx = 0
         self.scanCombo.setCurrentIndex(idx)
-        if not self._auto_load_enabled():
-            self.onLoadSelectedScan()
+        if self._auto_load_enabled():
+            qt.QTimer.singleShot(0, self._auto_load_current_scan)
 
     def _set_run_scope_items(self, scan_ids):
         previous = self._combo_text(self.runScopeCombo)
@@ -2579,24 +2621,137 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.progressBar.value = 0
         self.progressLabel.setText("Idle")
 
-    def _load_aim_with_core(self, raw_path):
+    def _on_preload_setting_changed(self, *_args):
+        self._persist_runtime_settings()
+        if self._preload_enabled():
+            self._schedule_preload_next_scan(self._combo_text(self.scanCombo))
+        else:
+            self._clear_preload_cache()
+
+    def _read_aim_for_preload(self, scan_id, raw_path):
         from motionscore.io.aim import read_aim
 
         aim = read_aim(Path(raw_path), scaling="native")
         volume_xyz = aim.data
-        volume_kji = volume_xyz.transpose(2, 1, 0)
+        volume_kji = volume_xyz.transpose(2, 1, 0).copy()
+        return {
+            "scan_id": scan_id,
+            "raw_path": str(raw_path),
+            "node_name": Path(raw_path).stem,
+            "volume_kji": volume_kji,
+            "spacing": tuple(getattr(aim, "spacing", ()) or ()),
+            "origin": tuple(getattr(aim, "origin", ()) or ()),
+        }
 
-        node_name = Path(raw_path).stem
+    def _clear_preload_cache(self):
+        self._preload_cache = {}
+        self._preload_future_scan_id = ""
+        future = self._preload_future
+        if future is not None and not future.done():
+            try:
+                future.cancel()
+            except Exception:
+                pass
+        self._preload_future = None
+        if self._preload_timer is not None:
+            self._preload_timer.stop()
+
+    def _preload_timer_instance(self):
+        if self._preload_timer is None:
+            self._preload_timer = qt.QTimer()
+            self._preload_timer.setInterval(200)
+            self._preload_timer.timeout.connect(self._poll_preload_worker)
+        return self._preload_timer
+
+    def _next_scan_id_for_preload(self, current_scan_id):
+        scan_ids = self._scan_ids_for_scope()
+        if not scan_ids:
+            return ""
+        current = str(current_scan_id or "").strip()
+        if current in scan_ids:
+            idx = scan_ids.index(current)
+            if idx + 1 < len(scan_ids):
+                return scan_ids[idx + 1]
+            return ""
+        for scan_id in scan_ids:
+            if scan_id != self._loaded_scan_id:
+                return scan_id
+        return ""
+
+    def _schedule_preload_next_scan(self, current_scan_id=None):
+        if not self._preload_enabled():
+            self._clear_preload_cache()
+            return
+        self._poll_preload_worker()
+        next_scan_id = self._next_scan_id_for_preload(current_scan_id or self._combo_text(self.scanCombo))
+        if not next_scan_id:
+            return
+        if self._preload_cache.get("scan_id") == next_scan_id:
+            return
+        if self._preload_cache:
+            self._preload_cache = {}
+        if self._preload_future is not None and not self._preload_future.done():
+            if self._preload_future_scan_id == next_scan_id:
+                return
+            try:
+                if self._preload_future.cancel():
+                    self._preload_future = None
+                    self._preload_future_scan_id = ""
+                else:
+                    return
+            except Exception:
+                return
+
+        row = self._index_rows.get(next_scan_id, {})
+        raw_path = str(row.get("raw_image_path", "")).strip()
+        if not raw_path:
+            return
+        self._preload_future_scan_id = next_scan_id
+        self._preload_future = self._preload_executor.submit(self._read_aim_for_preload, next_scan_id, raw_path)
+        self._preload_timer_instance().start()
+        self._log(f"[preload] queued next scan: {next_scan_id}\n")
+
+    def _poll_preload_worker(self):
+        future = self._preload_future
+        if future is None or not future.done():
+            return
+        scan_id = self._preload_future_scan_id
+        self._preload_future = None
+        self._preload_future_scan_id = ""
+        if self._preload_timer is not None:
+            self._preload_timer.stop()
+        try:
+            payload = future.result()
+        except Exception as exc:
+            self._log(f"[preload] failed for {scan_id}: {exc}\n")
+            return
+        if payload.get("scan_id") not in self._scan_ids_for_scope():
+            return
+        self._preload_cache = payload
+        self._log(f"[preload] ready: {payload.get('scan_id', '')}\n")
+
+    def _try_get_preloaded_scan(self, scan_id):
+        self._poll_preload_worker()
+        if self._preload_cache.get("scan_id") != scan_id:
+            return {}
+        payload = self._preload_cache
+        self._preload_cache = {}
+        return payload
+
+    def _load_preloaded_aim(self, payload):
+        volume_kji = payload["volume_kji"]
+        node_name = payload.get("node_name") or Path(payload.get("raw_path", "")).stem
+
         node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", node_name)
         slicer.util.updateVolumeFromArray(node, volume_kji)
 
         try:
-            sx, sy, sz = aim.spacing
+            sx, sy, sz = payload.get("spacing", ())
             node.SetSpacing(float(sx), float(sy), float(sz))
         except Exception:
             pass
         try:
-            ox, oy, oz = aim.origin
+            ox, oy, oz = payload.get("origin", ())
             node.SetOrigin(float(ox), float(oy), float(oz))
         except Exception:
             pass
@@ -2604,6 +2759,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         slicer.util.setSliceViewerLayers(background=node)
         slicer.util.resetSliceViews()
         return node
+
+    def _load_aim_with_core(self, raw_path):
+        payload = self._read_aim_for_preload("", raw_path)
+        return self._load_preloaded_aim(payload)
 
     def _clear_profile_plot(self):
         self._profile_source_pixmap = None

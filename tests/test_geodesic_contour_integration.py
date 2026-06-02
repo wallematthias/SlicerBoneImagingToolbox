@@ -84,9 +84,10 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
 def test_timelapsed_pipeline_writes_sparse_override_config_for_profiles():
     source = PIPELINE_MODULE.read_text()
 
-    create_override_start = source.index("    def create_override_config(self, settings_dict):")
+    create_override_start = source.index("    def create_override_config(self, settings_dict, results_root=None):")
     create_override_end = source.index("    def cleanup_temp_files", create_override_start)
     create_override_source = source[create_override_start:create_override_end]
 
     assert "self.default_config_path()" not in create_override_source
     assert "yaml.safe_dump(settings_dict" in create_override_source
+    assert "slicer_run_configs" in create_override_source
