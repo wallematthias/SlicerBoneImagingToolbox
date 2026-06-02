@@ -36,7 +36,7 @@ from slicer.ScriptedLoadableModule import (
 
 
 MODULE_VERSION = "0.1.6"
-MIN_CORE_VERSION = "2.5.5"
+MIN_CORE_VERSION = "2.5.8"
 DEFAULT_MODEL_CATALOG_URL = (
     "https://github.com/wallematthias/MotionScoreHRpQCT/releases/latest/download/model_catalog.json"
 )
@@ -216,6 +216,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._model_index_rows = {}
         self._model_review_rows = {}
         self._model_audit_rows = {}
+        self._live_review_timer = None
+        self._live_review_refreshing = False
 
     def setup(self):
         super().setup()
@@ -288,7 +290,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         runButtonsRow = qt.QHBoxLayout()
         self.loadDatasetButton = qt.QPushButton("Load Dataset")
-        self.runButton = qt.QPushButton("Predict")
+        self.runButton = qt.QPushButton("Predict / Resume")
         self.manualRunButton = qt.QPushButton("Grade Manually")
         self.interruptButton = qt.QPushButton("Interrupt")
         self.interruptButton.enabled = False
@@ -318,6 +320,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.trainingModeCheck = qt.QCheckBox("Blind operator until manual grade is submitted")
         self.trainingModeCheck.setChecked(False)
+        self.forcePredictCheck = qt.QCheckBox("Reprocess existing predictions")
+        self.forcePredictCheck.setChecked(bool(int(self._settings().value("MotionScore/ReprocessExisting", 0) or 0)))
+        self.forcePredictCheck.setToolTip("When off, prediction resumes by skipping scans that already have matching outputs.")
 
         self.runModeCombo = qt.QComboBox()
         self.runModeCombo.addItems([self.RUN_MODE_AI, self.RUN_MODE_MANUAL])
@@ -467,6 +472,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         additionalForm = qt.QFormLayout()
         additionalForm.addRow("Confidence Threshold", self.confidenceSpin)
         additionalForm.addRow("Training Mode", self.trainingModeCheck)
+        additionalForm.addRow("Prediction Resume", self.forcePredictCheck)
         additionalForm.addRow("Run Mode", self.runModeCombo)
         additionalForm.addRow("Fast: Every N-th Slice", self.sliceStepSpin)
         additionalForm.addRow("Run Scope", self.runScopeCombo)
@@ -622,6 +628,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.confidenceSpin.valueChanged.connect(self.onConfidenceThresholdChanged)
         self.datasetPathEdit.currentPathChanged.connect(self.onDatasetPathChanged)
         self.trainingModeCheck.toggled.connect(self.onTrainingModeToggled)
+        self.forcePredictCheck.toggled.connect(self._persist_runtime_settings)
         self.reviewerEdit.editingFinished.connect(self._persist_reviewer_setting)
         self.deviceCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.runModeCombo.currentTextChanged.connect(self._persist_runtime_settings)
@@ -688,6 +695,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._settings().setValue("MotionScore/RunMode", self._combo_text(self.runModeCombo))
         self._settings().setValue("MotionScore/ModelProfile", self._selected_model_id())
         self._settings().setValue("MotionScore/SliceStep", int(self.sliceStepSpin.value))
+        force_attr = self.forcePredictCheck.checked
+        self._settings().setValue("MotionScore/ReprocessExisting", 1 if bool(force_attr() if callable(force_attr) else force_attr) else 0)
         self._settings().setValue("MotionScore/RetrainModelId", self.retrainModelIdEdit.text.strip())
         self._settings().setValue("MotionScore/RetrainDisplayName", self.retrainDisplayNameEdit.text.strip())
         self._settings().setValue("MotionScore/RetrainBaseModel", self._selected_retrain_base_model_id())
@@ -1369,27 +1378,35 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         checked_attr = self.trainingModeCheck.checked
         return bool(checked_attr() if callable(checked_attr) else checked_attr)
 
+    def _force_predict_enabled(self):
+        checked_attr = self.forcePredictCheck.checked
+        return bool(checked_attr() if callable(checked_attr) else checked_attr)
+
     def _set_buttons_enabled(self, enabled):
+        predict_running = bool(not enabled and self._active_task_name == "predict")
+        review_enabled = bool(enabled or predict_running)
         self.loadDatasetButton.enabled = enabled
         self.runButton.enabled = enabled
         self.manualRunButton.enabled = enabled
-        self.refreshButton.enabled = enabled
+        self.refreshButton.enabled = review_enabled
         self.exportButton.enabled = enabled
         self.importButton.enabled = enabled
-        self.loadScanButton.enabled = enabled
-        self.applyButton.enabled = enabled
-        self.backButton.enabled = bool(enabled and self._grade_history)
+        self.loadScanButton.enabled = review_enabled
+        self.applyButton.enabled = review_enabled
+        self.backButton.enabled = bool(review_enabled and self._grade_history)
         self.clearButton.enabled = enabled
         self.quickSetupButton.enabled = enabled
         self.trainingModeCheck.enabled = enabled
+        self.forcePredictCheck.enabled = enabled
         self.runModeCombo.enabled = enabled
         self.modelProfileCombo.enabled = enabled
         self.retrainBaseModelCombo.enabled = enabled
         self.sliceStepSpin.enabled = enabled
         self.runScopeCombo.enabled = enabled
-        self.reviewScopeCombo.enabled = enabled
+        self.reviewScopeCombo.enabled = review_enabled
+        self.scanCombo.enabled = review_enabled
         self.clearReviewerCombo.enabled = enabled
-        self.autoLoadCheck.enabled = enabled
+        self.autoLoadCheck.enabled = review_enabled
         self.prepareRetrainButton.enabled = enabled
         self.trainHeadButton.enabled = enabled
         self.trainFullButton.enabled = enabled
@@ -1407,29 +1424,37 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.retrainEpochsHeadSpin.enabled = enabled
         self.retrainEpochsFineSpin.enabled = enabled
         for btn in self.quickGradeButtons.values():
-            btn.enabled = enabled
+            btn.enabled = review_enabled
         self.interruptButton.enabled = not enabled
         self.trainInterruptButton.enabled = not enabled
 
     def _run_cli(self, args, on_finish=None):
         try:
-            self._set_buttons_enabled(False)
             self._active_task_name = args[0] if args else None
+            self._set_buttons_enabled(False)
+            if self._active_task_name == "predict":
+                self._start_live_review_timer()
             self.logic.run_cli(
                 args=args,
                 on_output=self._on_process_output,
                 on_finished=lambda code, status, interrupted: self._on_process_finished(code, status, on_finish, interrupted),
             )
         except Exception as exc:
+            self._stop_live_review_timer()
+            self._active_task_name = None
             self._set_buttons_enabled(True)
             self._set_progress_idle()
             slicer.util.errorDisplay(str(exc))
 
     def _on_process_finished(self, code, _status, callback, interrupted=False):
-        self._set_buttons_enabled(True)
         self._log(f"[process] finished with exit code {code}\n")
         task_name = self._active_task_name
+        if task_name == "predict":
+            self._stop_live_review_timer()
         self._active_task_name = None
+        self._set_buttons_enabled(True)
+        if task_name == "predict":
+            self._refresh_review_during_predict(force=True)
         if interrupted:
             self._log("[process] interrupted by user\n")
             self.progressLabel.setText("Interrupted")
@@ -1564,7 +1589,11 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return
 
         selected_scope = self._combo_text(self.runScopeCombo)
-        if selected_scope == self.RUN_SCOPE_ALL and self._all_scans_already_predicted(self._selected_model_id()):
+        if (
+            selected_scope == self.RUN_SCOPE_ALL
+            and not self._force_predict_enabled()
+            and self._all_scans_already_predicted(self._selected_model_id())
+        ):
             self._log("[predict] all discovered scans already predicted; refreshing review only.\n")
             self.refreshReview()
             self.progressBar.minimum = 0
@@ -1599,6 +1628,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 args.extend(["--device", selected_device])
         if self._training_mode_enabled():
             args.append("--training-mode")
+        if self._force_predict_enabled():
+            args.append("--force")
         if selected_scope and selected_scope != self.RUN_SCOPE_ALL:
             args.extend(["--scan-id", selected_scope])
 
@@ -1626,7 +1657,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             args.append("--training-mode")
         self._run_cli(args, on_finish=self.refreshReview)
 
-    def refreshReview(self):
+    def refreshReview(self, quiet=False):
         derivatives = self._derivatives_root()
         if derivatives is None:
             slicer.util.errorDisplay("Please choose Dataset Root")
@@ -1652,8 +1683,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._clear_profile_plot()
             self._set_run_scope_items(self._discover_scan_ids_for_dataset())
             self._update_review_queue_label()
-            self._log(f"[review] index not found: {index_path}\n")
-            self._update_dataset_summary()
+            if not quiet:
+                self._log(f"[review] index not found: {index_path}\n")
+                self._update_dataset_summary()
             return
 
         self._index_rows = {}
@@ -1709,11 +1741,40 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._rebuild_scan_combo()
         self._update_review_queue_label()
 
-        self._log(f"[review] loaded {len(self._review_rows)} scan review row(s), pending={len(pending)}\n")
+        if not quiet:
+            self._log(f"[review] loaded {len(self._review_rows)} scan review row(s), pending={len(pending)}\n")
         self._update_agreement_summary()
         self._update_agreement_matrix()
         self.onScanSelectionChanged(self._combo_text(self.scanCombo))
-        self._update_dataset_summary()
+        if not quiet:
+            self._update_dataset_summary()
+
+    def _start_live_review_timer(self):
+        if self._live_review_timer is None:
+            self._live_review_timer = qt.QTimer()
+            self._live_review_timer.setInterval(3000)
+            self._live_review_timer.timeout.connect(self._refresh_review_during_predict)
+        self._live_review_timer.start()
+
+    def _stop_live_review_timer(self):
+        if self._live_review_timer is not None:
+            self._live_review_timer.stop()
+
+    def _refresh_review_during_predict(self, force=False):
+        if not force and self._active_task_name != "predict":
+            return
+        if self._live_review_refreshing:
+            return
+        derivatives = self._derivatives_root()
+        if derivatives is None or not (derivatives / "index.tsv").exists():
+            return
+        self._live_review_refreshing = True
+        try:
+            self.refreshReview(quiet=True)
+        except Exception as exc:
+            self._log(f"[review] live refresh failed: {exc}\n")
+        finally:
+            self._live_review_refreshing = False
 
     def _update_dataset_summary(self):
         if not hasattr(self, "datasetSummaryLabel"):
@@ -2022,6 +2083,15 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay("Cannot resolve results root")
             return
 
+        if self.logic.is_running() and self._active_task_name == "predict":
+            self._apply_manual_review_in_process(
+                derivatives=derivatives,
+                scan_id=scan_id,
+                manual_grade=manual_grade,
+                reviewer=reviewer,
+            )
+            return
+
         args = [
             "review-apply",
             str(derivatives),
@@ -2033,6 +2103,49 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             reviewer,
         ]
         self._run_cli(args, on_finish=lambda sid=scan_id: self._on_manual_applied(sid))
+
+    def _review_artifact_path(self, derivatives, row, key, *, required=True):
+        rel = str(row.get(key, "")).strip()
+        if not rel:
+            if required:
+                raise FileNotFoundError(f"Review artifact '{key}' is missing for this scan.")
+            return None
+        path = Path(rel)
+        if not path.is_absolute():
+            path = derivatives / path
+        return path.resolve()
+
+    def _apply_manual_review_in_process(self, derivatives, scan_id, manual_grade, reviewer):
+        try:
+            if scan_id not in self._index_rows:
+                self._refresh_review_during_predict(force=True)
+            row = self._index_rows.get(scan_id)
+            if not row:
+                raise KeyError(f"scan_id not available for review yet: {scan_id}")
+
+            from motionscore.review.store import apply_manual_review
+
+            review_tsv = self._review_artifact_path(derivatives, row, "review_tsv")
+            review_audit = self._review_artifact_path(derivatives, row, "review_audit")
+            review_json = self._review_artifact_path(derivatives, row, "review_json", required=False)
+            updated = apply_manual_review(
+                review_tsv_path=review_tsv,
+                review_audit_path=review_audit,
+                review_json_path=review_json,
+                scan_id=scan_id,
+                manual_grade=int(manual_grade),
+                reviewer=reviewer,
+            )
+        except Exception as exc:
+            slicer.util.errorDisplay(str(exc))
+            return
+
+        self._log(
+            f"[review-apply] {scan_id}: manual={updated.get('manual_grade', '')} "
+            f"final={updated.get('final_grade', '')} reviewer={reviewer}\n"
+        )
+        self._refresh_review_during_predict(force=True)
+        self._on_manual_applied(scan_id)
 
     def _on_manual_applied(self, scan_id):
         if scan_id:
@@ -2321,7 +2434,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._log(f"[load] failed to remove previous volume: {exc}\n")
 
     def _refresh_and_load_next(self, previous_scan_id=None):
-        self.refreshReview()
+        self.refreshReview(quiet=bool(self._active_task_name == "predict"))
         self._show_training_reveal(previous_scan_id)
         count_attr = self.scanCombo.count
         count = int(count_attr() if callable(count_attr) else count_attr)
@@ -2406,6 +2519,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._log(text)
         if self._active_task_name == "predict":
             self._update_predict_progress_from_output(text)
+            if re.search(r"(?m)^\[predict\]\s+", text):
+                self._refresh_review_during_predict()
         elif self._active_task_name == "train":
             self._update_training_plot(final=False)
 
