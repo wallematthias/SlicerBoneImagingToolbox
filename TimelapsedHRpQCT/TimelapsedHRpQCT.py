@@ -17,6 +17,36 @@ import ctk
 import slicer
 import vtk
 
+MODULE_VERSION = "0.2.3"
+MIN_PIPELINE_VERSION = "2.0.37"
+
+
+def _version_tuple(version_text):
+    parts = []
+    for token in re.split(r"[^0-9]+", str(version_text or "")):
+        if token:
+            parts.append(int(token))
+    return tuple(parts or [0])
+
+
+def _local_pipeline_version(repo_path):
+    try:
+        pyproject_text = (Path(repo_path) / "pyproject.toml").read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', pyproject_text)
+    return match.group(1) if match else ""
+
+
+def _local_pipeline_usable(repo_path, src_path):
+    version = _local_pipeline_version(repo_path)
+    return (
+        Path(src_path).exists()
+        and bool(version)
+        and _version_tuple(version) >= _version_tuple(MIN_PIPELINE_VERSION)
+    )
+
+
 # Prevent Slicer-specific ITK ImageIO plugin autoloading in this process.
 # This avoids repeated MRMLIDImageIO factory noise from SimpleITK calls.
 for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
@@ -33,7 +63,7 @@ if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
 _PIPELINE_LOCAL_REPO = _TOOLBOX_ROOT.parent / "TimelapsedHRpQCT"
 _PIPELINE_LOCAL_SRC = _PIPELINE_LOCAL_REPO / "src"
-if _PIPELINE_LOCAL_SRC.exists() and str(_PIPELINE_LOCAL_SRC) not in sys.path:
+if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PIPELINE_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(_PIPELINE_LOCAL_SRC))
     _existing_pythonpath = os.environ.get("PYTHONPATH", "")
     os.environ["PYTHONPATH"] = (
@@ -58,18 +88,6 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleLogic,
     ScriptedLoadableModuleTest,
 )
-
-MODULE_VERSION = "0.2.2"
-MIN_PIPELINE_VERSION = "2.0.37"
-
-
-def _version_tuple(version_text):
-    parts = []
-    for token in re.split(r"[^0-9]+", str(version_text or "")):
-        if token:
-            parts.append(int(token))
-    return tuple(parts or [0])
-
 
 def _suppress_simpleitk_warnings():
     """Reduce known harmless ITK/SimpleITK warning noise in Slicer logs."""
@@ -132,14 +150,14 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         return True, f"Installed ({version}) from {package_path}"
 
     def install_or_update_pipeline(self):
-        if (_PIPELINE_LOCAL_REPO / "pyproject.toml").exists():
+        if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC):
             # Local development: import from the sibling checkout directly, and install the
             # published contour dependency without letting pip replace the local source tree.
             slicer.util.pip_install("hrpqct-geodesic-contour>=0.1.1")
         else:
             # Force-refresh from PyPI so "Install / Update" always pulls latest.
             slicer.util.pip_install(
-                "--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct"
+                f"--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct>={MIN_PIPELINE_VERSION}"
             )
         for name in list(sys.modules):
             if name == "timelapsedhrpqct" or name.startswith("timelapsedhrpqct."):

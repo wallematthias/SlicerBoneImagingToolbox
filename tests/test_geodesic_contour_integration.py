@@ -64,8 +64,11 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     assert "self.maskGeodesicFillHoles" in source
     assert "_PIPELINE_LOCAL_REPO = _TOOLBOX_ROOT.parent / \"TimelapsedHRpQCT\"" in source
     assert "_PIPELINE_LOCAL_SRC = _PIPELINE_LOCAL_REPO / \"src\"" in source
+    assert "def _local_pipeline_usable" in source
+    assert "if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC)" in source
     assert "os.environ[\"PYTHONPATH\"]" in source
     assert "slicer.util.pip_install(\"hrpqct-geodesic-contour>=0.1.1\")" in source
+    assert "timelapsed-hrpqct>={MIN_PIPELINE_VERSION}" in source
     assert "outer_cfg = {" in source
     assert "\"contour_method\": periosteal_contour_method" in source
     assert "\"geodesic_bone_threshold\": float(self.maskGeodesicThreshold.value)" in source
