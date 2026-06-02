@@ -8,6 +8,7 @@ import json
 import csv
 import sys
 import importlib
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -58,8 +59,8 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-MODULE_VERSION = "0.2.1"
-MIN_PIPELINE_VERSION = "2.0.33"
+MODULE_VERSION = "0.2.2"
+MIN_PIPELINE_VERSION = "2.0.37"
 
 
 def _version_tuple(version_text):
@@ -167,17 +168,32 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         self._fallback_default_config_path = path
         return Path(path)
 
-    def create_override_config(self, settings_dict):
+    def create_override_config(self, settings_dict, results_root=None):
         import yaml
 
-        self.cleanup_temp_files(remove_fallback=False)
-        fd, path = tempfile.mkstemp(prefix="timelapsed_slicer_", suffix=".yml")
-        os.close(fd)
-        with open(path, "w", encoding="utf-8") as f:
+        path = None
+        if results_root:
+            try:
+                config_dir = Path(results_root) / "slicer_run_configs"
+                config_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                path = config_dir / f"timelapsed_slicer_{timestamp}.yml"
+            except Exception:
+                path = None
+
+        if path is None:
+            self.cleanup_temp_files(remove_fallback=False)
+            fd, temp_path = tempfile.mkstemp(prefix="timelapsed_slicer_", suffix=".yml")
+            os.close(fd)
+            path = Path(temp_path)
+            self._temp_config_path = str(path)
+        else:
+            self._temp_config_path = None
+
+        with Path(path).open("w", encoding="utf-8") as f:
             yaml.safe_dump(settings_dict, f, sort_keys=False)
 
-        self._temp_config_path = path
-        return path
+        return str(path)
 
     def cleanup_temp_files(self, remove_fallback=False):
         paths = []
@@ -2723,10 +2739,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if run_root is None:
             return
 
-        cfg = self.logic.create_override_config(self._settings_override())
         imported = self._require_results_root("Could not resolve imported dataset path.")
         if imported is None:
             return
+        cfg = self.logic.create_override_config(self._settings_override(), results_root=imported)
         self._set_stage_status("masks", "pending")
         self._is_full_pipeline_run = False
         self._run_skips_mask_generation = False
@@ -2784,7 +2800,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._run_skips_mask_generation = False
         self._run_includes_analysis = True
         cfg = self.logic.create_override_config(
-            self._settings_override(multistack_enabled=(mode == "multistack"))
+            self._settings_override(multistack_enabled=(mode == "multistack")),
+            results_root=imported,
         )
         self._run(
             [
@@ -2824,7 +2841,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._is_full_pipeline_run = False
         self._run_skips_mask_generation = False
         self._run_includes_analysis = False
-        cfg = self.logic.create_override_config(self._settings_override())
+        cfg = self.logic.create_override_config(self._settings_override(), results_root=imported)
         self._run([
             "analyse",
             str(imported),
@@ -2954,7 +2971,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
             return
         cfg = self.logic.create_override_config(
-            self._settings_override(multistack_enabled=(mode == "multistack"))
+            self._settings_override(multistack_enabled=(mode == "multistack")),
+            results_root=imported,
         )
         self._set_user_message(
             "info",
@@ -5534,14 +5552,20 @@ class TimelapsedHRpQCTTest(ScriptedLoadableModuleTest):
 
     def test_override_config_write(self):
         logic = TimelapsedHRpQCTLogic()
+        results_root = Path(tempfile.mkdtemp(prefix="timelapsed_slicer_test_"))
         path = logic.create_override_config(
             {
                 "analysis": {"thresholds": [225.0], "cluster_sizes": [12]},
                 "fusion": {"enable_filling": False},
-            }
+            },
+            results_root=results_root,
         )
         p = Path(path)
         self.assertTrue(p.exists())
+        self.assertTrue(p.parent == results_root / "slicer_run_configs")
         text = p.read_text(encoding="utf-8")
         self.assertIn("analysis:", text)
         self.assertIn("fusion:", text)
+        logic.cleanup_temp_files(remove_fallback=False)
+        self.assertTrue(p.exists())
+        shutil.rmtree(results_root, ignore_errors=True)
