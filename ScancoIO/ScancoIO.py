@@ -126,7 +126,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
     def install_or_update_core(self):
         slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir aimio-py")
 
-    def import_aim(self, aim_path, scaling, volume_name=None):
+    def import_aim(self, aim_path, scaling, volume_name=None, as_segmentation=False):
         aim_io = _aim_io_module()
 
         aim_path = Path(aim_path)
@@ -137,8 +137,17 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
 
         with tempfile.TemporaryDirectory(prefix="hrpqct_aim_import_") as temp_dir:
             nrrd_path = Path(temp_dir) / "imported_aim.nrrd"
-            sitk.WriteImage(image, str(nrrd_path))
-            loaded = slicer.util.loadVolume(str(nrrd_path), {"name": name}, returnNode=True)
+            if as_segmentation:
+                label_image = sitk.Cast(image != 0, sitk.sitkUInt8)
+                sitk.WriteImage(label_image, str(nrrd_path))
+                loaded = slicer.util.loadLabelVolume(
+                    str(nrrd_path),
+                    {"name": f"{name}_labelmap"},
+                    returnNode=True,
+                )
+            else:
+                sitk.WriteImage(image, str(nrrd_path))
+                loaded = slicer.util.loadVolume(str(nrrd_path), {"name": name}, returnNode=True)
 
         if isinstance(loaded, tuple):
             success, volume_node = loaded
@@ -147,11 +156,24 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         if not success or volume_node is None:
             raise RuntimeError(f"Could not load imported AIM volume into Slicer: {aim_path}")
 
+        if as_segmentation:
+            segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLSegmentationNode",
+                name,
+            )
+            slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
+                volume_node,
+                segmentation_node,
+            )
+            slicer.mrmlScene.RemoveNode(volume_node)
+            volume_node = segmentation_node
+
+        metadata_text = json.dumps(metadata, sort_keys=True, default=_json_default)
         volume_node.SetAttribute(AIM_SOURCE_ATTRIBUTE, str(aim_path))
         volume_node.SetAttribute(AIM_SCALING_ATTRIBUTE, scaling)
         volume_node.SetAttribute(
             AIM_METADATA_ATTRIBUTE,
-            json.dumps(metadata, sort_keys=True, default=_json_default),
+            metadata_text,
         )
         return volume_node
 
@@ -242,6 +264,8 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         form.addRow(installRowWidget)
 
         self.importPathEdit = qt.QLineEdit()
+        self.importPathEdit.textChanged.connect(self._on_import_path_changed)
+        self._lastAutoVolumeName = ""
         browse = qt.QPushButton("Browse...")
         browse.clicked.connect(self._browse_import_path)
         row = qt.QHBoxLayout()
@@ -258,6 +282,12 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         ]:
             self.scalingCombo.addItem(label, value)
         form.addRow("Load values as", self.scalingCombo)
+
+        self.importAsCombo = qt.QComboBox()
+        self.importAsCombo.addItem("Scalar volume", "volume")
+        self.importAsCombo.addItem("Segmentation (nonzero mask)", "segmentation")
+        self.importAsCombo.currentIndexChanged.connect(self._on_import_as_changed)
+        form.addRow("Load into Slicer as", self.importAsCombo)
 
         self.volumeNameEdit = qt.QLineEdit()
         form.addRow("Volume name", self.volumeNameEdit)
@@ -361,8 +391,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
             path = path[0] if path else ""
         if path:
             self.importPathEdit.text = path
-            if not self.volumeNameEdit.text:
-                self.volumeNameEdit.text = Path(path).stem
+            self._update_volume_name_from_import_path(path)
 
     def _browse_export_path(self):
         path = qt.QFileDialog.getSaveFileName(
@@ -482,17 +511,38 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
     def _check_toolbox_updates(self):
         run_toolbox_update_dialog(__file__, log=self._log)
 
+    def _on_import_path_changed(self, path):
+        self._update_volume_name_from_import_path(path)
+
+    def _on_import_as_changed(self, _index=None):
+        as_segmentation = self.importAsCombo.currentData == "segmentation"
+        self.scalingCombo.enabled = not as_segmentation
+
+    def _update_volume_name_from_import_path(self, path):
+        path = str(path or "").strip()
+        if not path:
+            return
+        suggested = Path(path).stem
+        current = str(self.volumeNameEdit.text or "").strip()
+        if not current or current == self._lastAutoVolumeName:
+            self.volumeNameEdit.text = suggested
+            self._lastAutoVolumeName = suggested
+
     def _import_aim(self):
         try:
-            scaling = self.scalingCombo.currentData
+            as_segmentation = self.importAsCombo.currentData == "segmentation"
+            scaling = "native" if as_segmentation else self.scalingCombo.currentData
             node = self.logic.import_aim(
                 self.importPathEdit.text,
                 scaling=scaling,
                 volume_name=self.volumeNameEdit.text,
+                as_segmentation=as_segmentation,
             )
-            self.volumeSelector.setCurrentNode(node)
+            if not as_segmentation:
+                self.volumeSelector.setCurrentNode(node)
             self._set_header_metadata(self._node_header_metadata(node))
-            self._log(f"Imported {node.GetName()} from {self.importPathEdit.text}")
+            node_kind = "segmentation" if as_segmentation else "volume"
+            self._log(f"Imported {node.GetName()} as {node_kind} from {self.importPathEdit.text}")
         except Exception as exc:
             self._error(exc)
 
