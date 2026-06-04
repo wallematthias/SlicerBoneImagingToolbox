@@ -75,6 +75,8 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     assert "\"geodesic_fill_holes\": bool(self.maskGeodesicFillHoles.checked)" in source
     assert "if selected_profile == \"ped-fx\":" in source
     assert "mask_method = \"seg_gauss\"" in source
+    assert "profile_segmentation_cfg = profile_masks_cfg.get(\"segmentation\") or {}" in source
+    assert "profile_segmentation_cfg.get(\"method\")" in source
     assert "periosteal_contour_method = \"geodesic_fracture\"" in source
     assert "masks_override[\"roles\"] = [\"full\"]" in source
     assert "masks_override[\"inner\"] = {\"contour_method\": \"none\"}" in source

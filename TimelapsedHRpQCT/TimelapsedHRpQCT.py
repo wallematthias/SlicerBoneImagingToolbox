@@ -17,7 +17,7 @@ import ctk
 import slicer
 import vtk
 
-MODULE_VERSION = "0.2.3"
+MODULE_VERSION = "0.2.4"
 MIN_PIPELINE_VERSION = "2.0.37"
 
 
@@ -1957,7 +1957,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             (profile_cfg.get("multistack_correction") or {}) if isinstance(profile_cfg, dict) else {}
         )
 
+        profile_segmentation_cfg = profile_masks_cfg.get("segmentation") or {}
         mask_method = str(self.maskMethod.currentText or "adaptive")
+        if isinstance(profile_segmentation_cfg, dict) and profile_segmentation_cfg.get("method"):
+            mask_method = str(profile_segmentation_cfg.get("method") or mask_method)
+        if mask_method == "global":
+            mask_method = "seg_gauss"
         if selected_profile == "ped-fx":
             mask_method = "seg_gauss"
         mask_low = float(self.maskLow.value)
@@ -1966,22 +1971,29 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if mask_method == "seg_gauss":
             segmentation_cfg.update(
                 {
-                    "trab_threshold": mask_low,
-                    "cort_threshold": mask_high,
-                    "gaussian_sigma": float(getattr(self, "_seg_gauss_sigma", 0.8)),
+                    "trab_threshold": float(profile_segmentation_cfg.get("trab_threshold", mask_low)),
+                    "cort_threshold": float(profile_segmentation_cfg.get("cort_threshold", mask_high)),
+                    "gaussian_sigma": float(
+                        profile_segmentation_cfg.get(
+                            "gaussian_sigma",
+                            profile_segmentation_cfg.get("seg_gauss_sigma", getattr(self, "_seg_gauss_sigma", 0.8)),
+                        )
+                    ),
                 }
             )
         elif mask_method == "laplace_hamming":
             segmentation_cfg.update(
                 {
-                    "laplace_hamming_min_size_voxels": int(mask_high),
+                    "laplace_hamming_min_size_voxels": int(
+                        profile_segmentation_cfg.get("laplace_hamming_min_size_voxels", mask_high)
+                    ),
                 }
             )
         else:
             segmentation_cfg.update(
                 {
-                    "adaptive_low_threshold": mask_low,
-                    "adaptive_high_threshold": mask_high,
+                    "adaptive_low_threshold": float(profile_segmentation_cfg.get("adaptive_low_threshold", mask_low)),
+                    "adaptive_high_threshold": float(profile_segmentation_cfg.get("adaptive_high_threshold", mask_high)),
                 }
             )
         periosteal_contour_method = str(self.maskPeriostealContour.currentData or "standard")
