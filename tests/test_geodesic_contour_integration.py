@@ -94,6 +94,23 @@ def test_laplace_hamming_uses_core_native_scanco_input_convention():
     assert "Method=laplace_hamming; input={metadata.get('segmentation_input_unit')}" in source
 
 
+def test_generated_masks_keep_aim_metadata_for_export():
+    source = MODULE.read_text()
+
+    assert "def _copy_aim_attributes" in source
+    assert "AIM_METADATA_ATTRIBUTE, AIM_SOURCE_ATTRIBUTE, AIM_SCALING_ATTRIBUTE" in source
+    assert "self._copy_aim_attributes(reference_node, label_node)" in source
+    assert "self._copy_aim_attributes(volume_node, segmentation_node)" in source
+
+
+def test_segmentation_installer_keeps_slicer_numpy_constraints():
+    source = MODULE.read_text()
+
+    assert 'CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<2.0", "scikit-image>=0.24,<0.26", "tifffile<2026")' in source
+    assert 'slicer.util.pip_uninstall("pyjpegls")' in source
+    assert '" ".join(["timelapsed-hrpqct", *CORE_PIP_CONSTRAINTS])' in source
+
+
 def test_laplace_hamming_shows_busy_progress_dialog():
     source = MODULE.read_text()
 

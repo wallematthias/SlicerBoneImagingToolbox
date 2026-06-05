@@ -36,6 +36,7 @@ MODULE_VERSION = "0.2.0"
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
+CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<2.0", "scikit-image>=0.24,<0.26", "tifffile<2026")
 
 SITE_PRESETS = {
     "radius": {
@@ -285,7 +286,17 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             return False
 
     def install_or_update_pipeline(self):
-        slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct")
+        self._remove_incompatible_optional_packages()
+        packages = " ".join(["timelapsed-hrpqct", *CORE_PIP_CONSTRAINTS])
+        slicer.util.pip_install(f"--upgrade --force-reinstall --no-cache-dir {packages}")
+
+    def _remove_incompatible_optional_packages(self):
+        if not hasattr(slicer.util, "pip_uninstall"):
+            return
+        try:
+            slicer.util.pip_uninstall("pyjpegls")
+        except Exception:
+            pass
 
     def install_or_update_geodesic_contour(self):
         if _GEODESIC_CONTOUR_LOCAL_REPO.exists():
@@ -333,6 +344,14 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         except Exception:
             return {}
         return metadata if isinstance(metadata, dict) else {}
+
+    def _copy_aim_attributes(self, source_node, target_node):
+        if source_node is None or target_node is None:
+            return
+        for attribute in (AIM_METADATA_ATTRIBUTE, AIM_SOURCE_ATTRIBUTE, AIM_SCALING_ATTRIBUTE):
+            value = source_node.GetAttribute(attribute)
+            if value:
+                target_node.SetAttribute(attribute, value)
 
     def _processing_log_from_metadata(self, metadata):
         for raw in (
@@ -433,6 +452,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         if not success or label_node is None:
             raise RuntimeError(f"Could not load generated labelmap: {name}")
         label_node.CopyOrientation(reference_node)
+        self._copy_aim_attributes(reference_node, label_node)
         return label_node
 
     def _add_labelmap_segment(self, label_node, segmentation_node, segment_name):
@@ -861,6 +881,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         )
         segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
         segmentation_node.CreateDefaultDisplayNodes()
+        self._copy_aim_attributes(volume_node, segmentation_node)
         for key in (
             "segmentation_method",
             "segmentation_input_unit",

@@ -1,7 +1,15 @@
 from pathlib import Path
+import sys
+
+import SimpleITK as sitk
 
 
 MODULE = Path(__file__).resolve().parents[1] / "ScancoIO" / "ScancoIO.py"
+LIB_DIR = MODULE.parent
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+from ScancoIOLib import aim_io  # noqa: E402
 
 
 def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
@@ -20,3 +28,15 @@ def test_scanco_io_updates_volume_name_when_import_path_changes() -> None:
     assert "self.importPathEdit.textChanged.connect(self._on_import_path_changed)" in source
     assert "self._lastAutoVolumeName" in source
     assert "def _update_volume_name_from_import_path" in source
+
+
+def test_aim_metadata_position_is_refreshed_from_image_origin() -> None:
+    image = sitk.Image([4, 5, 6], sitk.sitkUInt8)
+    image.SetSpacing((0.061, 0.061, 0.061))
+    image.SetOrigin(((100 + 0.5) * 0.061, (200 + 0.5) * 0.061, (300 + 0.5) * 0.061))
+    metadata = {"position": (0, 0, 0), "offset": (0, 0, 0)}
+
+    aim_io._refresh_position_from_image_geometry(metadata, image)
+
+    assert metadata["position"] == (100, 200, 300)
+    assert metadata["offset"] == (0, 0, 0)

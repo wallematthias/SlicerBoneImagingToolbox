@@ -145,6 +145,42 @@ def _resolve_origin(meta: dict[str, Any], spacing: tuple[float, float, float]) -
     return (0.0, 0.0, 0.0)
 
 
+def _metadata_vector(
+    meta: dict[str, Any],
+    key: str,
+    default: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    raw = meta.get(key)
+    if isinstance(raw, (list, tuple)) and len(raw) == 3:
+        try:
+            return tuple(float(v) for v in raw)
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
+def _aim_position_from_origin(
+    origin: tuple[float, float, float],
+    spacing: tuple[float, float, float],
+    offset: tuple[float, float, float],
+) -> tuple[int, int, int]:
+    position = []
+    for origin_value, spacing_value, offset_value in zip(origin, spacing, offset):
+        if spacing_value == 0:
+            position.append(0)
+        else:
+            position.append(int(round((origin_value / spacing_value) - offset_value - 0.5)))
+    return tuple(position)
+
+
+def _refresh_position_from_image_geometry(meta: dict[str, Any], image: sitk.Image) -> None:
+    spacing = tuple(float(v) for v in image.GetSpacing())
+    origin = tuple(float(v) for v in image.GetOrigin())
+    offset = _metadata_vector(meta, "offset", (0.0, 0.0, 0.0))
+    meta["position"] = _aim_position_from_origin(origin, spacing, offset)
+    meta["offset"] = tuple(int(round(v)) for v in offset)
+
+
 def read_aim(path: Path, scaling: str = "bmd") -> tuple[sitk.Image, dict[str, Any]]:
     py_aimio = _load_py_aimio()
     scaling = _normalize_scaling(scaling)
@@ -253,8 +289,8 @@ def aim_metadata_from_import_json(
     out["element_size"] = tuple(float(v) for v in image.GetSpacing())
     out["origin"] = tuple(float(v) for v in image.GetOrigin())
     out["direction"] = tuple(float(v) for v in image.GetDirection())
-    out["position"] = (0, 0, 0)
-    out["offset"] = (0, 0, 0)
+    out.setdefault("offset", (0, 0, 0))
+    _refresh_position_from_image_geometry(out, image)
     return out
 
 
@@ -280,6 +316,7 @@ def write_aim(
     meta.setdefault("element_size", tuple(float(v) for v in image.GetSpacing()))
     meta.setdefault("origin", tuple(float(v) for v in image.GetOrigin()))
     meta.setdefault("direction", tuple(float(v) for v in image.GetDirection()))
+    _refresh_position_from_image_geometry(meta, image)
 
     if unit is None:
         unit = _normalize_aim_write_unit(meta.get("unit"))
