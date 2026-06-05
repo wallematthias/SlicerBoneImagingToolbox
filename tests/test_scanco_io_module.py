@@ -16,37 +16,20 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
     assert "as_segmentation=False" in source
-    assert "as_labelmap=False" in source
-    assert "reference_volume_node=None" in source
     assert "slicer.util.loadSegmentation" in source
-    assert "slicer.util.loadLabelVolume" in source
+    assert "slicer.util.loadLabelVolume" not in source
     assert "vtkMRMLSegmentationNode" in source
     assert "Segmentation import requires a reference volume" not in source
-    assert "reference_volume_node = reference_volume_node or self._find_matching_reference_volume(label_image)" in source
-    assert "def _find_matching_reference_volume" in source
-    assert "require_origin=True" in source
-    assert "for require_origin in (True, False):" in source
-    assert "self._volume_geometry_matches_image(node, image, require_origin=require_origin)" in source
-    assert "self._segmentation_from_label_image(label_image, name, reference_volume_node)" in source
     assert 'loaded = slicer.util.loadSegmentation(str(nrrd_path), {"name": name})' in source
-    assert "slicer.util.updateSegmentBinaryLabelmapFromArray(" in source
-    assert "composite_node.SetBackgroundVolumeID(reference_volume_node.GetID())" in source
     assert "display_node.SetOpacity(0.5)" in source
     assert "display_node.SetOpacity2DFill(0.35)" in source
     assert "display_node.SetAllSegmentsOpacity2DFill(0.35)" in source
-    assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_volume_node)" in source
-    assert "self._validate_image_matches_reference(label_image, reference_volume_node)" in source
-    assert "AIM segmentation dimensions do not match the selected reference volume" in source
     assert "slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()" in source
-    assert "segmentation_node.SetNodeReferenceID(" in source
-    assert '"HRpQCT.ReferenceVolume"' in source
-    assert "segmentation_node.CreateDefaultDisplayNodes()" in source
     assert "display_node.SetVisibility2DFill(True)" in source
     assert "display_node.SetVisibility2DOutline(True)" in source
     assert "Segmentation (nonzero mask)" in source
-    assert "Labelmap volume (nonzero mask)" in source
-    assert "self.importReferenceSelector" in source
-    assert "reference_volume_node=reference_volume_node" in source
+    assert "Labelmap volume (nonzero mask)" not in source
+    assert "self.importReferenceSelector" not in source
     assert "returnNode=True" not in source
 
 
