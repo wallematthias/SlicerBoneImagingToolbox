@@ -143,8 +143,6 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             raise FileNotFoundError(f"AIM file does not exist: {aim_path}")
         if as_segmentation and as_labelmap:
             raise ValueError("Choose segmentation import or labelmap import, not both.")
-        if as_segmentation and reference_volume_node is None:
-            raise ValueError("Segmentation import requires a reference volume.")
         image, metadata = aim_io.read_aim(aim_path, scaling=scaling)
         name = volume_name.strip() if volume_name else aim_path.stem
 
@@ -152,10 +150,16 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             nrrd_path = Path(temp_dir) / "imported_aim.nrrd"
             if as_segmentation or as_labelmap:
                 label_image = sitk.Cast(image != 0, sitk.sitkUInt8)
+                if as_segmentation:
+                    reference_volume_node = reference_volume_node or self._find_matching_reference_volume(label_image)
                 if reference_volume_node is not None:
                     self._validate_image_matches_reference(label_image, reference_volume_node)
                 if as_segmentation:
-                    loaded = self._segmentation_from_label_image(label_image, name, reference_volume_node)
+                    if reference_volume_node is not None:
+                        loaded = self._segmentation_from_label_image(label_image, name, reference_volume_node)
+                    else:
+                        sitk.WriteImage(label_image, str(nrrd_path))
+                        loaded = slicer.util.loadSegmentation(str(nrrd_path), {"name": name})
                 else:
                     sitk.WriteImage(label_image, str(nrrd_path))
                     loaded = slicer.util.loadLabelVolume(
@@ -186,6 +190,32 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             metadata_text,
         )
         return volume_node
+
+    def _find_matching_reference_volume(self, image):
+        for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode"):
+            nodes = slicer.mrmlScene.GetNodesByClass(class_name)
+            nodes.UnRegister(None)
+            for index in range(nodes.GetNumberOfItems()):
+                node = nodes.GetItemAsObject(index)
+                if self._volume_geometry_matches_image(node, image):
+                    return node
+        return None
+
+    def _volume_geometry_matches_image(self, node, image):
+        if node is None or node.GetImageData() is None:
+            return False
+        if tuple(node.GetImageData().GetDimensions()) != tuple(image.GetSize()):
+            return False
+        with tempfile.TemporaryDirectory(prefix="hrpqct_ref_match_") as temp_dir:
+            nrrd_path = Path(temp_dir) / "candidate.nrrd"
+            if not slicer.util.saveNode(node, str(nrrd_path)):
+                return False
+            reference_image = sitk.ReadImage(str(nrrd_path))
+        return (
+            np.allclose(reference_image.GetSpacing(), image.GetSpacing(), atol=1e-6)
+            and np.allclose(reference_image.GetOrigin(), image.GetOrigin(), atol=1e-5)
+            and np.allclose(reference_image.GetDirection(), image.GetDirection(), atol=1e-6)
+        )
 
     def _segmentation_from_label_image(self, label_image, name, reference_volume_node):
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
@@ -419,7 +449,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.importReferenceSelector.enabled = False
         self._tip(
             self.importReferenceSelector,
-            "Reference volume required for segmentation imports. Labelmap imports use the AIM file geometry directly.",
+            "Optional reference volume for segmentation imports. If empty, a loaded volume with matching geometry is used when available.",
         )
         form.addRow("Reference volume", self.importReferenceSelector)
 
