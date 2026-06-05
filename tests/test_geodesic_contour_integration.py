@@ -66,6 +66,17 @@ def test_segmentation_module_skips_compartments_without_endosteal_split():
     assert "cort_xyz = _ensure_bool(full_xyz)" not in source
 
 
+def test_segmentation_module_does_not_emit_full_mask_without_outer_contour():
+    source = MODULE.read_text()
+
+    assert "periosteal_contour_generated = periosteal_contour_method != \"none\"" in source
+    assert "full_xyz = np.ones_like(image_xyz, dtype=bool)" in source
+    assert "generated.metadata[\"periosteal_contour_generated\"]" in source
+    assert "generated.metadata[\"periosteal_contour_reason\"] = \"periosteal_contour_method_none\"" in source
+    assert "output_specs = [spec for spec in output_specs if spec[0] != \"full\"]" in source
+    assert "generated.metadata[\"voxel_counts\"][\"full\"] = 0" in source
+
+
 def test_laplace_hamming_segmentation_is_forced_from_support_mask():
     source = MODULE.read_text()
 

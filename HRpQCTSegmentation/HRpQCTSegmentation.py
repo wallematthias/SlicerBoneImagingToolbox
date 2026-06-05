@@ -764,7 +764,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                     verbose=False,
                 )
             else:
-                full_xyz = np.asarray(image_xyz > 0, dtype=bool)
+                full_xyz = np.ones_like(image_xyz, dtype=bool)
 
             inner_support_xyz = _contour_support_binarization_xyz(
                 segmentation_image_xyz,
@@ -828,6 +828,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 },
             )
 
+        periosteal_contour_generated = periosteal_contour_method != "none"
         compartment_split_generated = endosteal_contour_method == "standard"
         if not compartment_split_generated:
             full_xyz = sitk_to_numpy_xyz(generated.full) > 0
@@ -855,7 +856,15 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         generated.metadata["segmentation_method"] = segmentation_method
         generated.metadata["periosteal_contour_method"] = periosteal_contour_method
         generated.metadata["endosteal_contour_method"] = endosteal_contour_method
+        generated.metadata["periosteal_contour_generated"] = bool(periosteal_contour_generated)
         generated.metadata["compartment_split_generated"] = bool(compartment_split_generated)
+        if not periosteal_contour_generated:
+            full_xyz = sitk_to_numpy_xyz(generated.full) > 0
+            empty_xyz = np.zeros_like(full_xyz, dtype=bool)
+            generated.full = numpy_xyz_to_sitk_binary(empty_xyz, image)
+            generated.metadata["periosteal_contour_reason"] = "periosteal_contour_method_none"
+            generated.metadata.setdefault("voxel_counts", {})
+            generated.metadata["voxel_counts"]["full"] = 0
         if not compartment_split_generated:
             generated.metadata["compartment_split_reason"] = "endosteal_contour_method_none"
             generated.metadata.setdefault("voxel_counts", {})
@@ -888,6 +897,8 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             "segmentation_input_reader",
             "segmentation_input_path",
             "periosteal_contour_method",
+            "periosteal_contour_generated",
+            "periosteal_contour_reason",
             "endosteal_contour_method",
             "compartment_split_generated",
         ):
@@ -901,6 +912,8 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             ("cort", generated.cort, "Cortical mask"),
             ("seg", generated.seg, "Bone segmentation"),
         ]
+        if not periosteal_contour_generated:
+            output_specs = [spec for spec in output_specs if spec[0] != "full"]
         if not compartment_split_generated:
             output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
         generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
