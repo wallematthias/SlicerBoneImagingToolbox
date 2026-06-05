@@ -191,6 +191,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     REVIEW_SCOPE_LOW_CONFIDENCE = "Low-confidence scans (re-review)"
     CLEAR_ALL_OPERATORS = "All operators"
 
+    def _tip(self, widget, text):
+        widget.toolTip = str(text)
+        return widget
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.logic = MotionScoreHRpQCTLogic()
@@ -242,6 +246,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modelsPathEdit.settingKey = "MotionScore/InternalModelsRoot"
         self.modelsPathEdit.currentPath = str(self._default_models_path())
         self.modelsPathEdit.enabled = True
+        self._tip(self.modelsPathEdit, "Folder containing MotionScore model registry and model weight subfolders.")
         licenseForm.addRow("Local models folder", self.modelsPathEdit)
 
         self.modelVersionEdit = qt.QLineEdit()
@@ -249,6 +254,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.quickSetupButton = qt.QPushButton("Install / Download Models")
         self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
+        self._tip(self.quickSetupButton, "Install the MotionScore core package and download/register the default model bundle.")
+        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
         setupRow = qt.QHBoxLayout()
         setupRow.addWidget(self.quickSetupButton)
         setupRow.addWidget(self.updateToolboxButton)
@@ -258,10 +265,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Install the MotionScore package and download the default model weights."
         )
         self.licenseFlowHelpLabel.setWordWrap(True)
+        self._tip(self.licenseFlowHelpLabel, "Setup status and expected model-installation path.")
         licenseLayout.addWidget(self.licenseFlowHelpLabel)
 
         self.licenseStatusLabel = qt.QLabel("Models: not checked")
         self.licenseStatusLabel.setWordWrap(True)
+        self._tip(self.licenseStatusLabel, "Current MotionScore core/model availability status.")
         licenseLayout.addWidget(self.licenseStatusLabel)
 
         self.runBox = ctk.ctkCollapsibleButton()
@@ -281,6 +290,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         runForm.addRow("Dataset Root", self.datasetPathEdit)
 
         self.modelProfileCombo = qt.QComboBox()
+        self._tip(self.modelProfileCombo, "Model profile used for prediction and AI suggestions.")
         runForm.addRow("Model Profile", self.modelProfileCombo)
 
         self.sliceStepSpin = qt.QSpinBox()
@@ -300,6 +310,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.manualRunButton = qt.QPushButton("Grade Manually")
         self.interruptButton = qt.QPushButton("Interrupt")
         self.interruptButton.enabled = False
+        self._tip(self.loadDatasetButton, "Discover raw/processed scans and existing review state without starting prediction.")
+        self._tip(self.runButton, "Run prediction and resume by skipping already processed scans unless reprocess is enabled.")
+        self._tip(self.manualRunButton, "Start manual review immediately for scans already discovered or processed.")
+        self._tip(self.interruptButton, "Stop the active prediction, review-preparation, or training process.")
         runButtonsRow.addWidget(self.loadDatasetButton)
         runButtonsRow.addWidget(self.runButton)
         runButtonsRow.addWidget(self.manualRunButton)
@@ -316,6 +330,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         runLayout.addWidget(self.progressBar)
         self.datasetSummaryLabel = qt.QLabel("Dataset: not loaded")
         self.datasetSummaryLabel.setWordWrap(True)
+        self._tip(self.progressLabel, "Current MotionScore command status.")
+        self._tip(self.progressBar, "Progress for the active MotionScore command.")
+        self._tip(self.datasetSummaryLabel, "Summary of discovered raw, processed, pending, and reviewed scans.")
         runLayout.addWidget(self.datasetSummaryLabel)
 
         # Advanced options (moved out of main Run flow to declutter first-time usage).
@@ -323,9 +340,11 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.confidenceSpin.minimum = 0
         self.confidenceSpin.maximum = 100
         self.confidenceSpin.value = 75
+        self._tip(self.confidenceSpin, "AI confidence threshold used for low-confidence review and confident AI-only labels.")
 
         self.trainingModeCheck = qt.QCheckBox("Blind operator until manual grade is submitted")
         self.trainingModeCheck.setChecked(False)
+        self._tip(self.trainingModeCheck, "Hide AI suggestion until a manual grade is saved, useful for blinded reader studies.")
         self.forcePredictCheck = qt.QCheckBox("Reprocess existing predictions")
         self.forcePredictCheck.setChecked(bool(int(self._settings().value("MotionScore/ReprocessExisting", 0) or 0)))
         self.forcePredictCheck.setToolTip("When off, prediction resumes by skipping scans that already have matching outputs.")
@@ -333,9 +352,11 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.runModeCombo = qt.QComboBox()
         self.runModeCombo.addItems([self.RUN_MODE_AI, self.RUN_MODE_MANUAL])
         self.runModeCombo.setCurrentText(self.RUN_MODE_AI)
+        self._tip(self.runModeCombo, "Choose whether runs perform AI prediction or prepare/manual review only.")
 
         self.runScopeCombo = qt.QComboBox()
         self.runScopeCombo.addItem(self.RUN_SCOPE_ALL)
+        self._tip(self.runScopeCombo, "Limit prediction or review preparation to all scans or a selected subset when available.")
         self.deviceCombo = qt.QComboBox()
         self.deviceCombo.addItems(["auto", "mps", "cpu", "cuda"])
         saved_device = str(self._settings().value("MotionScore/TorchDevice", "auto") or "auto").strip().lower()
@@ -344,12 +365,15 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.deviceCombo.setCurrentText(saved_device)
         self.refreshButton = qt.QPushButton("Refresh Review")
         self.exportButton = qt.QPushButton("Export Final Grades")
+        self._tip(self.refreshButton, "Reload review index, predictions, and manual grades from disk.")
+        self._tip(self.exportButton, "Export the current final MotionScore grades table.")
 
         reviewBox = ctk.ctkCollapsibleButton()
         reviewBox.text = "Review"
         reviewLayout = qt.QFormLayout(reviewBox)
 
         self.scanCombo = qt.QComboBox()
+        self._tip(self.scanCombo, "Scan currently selected for review or loading.")
         reviewLayout.addRow("Selected Scan", self.scanCombo)
 
         self.reviewScopeCombo = qt.QComboBox()
@@ -360,15 +384,19 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self.REVIEW_SCOPE_LOW_CONFIDENCE,
             ]
         )
+        self._tip(self.reviewScopeCombo, "Choose whether the review queue shows pending, all, or low-confidence scans.")
         reviewLayout.addRow("Review Scope", self.reviewScopeCombo)
 
         self.reviewQueueLabel = qt.QLabel("Queue: shown=0 | pending=0 | reviewed=0/0")
+        self._tip(self.reviewQueueLabel, "Counts for the currently filtered review queue.")
         reviewLayout.addRow("Review Queue", self.reviewQueueLabel)
 
         self.autoLabel = qt.QLabel("Auto grade: - | confidence: -")
+        self._tip(self.autoLabel, "Current AI grade suggestion and confidence, hidden in blind training mode until reveal.")
         reviewLayout.addRow("Suggestion", self.autoLabel)
 
         self.agreementLabel = qt.QLabel("Agreement: overlap=0 | match=- | exact=-")
+        self._tip(self.agreementLabel, "Agreement between saved operator grades and AI predictions for the loaded review set.")
         reviewLayout.addRow("Operator vs AI", self.agreementLabel)
 
         self.agreementMatrixTable = qt.QTableWidget()
@@ -381,15 +409,19 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.agreementMatrixBox = ctk.ctkCollapsibleButton()
         self.agreementMatrixBox.text = "Agreement Matrix"
         self.agreementMatrixBox.collapsed = True
+        self._tip(self.agreementMatrixBox, "Confusion matrix comparing operator grades against AI suggestions.")
+        self._tip(self.agreementMatrixTable, "Rows and columns summarize operator-vs-AI grade agreement.")
         agreementMatrixLayout = qt.QVBoxLayout(self.agreementMatrixBox)
         agreementMatrixLayout.addWidget(self.agreementMatrixTable)
         reviewLayout.addRow(self.agreementMatrixBox)
 
         self.trainingRevealLabel = qt.QLabel("Last training reveal: -")
         self.trainingRevealLabel.setWordWrap(True)
+        self._tip(self.trainingRevealLabel, "Shows the AI suggestion revealed after a blinded training-mode grade is submitted.")
         reviewLayout.addRow("Training Reveal", self.trainingRevealLabel)
 
         self.profileModelCombo = qt.QComboBox()
+        self._tip(self.profileModelCombo, "Model whose slice profile plot is shown for the selected scan.")
         reviewLayout.addRow("Profile Model", self.profileModelCombo)
 
         self.profileLabel = qt.QLabel("Slice profile plot: -")
@@ -402,6 +434,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sliceProfileBox = ctk.ctkCollapsibleButton()
         self.sliceProfileBox.text = "Slice Profile"
         self.sliceProfileBox.collapsed = False
+        self._tip(self.sliceProfileBox, "Preview plot of slice-wise MotionScore predictions for the selected scan.")
+        self._tip(self.profileLabel, "Slice profile image for the current scan and selected profile model.")
         sliceProfileLayout = qt.QVBoxLayout(self.sliceProfileBox)
         sliceProfileLayout.addWidget(self.profileLabel)
         reviewLayout.addRow(self.sliceProfileBox)
@@ -409,6 +443,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.reviewerEdit = qt.QLineEdit()
         self.reviewerEdit.placeholderText = "reviewer id"
         self.reviewerEdit.setText(str(self._settings().value("MotionScore/Reviewer", "") or ""))
+        self._tip(self.reviewerEdit, "Reviewer/operator identifier saved with manual grades.")
         reviewLayout.addRow("Reviewer", self.reviewerEdit)
 
         quickGradeRow = qt.QHBoxLayout()
@@ -454,8 +489,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.backButton.setToolTip("Go back to the last graded scan to overwrite if needed.")
         self.backButton.enabled = False
         self.applyButton = qt.QPushButton("Save Grade + Next")
+        self._tip(self.applyButton, "Save the selected grade and advance to the next scan.")
         self.applyButton.setVisible(False)
         self.importButton = qt.QPushButton("Import Final Grades")
+        self._tip(self.importButton, "Import an external final-grades table into the current dataset review state.")
         reviewActionRow.addWidget(self.backButton)
         reviewActionRow.addWidget(self.importButton)
         reviewActionRow.addWidget(self.exportButton)
@@ -466,6 +503,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.clearReviewerCombo.addItem(self.CLEAR_ALL_OPERATORS)
         self.clearButton = qt.QPushButton("Clear Grades")
         self.loadScanButton = qt.QPushButton("Load / Reload Scan")
+        self._tip(self.clearReviewerCombo, "Reviewer whose saved grades should be cleared, or all reviewers.")
+        self._tip(self.clearButton, "Clear saved manual grades for the selected reviewer scope.")
+        self._tip(self.loadScanButton, "Load or reload the selected scan volume into Slicer.")
 
         self.layout.addWidget(reviewBox)
 
@@ -476,6 +516,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.setupStatusLabel = qt.QLabel("Core: checking... | Models: checking...")
         self.setupStatusLabel.setWordWrap(True)
+        self._tip(self.setupStatusLabel, "Combined status for MotionScore package, model weights, and review setup.")
         additionalLayout.addWidget(self.setupStatusLabel)
 
         additionalForm = qt.QFormLayout()
@@ -512,20 +553,24 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.retrainModelIdEdit = qt.QLineEdit()
         self.retrainModelIdEdit.setText(str(self._settings().value("MotionScore/RetrainModelId", "") or ""))
         self.retrainModelIdEdit.setPlaceholderText("custom-v1")
+        self._tip(self.retrainModelIdEdit, "Stable identifier for the new retrained model profile.")
         retrainForm.addRow("New Model ID", self.retrainModelIdEdit)
 
         self.retrainDisplayNameEdit = qt.QLineEdit()
         self.retrainDisplayNameEdit.setText(str(self._settings().value("MotionScore/RetrainDisplayName", "") or ""))
         self.retrainDisplayNameEdit.setPlaceholderText("Custom retrain")
+        self._tip(self.retrainDisplayNameEdit, "Human-readable model name shown in profile selectors.")
         retrainForm.addRow("Display Name", self.retrainDisplayNameEdit)
 
         self.retrainBaseModelCombo = qt.QComboBox()
+        self._tip(self.retrainBaseModelCombo, "Existing model profile used as initialization for retraining.")
         retrainForm.addRow("Base Model", self.retrainBaseModelCombo)
 
         self.retrainSliceCountSpin = qt.QSpinBox()
         self.retrainSliceCountSpin.minimum = 0
         self.retrainSliceCountSpin.maximum = 128
         self.retrainSliceCountSpin.value = int(self._settings().value("MotionScore/RetrainSliceCount", 8) or 8)
+        self._tip(self.retrainSliceCountSpin, "Number of slices sampled per scan for retraining. Use 0 for core defaults.")
         retrainForm.addRow("Slices Per Scan", self.retrainSliceCountSpin)
 
         self.retrainIncludeAutoCheck = qt.QCheckBox("Include confident AI-only labels")
@@ -537,12 +582,14 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.retrainPatienceSpin.minimum = 0
         self.retrainPatienceSpin.maximum = 100
         self.retrainPatienceSpin.value = int(self._settings().value("MotionScore/RetrainPatience", 10) or 10)
+        self._tip(self.retrainPatienceSpin, "Stop training after this many epochs without validation improvement. Use 0 to disable.")
         retrainForm.addRow("Early Stopping Patience", self.retrainPatienceSpin)
 
         self.retrainSeedSpin = qt.QSpinBox()
         self.retrainSeedSpin.minimum = 0
         self.retrainSeedSpin.maximum = 2_147_483_647
         self.retrainSeedSpin.value = int(self._settings().value("MotionScore/RetrainSeed", 13) or 13)
+        self._tip(self.retrainSeedSpin, "Random seed used for train/validation/test split and training reproducibility.")
         retrainForm.addRow("Random Seed", self.retrainSeedSpin)
 
         self.deviceCombo.setToolTip("Torch device used for prediction and retraining.")
@@ -550,30 +597,36 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.retrainAugHFlipCheck = qt.QCheckBox("Horizontal flip")
         self.retrainAugHFlipCheck.setChecked(bool(int(self._settings().value("MotionScore/RetrainAugHFlip", 1) or 1)))
+        self._tip(self.retrainAugHFlipCheck, "Enable horizontal flip augmentation during retraining.")
         retrainForm.addRow("Augmentation", self.retrainAugHFlipCheck)
 
         self.retrainAugVFlipCheck = qt.QCheckBox("Vertical flip")
         self.retrainAugVFlipCheck.setChecked(bool(int(self._settings().value("MotionScore/RetrainAugVFlip", 1) or 1)))
+        self._tip(self.retrainAugVFlipCheck, "Enable vertical flip augmentation during retraining.")
         retrainForm.addRow("", self.retrainAugVFlipCheck)
 
         self.retrainAugRotateCheck = qt.QCheckBox("Rotate 90°")
         self.retrainAugRotateCheck.setChecked(bool(int(self._settings().value("MotionScore/RetrainAugRotate", 0) or 0)))
+        self._tip(self.retrainAugRotateCheck, "Enable 90-degree rotation augmentation during retraining.")
         retrainForm.addRow("", self.retrainAugRotateCheck)
 
         self.retrainAugCropCheck = qt.QCheckBox("Random crop")
         self.retrainAugCropCheck.setChecked(bool(int(self._settings().value("MotionScore/RetrainAugCrop", 0) or 0)))
+        self._tip(self.retrainAugCropCheck, "Enable random crop augmentation during retraining.")
         retrainForm.addRow("", self.retrainAugCropCheck)
 
         self.retrainEpochsHeadSpin = qt.QSpinBox()
         self.retrainEpochsHeadSpin.minimum = 0
         self.retrainEpochsHeadSpin.maximum = 500
         self.retrainEpochsHeadSpin.value = int(self._settings().value("MotionScore/RetrainEpochsHead", 20) or 20)
+        self._tip(self.retrainEpochsHeadSpin, "Epochs for classifier-head training before fine tuning.")
         retrainForm.addRow("Classifier Epochs", self.retrainEpochsHeadSpin)
 
         self.retrainEpochsFineSpin = qt.QSpinBox()
         self.retrainEpochsFineSpin.minimum = 0
         self.retrainEpochsFineSpin.maximum = 1000
         self.retrainEpochsFineSpin.value = int(self._settings().value("MotionScore/RetrainEpochsFine", 50) or 50)
+        self._tip(self.retrainEpochsFineSpin, "Epochs for full-model fine tuning after classifier-head training.")
         retrainForm.addRow("Full Epochs", self.retrainEpochsFineSpin)
 
         retrainButtonsRow = qt.QHBoxLayout()
@@ -583,6 +636,11 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.continueTrainButton = qt.QPushButton("Continue Training")
         self.trainInterruptButton = qt.QPushButton("Interrupt")
         self.trainInterruptButton.enabled = False
+        self._tip(self.prepareRetrainButton, "Build the retraining manifest from manual grades and selected AI-only labels.")
+        self._tip(self.trainHeadButton, "Train only the classifier head for the configured model.")
+        self._tip(self.trainFullButton, "Run full retraining/fine tuning for the configured model.")
+        self._tip(self.continueTrainButton, "Continue training from the most recent retraining checkpoint.")
+        self._tip(self.trainInterruptButton, "Stop the active training process.")
         retrainButtonsRow.addWidget(self.prepareRetrainButton)
         retrainButtonsRow.addWidget(self.trainHeadButton)
         retrainButtonsRow.addWidget(self.trainFullButton)
@@ -592,6 +650,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.trainingMetricsLabel = qt.QLabel("Holdout: -")
         self.trainingMetricsLabel.setWordWrap(True)
+        self._tip(self.trainingMetricsLabel, "Validation/test metrics reported by the latest retraining run.")
         retrainLayout.addWidget(self.trainingMetricsLabel)
 
         self.trainingPlotLabel = qt.QLabel("Training plot: -")
@@ -600,6 +659,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.trainingPlotLabel.setMinimumWidth(0)
         self.trainingPlotLabel.setMaximumHeight(TRAINING_PLOT_HEIGHT + 20)
         self.trainingPlotLabel.setStyleSheet("QLabel { background: #ffffff; color: #333333; border: 1px solid #cfcfcf; }")
+        self._tip(self.trainingPlotLabel, "Training-curve plot generated by the latest retraining run.")
         retrainLayout.addWidget(self.trainingPlotLabel)
 
         self.layout.addWidget(self.retrainBox)

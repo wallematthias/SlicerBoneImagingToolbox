@@ -104,6 +104,24 @@ def test_laplace_hamming_shows_busy_progress_dialog():
     assert "dialog.setCancelButton(None)" in source
 
 
+def test_segmentation_module_uses_tabs_for_tool_groups():
+    source = MODULE.read_text()
+
+    assert "self.toolTabs = qt.QTabWidget()" in source
+    assert "self.toolTabs.addTab(generate_tab, \"Generate\")" in source
+    assert "self.toolTabs.addTab(derive_tab, \"Derive Labels\")" in source
+    assert "Create HOM Material Labels" in source
+    assert "Generate Missing Mask" in source
+    assert "Mask Operations" in source
+    assert "Union" in source
+    assert "Relabel Nonzero Voxels" in source
+    assert "Validate Mask Set" in source
+    assert "Count Selected Masks" in source
+    assert "create_material_label_volume" in source
+    assert "create_missing_mask_volume" in source
+    assert "create_boolean_mask_volume" in source
+
+
 def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     source = PIPELINE_MODULE.read_text()
 

@@ -495,6 +495,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             label.toolTip = str(help_text)
             return label
 
+        def _tip(widget, help_text):
+            widget.toolTip = str(help_text)
+            return widget
+
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
         depBox.collapsed = True
@@ -507,6 +511,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.installBtn = qt.QPushButton("Install / Update timelapsed-hrpqct")
         self.checkBtn = qt.QPushButton("Check")
         self.updateToolboxBtn = qt.QPushButton("Check toolbox updates")
+        _tip(self.installBtn, "Install or update the timelapsed-hrpqct core package in Slicer Python.")
+        _tip(self.checkBtn, "Check the installed timelapsed-hrpqct package status and version.")
+        _tip(self.updateToolboxBtn, "Check whether this local Slicer toolbox checkout has upstream updates.")
         self.installBtn.clicked.connect(self._on_install_pipeline)
         self.checkBtn.clicked.connect(self._on_check_pipeline)
         self.updateToolboxBtn.clicked.connect(self._on_check_toolbox_updates)
@@ -526,12 +533,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.inputPath = ctk.ctkPathLineEdit()
         self.inputPath.filters = ctk.ctkPathLineEdit.Dirs
         self.inputPath.setCurrentPath("")
+        _tip(self.inputPath, "Folder containing raw AIM data or an existing TimelapsedHRpQCT results dataset.")
         _cap_width(self.inputPath, 360)
         form.addRow(_label("Dataset root", "Folder containing raw AIM data or an existing TimelapsedHRpQCT results dataset."), self.inputPath)
         self._connect_path_changed(self.inputPath, self._on_dataset_or_results_root_changed)
 
         parseBtn = qt.QPushButton("Parse input")
         parseBtn.clicked.connect(self._on_parse)
+        _tip(parseBtn, "Discover AIM files, sessions, masks, and stacks before running the pipeline.")
         form.addRow(parseBtn)
 
         self.processingSubjectCombo = qt.QComboBox()
@@ -587,6 +596,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.applyProfileBtn, 105)
         self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
         self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)
+        _tip(self.studyProfileCombo, "Select bundled study defaults for mask generation, registration, and analysis.")
+        _tip(self.applyProfileBtn, "Apply the selected profile to visible settings and refresh the loaded preview when possible.")
         profileRow = qt.QWidget()
         profileLayout = qt.QHBoxLayout(profileRow)
         profileLayout.setContentsMargins(0, 0, 0, 0)
@@ -613,10 +624,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskMethod = qt.QComboBox()
         self.maskMethod.addItems(["adaptive", "seg_gauss", "laplace_hamming"])
         self.maskMethod.currentTextChanged.connect(self._on_mask_method_changed)
+        _tip(self.maskMethod, "Segmentation support method used during automatic mask generation.")
         _cap_width(self.maskMethod, 220)
         self.maskPeriostealContour = qt.QComboBox()
         self.maskPeriostealContour.addItem("standard", "standard")
         self.maskPeriostealContour.addItem("geodesic_fracture", "geodesic_fracture")
+        _tip(self.maskPeriostealContour, "Outer/full-mask contour method used during automatic mask generation.")
         _cap_width(self.maskPeriostealContour, 220)
         self.maskLow = ctk.ctkDoubleSpinBox()
         self.maskLow.minimum = -10000.0
@@ -630,6 +643,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskHigh.decimals = 1
         self.maskHigh.singleStep = 5.0
         self.maskHigh.value = 300.0
+        _tip(self.maskLow, "Lower method-specific threshold used when generating masks.")
+        _tip(self.maskHigh, "Upper method-specific threshold or smoothing parameter used when generating masks.")
         _cap_width(self.maskLow, 220)
         _cap_width(self.maskHigh, 220)
         self.maskLowLabel = _label("Mask lower threshold", "Lower method-specific threshold used when generating masks.")
@@ -640,9 +655,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskGeodesicThreshold.decimals = 1
         self.maskGeodesicThreshold.singleStep = 5.0
         self.maskGeodesicThreshold.value = 250.0
+        _tip(self.maskGeodesicThreshold, "Bone threshold passed to the geodesic fracture periosteal contour.")
         _cap_width(self.maskGeodesicThreshold, 220)
         self.maskGeodesicFillHoles = qt.QCheckBox()
         self.maskGeodesicFillHoles.checked = True
+        _tip(self.maskGeodesicFillHoles, "Fill internal holes in the geodesic fracture periosteal mask.")
         _cap_width(self.maskGeodesicFillHoles, 220)
         maskForm.addRow(_label("Mask method", "Method used when automatic mask/segmentation generation is enabled."), self.maskMethod)
         maskForm.addRow(
@@ -673,6 +690,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.resultsRootPath = ctk.ctkPathLineEdit()
         self.resultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.resultsRootPath.setCurrentPath("")
+        _tip(self.resultsRootPath, "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root.")
         _cap_width(self.resultsRootPath, 360)
         maskForm.addRow(_label("Results folder (optional)", "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root."), self.resultsRootPath)
         self._connect_path_changed(self.resultsRootPath, self._on_dataset_or_results_root_changed)
@@ -712,6 +730,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         registrationForm.addRow(tlHeader)
 
         self.regMetric = qt.QComboBox(); self.regMetric.addItems(["mattes", "correlation"])
+        _tip(self.regMetric, "Similarity metric for timelapse and multistack registration.")
         _cap_width(self.regMetric, 220)
         registrationForm.addRow(_label("Registration metric", "Similarity metric for timelapse and multistack registration. Options: mattes or correlation."), self.regMetric)
         self.tlSampling = ctk.ctkDoubleSpinBox()
@@ -720,11 +739,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.tlSampling.decimals = 5
         self.tlSampling.singleStep = 0.0001
         self.tlSampling.value = 0.001
+        _tip(self.tlSampling, "Random voxel sampling fraction for timelapse registration. Lower is faster; higher may be more robust.")
         _cap_width(self.tlSampling, 220)
         registrationForm.addRow(_label("Timelapse sampling", "Random voxel sampling fraction for timelapse registration. Lower is faster; higher may be more robust."), self.tlSampling)
 
         self.tlRes = qt.QSpinBox(); self.tlRes.minimum = 1; self.tlRes.maximum = 10; self.tlRes.value = 6
         self.tlIter = qt.QSpinBox(); self.tlIter.minimum = 1; self.tlIter.maximum = 5000; self.tlIter.value = 250
+        _tip(self.tlRes, "Number of image pyramid levels used for pairwise timelapse registration.")
+        _tip(self.tlIter, "Maximum optimizer iterations per timelapse registration level.")
         _cap_width(self.tlRes, 220)
         _cap_width(self.tlIter, 220)
         registrationForm.addRow(_label("Timelapse resolutions", "Number of image pyramid levels used for pairwise timelapse registration."), self.tlRes)
@@ -738,6 +760,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.msSampling.decimals = 5
         self.msSampling.singleStep = 0.0001
         self.msSampling.value = 0.005
+        _tip(self.msSampling, "Random voxel sampling fraction for multistack correction registration.")
+        _tip(self.msRes, "Number of image pyramid levels used for multistack correction.")
+        _tip(self.msIter, "Maximum optimizer iterations per multistack correction level.")
         self.useMultistackCheck = qt.QCheckBox()
         self.useMultistackCheck.checked = False
         self.useMultistackCheck.toolTip = (
@@ -810,6 +835,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisThreshold.decimals = 0
         self.analysisThreshold.singleStep = 5.0
         self.analysisThreshold.value = 225.0
+        _tip(self.analysisThresholdSlider, "Adjust absolute density-change threshold for formation/resorption preview.")
+        _tip(self.analysisThreshold, "Absolute density-change threshold for formation/resorption detection.")
         self.analysisClusterSlider = qt.QSlider(qt.Qt.Horizontal)
         self.analysisClusterSlider.minimum = 0
         self.analysisClusterSlider.maximum = 30
@@ -818,6 +845,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisClusterSlider.tickInterval = 1
         self.analysisClusterSlider.setTickPosition(qt.QSlider.TicksBelow)
         self.analysisCluster = qt.QSpinBox(); self.analysisCluster.minimum = 0; self.analysisCluster.maximum = 30; self.analysisCluster.singleStep = 1; self.analysisCluster.value = 12
+        _tip(self.analysisClusterSlider, "Adjust minimum connected event size retained in remodelling maps.")
+        _tip(self.analysisCluster, "Minimum connected event size retained in remodelling maps. Use 0 to disable cluster filtering.")
         self.analysisGaussianFilterCheck = qt.QCheckBox()
         self.analysisGaussianFilterCheck.checked = True
         self.analysisGaussianSigma = ctk.ctkDoubleSpinBox()
@@ -863,6 +892,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.analysisMarrowMaskErosion.maximum = 20
         self.analysisMarrowMaskErosion.value = 0
         self.analysisMarrowMaskErosion.visible = False
+        _tip(self.analysisGaussianFilterCheck, "Smooth grayscale images before subtraction for remodelling-site detection.")
+        _tip(self.analysisGaussianSigma, "Sigma in voxels when Gaussian remodelling-site filtering is enabled.")
+        _tip(self.analysisMethodCombo, "Choose grayscale-only or grayscale-plus-binary remodelling event logic.")
+        _tip(self.analysisPairModeCombo, "Choose which session comparisons to analyze: adjacent, baseline, or all pairs.")
+        _tip(self.analysisFullMaskDilation, "Dilate full masks before common-region construction.")
+        _tip(self.analysisBoneSupportDilation, "Dilate baseline/follow-up bone support when restricting changes to bone support.")
+        _tip(self.analysisMarrowMaskErosion, "Erode marrow masks before marrow-shell analysis.")
         _cap_width(self.analysisThreshold, 220)
         _cap_width(self.analysisCluster, 220)
         _cap_width(self.analysisGaussianFilterCheck, 220)
@@ -1009,6 +1045,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummarySavedStateLabel.wordWrap = True
         self.seriesSummarySavedStateLabel.toolTip = "Status of the saved cohort summary table."
         self.seriesSummaryUpdateBtn = qt.QPushButton("Load saved cohort summary")
+        self.seriesSummaryUpdateBtn.toolTip = "Load existing pairwise cohort analysis rows from disk."
         self.seriesSummaryUpdateBtn.clicked.connect(self._refresh_saved_cohort_summary)
         self.seriesSummaryExportBtn = qt.QPushButton("Export CSV")
         self.seriesSummaryExportBtn.toolTip = (
@@ -1027,6 +1064,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.seriesSummaryTable.verticalHeader().setVisible(False)
         self.seriesSummaryTable.horizontalHeader().setStretchLastSection(True)
         self.seriesSummaryTable.setMinimumHeight(120)
+        self.seriesSummaryPairsList.toolTip = "Saved comparison pairs included when computing cohort summary rows."
+        self.seriesSummaryTable.toolTip = "Mean saved remodelling volume fractions by mask/compartment."
         self.seriesSummaryForm.addRow(self.seriesSummaryPairsHintLabel)
         self.seriesSummaryForm.addRow(_label("Comparison pairs", "Saved adjacent comparison pairs included when computing cohort summary rows."), self.seriesSummaryPairsList)
         self.seriesSummaryForm.addRow(self.seriesSummarySavedStateLabel)
@@ -1114,6 +1153,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.progressBar.minimum = 0
         self.progressBar.maximum = 5
         self.progressBar.value = 0
+        self.progressBar.toolTip = "Current pipeline stage progress."
         self.currentStepLabel = qt.QLabel("Current step: idle")
         self.currentStepLabel.toolTip = "Currently running pipeline command or idle state."
         statusForm.addRow(_label("Progress", "Current pipeline stage progress."), self.progressBar)
@@ -1142,6 +1182,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         self.remodellingComparisonCombo = qt.QComboBox()
         self.loadDataBtn = qt.QPushButton("Load selected")
+        _tip(self.patientCombo, "Processed subject/site available for loading into Slicer.")
+        _tip(self.loadTypeCombo, "Processed output type to load into Slicer.")
+        _tip(self.remodellingComparisonCombo, "Pairwise remodelling comparison to load when loading remodelling images.")
+        _tip(self.loadDataBtn, "Load the selected processed output into the current Slicer scene.")
         _cap_width(self.patientCombo, 260)
         _cap_width(self.loadTypeCombo, 260)
         _cap_width(self.remodellingComparisonCombo, 260)
@@ -1159,6 +1203,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         previewForm.setVerticalSpacing(8)
         self.remodellingFullSegCombo = qt.QComboBox()
         self.remodellingRefreshBtn = qt.QPushButton("Refresh list")
+        _tip(self.remodellingFullSegCombo, "Loaded remodelling segmentation used for interactive preview updates.")
+        _tip(self.remodellingRefreshBtn, "Refresh the list of loaded remodelling segmentations.")
         _cap_width(self.remodellingFullSegCombo, 260)
         _cap_width(self.remodellingRefreshBtn, 120)
         self.remodellingRefreshBtn.clicked.connect(self._refresh_remodelling_full_selector)
@@ -1171,6 +1217,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.remodellingAutoUpdateCheck = qt.QCheckBox()
         self.remodellingAutoUpdateCheck.checked = False
         self.remodellingApplyInteractiveBtn = qt.QPushButton("Update remodelling image")
+        _tip(self.remodellingAutoUpdateCheck, "Automatically update the loaded remodelling image when analysis controls change.")
+        _tip(self.remodellingApplyInteractiveBtn, "Apply current analysis options to the selected loaded remodelling image.")
         _cap_width(self.remodellingAutoUpdateCheck, 180)
         _cap_width(self.remodellingApplyInteractiveBtn, 220)
         self.remodellingApplyInteractiveBtn.clicked.connect(self._on_apply_interactive_remodelling)

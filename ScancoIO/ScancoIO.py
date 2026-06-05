@@ -236,6 +236,10 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
 
 
 class ScancoIOWidget(ScriptedLoadableModuleWidget):
+    def _tip(self, widget, text):
+        widget.toolTip = str(text)
+        return widget
+
     def setup(self):
         super().setup()
         self.logic = ScancoIOLogic()
@@ -254,6 +258,8 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
         self.installButton = qt.QPushButton("Install / Update AIM I/O")
         self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
+        self._tip(self.installButton, "Install or update the lightweight AIM I/O dependency in Slicer Python.")
+        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
         self.installButton.clicked.connect(self._install_core)
         self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
         installRowWidget = qt.QWidget()
@@ -268,6 +274,8 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self._lastAutoVolumeName = ""
         browse = qt.QPushButton("Browse...")
         browse.clicked.connect(self._browse_import_path)
+        self._tip(self.importPathEdit, "Path to the Scanco AIM file to import. The volume name updates when this path changes.")
+        self._tip(browse, "Select an AIM file from disk.")
         row = qt.QHBoxLayout()
         row.addWidget(self.importPathEdit)
         row.addWidget(browse)
@@ -281,19 +289,23 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
             ("HU", "hu"),
         ]:
             self.scalingCombo.addItem(label, value)
+        self._tip(self.scalingCombo, "Numeric scaling for scalar-volume import. Segmentations always load from native nonzero values.")
         form.addRow("Load values as", self.scalingCombo)
 
         self.importAsCombo = qt.QComboBox()
         self.importAsCombo.addItem("Scalar volume", "volume")
         self.importAsCombo.addItem("Segmentation (nonzero mask)", "segmentation")
         self.importAsCombo.currentIndexChanged.connect(self._on_import_as_changed)
+        self._tip(self.importAsCombo, "Load AIM as an editable scalar volume or as a Slicer segmentation from nonzero voxels.")
         form.addRow("Load into Slicer as", self.importAsCombo)
 
         self.volumeNameEdit = qt.QLineEdit()
+        self._tip(self.volumeNameEdit, "Name assigned to the loaded Slicer volume or segmentation node.")
         form.addRow("Volume name", self.volumeNameEdit)
 
         self.importButton = qt.QPushButton("Import AIM")
         self.importButton.clicked.connect(self._import_aim)
+        self._tip(self.importButton, "Import the selected AIM into the Slicer scene and attach available AIM metadata.")
         form.addRow(self.importButton)
 
     def _build_export_section(self):
@@ -310,11 +322,14 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.volumeSelector.noneEnabled = True
         self.volumeSelector.setMRMLScene(slicer.mrmlScene)
         self.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._on_volume_selected)
+        self._tip(self.volumeSelector, "Scalar or labelmap volume to export back to Scanco AIM format.")
         form.addRow("Volume", self.volumeSelector)
 
         self.exportPathEdit = qt.QLineEdit()
         browse = qt.QPushButton("Browse...")
         browse.clicked.connect(self._browse_export_path)
+        self._tip(self.exportPathEdit, "Destination AIM file path for export.")
+        self._tip(browse, "Choose where to write the exported AIM file.")
         row = qt.QHBoxLayout()
         row.addWidget(self.exportPathEdit)
         row.addWidget(browse)
@@ -323,6 +338,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.exportModeCombo = qt.QComboBox()
         self.exportModeCombo.addItem("Grayscale image", "grayscale")
         self.exportModeCombo.addItem("Binary mask (0/127)", "mask")
+        self._tip(self.exportModeCombo, "Export scalar intensities, or convert nonzero voxels to a binary Scanco mask label.")
         form.addRow("Export as", self.exportModeCombo)
 
         self.unitCombo = qt.QComboBox()
@@ -330,11 +346,14 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.unitCombo.addItem("Native", "native")
         self.unitCombo.addItem("BMD", "BMD")
         self.unitCombo.addItem("HU", "HU")
+        self._tip(self.unitCombo, "Unit convention for grayscale export. Auto reuses metadata from imported AIM volumes when available.")
         form.addRow("Grayscale unit", self.unitCombo)
 
         self.metadataJsonEdit = qt.QLineEdit()
         browse_meta = qt.QPushButton("Browse...")
         browse_meta.clicked.connect(self._browse_metadata_json)
+        self._tip(self.metadataJsonEdit, "Optional imported-stack metadata JSON used when the selected volume has no attached AIM metadata.")
+        self._tip(browse_meta, "Select metadata JSON from a prior timelapsed import or edited header export.")
         meta_row = qt.QHBoxLayout()
         meta_row.addWidget(self.metadataJsonEdit)
         meta_row.addWidget(browse_meta)
@@ -342,6 +361,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
         load_header = qt.QPushButton("Load header from selected volume")
         load_header.clicked.connect(self._load_header_from_selected_volume)
+        self._tip(load_header, "Populate editable processing-log and header fields from metadata attached to the selected Slicer volume.")
         form.addRow(load_header)
 
         self.processingLogTable = qt.QTableWidget()
@@ -349,6 +369,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.processingLogTable.setHorizontalHeaderLabels(["Field", "Value"])
         self.processingLogTable.horizontalHeader().setStretchLastSection(True)
         self.processingLogTable.setMinimumHeight(220)
+        self._tip(self.processingLogTable, "Editable Scanco processing-log fields used for AIM calibration and unit conversion on export.")
         form.addRow("Processing log", self.processingLogTable)
 
         log_buttons = qt.QHBoxLayout()
@@ -356,6 +377,8 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.addLogRowButton.clicked.connect(self._add_processing_log_row)
         self.removeLogRowButton = qt.QPushButton("Remove selected")
         self.removeLogRowButton.clicked.connect(self._remove_selected_processing_log_rows)
+        self._tip(self.addLogRowButton, "Add a processing-log field/value row.")
+        self._tip(self.removeLogRowButton, "Remove selected processing-log rows from the export metadata.")
         log_buttons.addWidget(self.addLogRowButton)
         log_buttons.addWidget(self.removeLogRowButton)
         form.addRow(log_buttons)
@@ -365,14 +388,17 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.headerEdit.setPlaceholderText(
             "Other AIM header metadata JSON. Geometry is refreshed from the selected volume at export."
         )
+        self._tip(self.headerEdit, "Editable JSON for non-processing-log AIM header fields. Geometry is refreshed from the selected volume.")
         form.addRow("Other header", self.headerEdit)
 
         self.allowMinimalCheck = qt.QCheckBox("Allow export with minimal geometry metadata")
         self.allowMinimalCheck.checked = False
+        self._tip(self.allowMinimalCheck, "Allow export when no original AIM/header metadata is available, using geometry from the selected volume.")
         form.addRow(self.allowMinimalCheck)
 
         self.exportButton = qt.QPushButton("Export AIM")
         self.exportButton.clicked.connect(self._export_aim)
+        self._tip(self.exportButton, "Write the selected Slicer volume or mask to a Scanco AIM file.")
         form.addRow(self.exportButton)
 
     def _build_log_section(self):

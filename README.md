@@ -38,21 +38,23 @@ The Slicer modules remain workflow wrappers around core Python packages:
 
 - **Timelapsed HR-pQCT**: End-to-end longitudinal HR-pQCT workflow in Slicer.
   - Parses AIM datasets into subject/site/session structure.
+  - Uses bundled study profiles to configure mask generation, registration, multistack handling, and remodelling analysis.
   - Generates masks (if needed), runs timelapse registration, and computes remodelling outputs.
   - Loads processed outputs (`raw`, `transformed`, `remodelling image`) for review and 3D visualization.
 - **Motion Scoring**: Interactive HR-pQCT scan motion grading workflow.
-  - Runs MotionScore predictions.
-  - Supports rapid reviewer grading and review-table export.
+  - Runs or resumes MotionScore predictions while skipping already processed scans by default.
+  - Supports rapid reviewer grading, manual review of already processed scans while prediction is still running, review-table export, and interrupted-run continuation.
   - Keeps model inference and retraining logic in the MotionScore core package.
   - Supports local or downloaded model bundles without requiring a hosted license API.
 - **Scanco I/O**: Focused AIM import/export utility.
-  - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, or HU.
+  - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, HU, or a Slicer segmentation from nonzero voxels.
   - Preserves AIM metadata on imported Slicer volumes so edited data can be exported without a reference AIM.
   - Exports edited grayscale volumes or binary masks back to `.AIM`.
   - Uses a lightweight local wrapper around `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
 - **Contours and Segmentation**: Lightweight Slicer workflow helper for masks and contours.
   - Generates HR-pQCT full, trabecular, cortical, and binary segmentation outputs from an input volume.
   - Provides radius, tibia, and knee contour presets plus standard Gaussian, Laplace-Hamming, and adaptive segmentation methods.
+  - Provides mask utility tools for deriving missing full/trabecular/cortical masks, boolean mask operations, relabelling, validation, and HOM/material labelmap creation.
   - Keeps expert threshold and morphology settings collapsed by default, then optionally opens Slicer's Segment Editor for cleanup.
 
 ## Installation
@@ -117,11 +119,14 @@ Do not add only the top-level repository folder. Slicer needs the four module fo
 5. Choose where results should be written:
    - default: `<dataset_root>/TimelapsedHRpQCT`
    - optional: set `Results folder` to override.
-6. If you do not already have valid masks/contours, click `1. Generate Masks`.
-7. Click `2. Timelapse Pipeline` to run the timelapse processing and create remodelling outputs.
-8. Load `remodelling image` from `Load Processed Data` and inspect in 2D/3D.
-9. If you change analysis settings for the loaded remodelling image, click `Update remodelling image`. To recompute saved outputs for the whole processed cohort, click `Rerun cohort analysis`.
-10. Use `Load Processed Data` to load different processing stages (`raw`, `transformed`, `remodelling image`) for quick comparison.
+6. Select a study `Profile`, then click `Apply profile` to update the visible settings.
+7. If you do not already have valid masks/contours, leave mask generation enabled.
+8. Click `Run pipeline` to run the timelapse processing and create remodelling outputs.
+9. Load `remodelling image` from `Load Processed Data` and inspect in 2D/3D.
+10. If you change analysis settings for the loaded remodelling image, click `Update remodelling image`. To recompute saved outputs for the whole processed cohort, click `Rerun cohort analysis`.
+11. Use `Load Processed Data` to load different processing stages (`raw`, `transformed`, `remodelling image`) for quick comparison.
+
+Most controls include hover tooltips. These are intended as the first-line reference for profile effects, threshold units, review-state behavior, and mask utility inputs.
 
 ## Interactive Remodelling Review
 
@@ -199,7 +204,7 @@ The current default model catalog is:
 
 The `Scanco I/O` module is intended for simple Slicer round trips:
 
-1. Import an AIM image using density/BMD, native, mu, or HU scaling.
+1. Import an AIM image using density/BMD, native, mu, HU scaling, or as a segmentation from nonzero voxels.
 2. Use standard Slicer tools to inspect, segment, crop, smooth, or edit the loaded volume.
 3. Export the edited scalar volume or labelmap back to AIM.
 
@@ -210,6 +215,18 @@ Imported AIM metadata is stored on the loaded Slicer volume. The processing log 
 ## Contours And Segmentation
 
 The `Contours and Segmentation` module wraps the core `timelapsed-hrpqct` contour-generation code. It can generate full, trabecular, cortical, and binary segmentation outputs from a selected HR-pQCT volume using radius, tibia, or knee presets. The interface separates bone segmentation from contour generation: choose a bone segmentation method (Gaussian, Laplace-Hamming, adaptive, or none), then choose periosteal/outer and endosteal/inner contour strategies. Standard contours follow the selected bone segmentation method as their support; the local geodesic fracture contour can be selected as the periosteal contour for radius fracture cases. Expert thresholds and morphology settings are available in a collapsed panel for method validation and scanner-specific tuning.
+
+Laplace-Hamming segmentation follows the same native Scanco-unit convention as the core pipeline. When the selected Slicer volume came from Scanco I/O, the module uses attached AIM calibration metadata to convert density images back to native Scanco values; otherwise it can reload the original AIM source when that path is available.
+
+The `Derive Labels` tab provides common mask utilities:
+
+- Generate a missing compartment mask from any two of `full`, `trab`, and `cort`.
+- Create HOM/material labelmaps from bone segmentation plus any two compartment masks, using default labels `126` for trabecular bone and `127` for cortical bone.
+- Run boolean mask operations: union, intersection, A-minus-B, and XOR.
+- Relabel nonzero voxels in a mask.
+- Validate full/trab/cort consistency and report voxel counts.
+
+These utilities are meant for interactive preparation and QA of labelmaps before exporting to downstream FEA or analysis workflows.
 
 ## Results Layout
 

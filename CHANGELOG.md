@@ -9,6 +9,8 @@ All notable changes to this extension are documented in this file.
 - Evolved the extension into an HR-pQCT Toolbox with Timelapsed, Motion Scoring, Scanco I/O, and Contours and Segmentation modules under one Slicer category.
 - Added a Scanco I/O module for AIM import with density/native/mu/HU scaling and AIM export for grayscale or binary mask volumes.
 - Added a Contours and Segmentation module for threshold-based segmentation creation followed by cleanup in Slicer's Segment Editor.
+- Added Contours and Segmentation mask utility tools for missing-mask derivation, boolean operations, relabelling, validation, voxel counts, and HOM/material labelmap creation.
+- Added broad tooltip coverage across the toolbox modules for install, parsing, profile, review, export, segmentation, and mask utility controls.
 - Added MotionScoreHRpQCT as a sibling toolbox module.
 - Added Timelapsed study profile selection for ETH/UofC, UCSF, Shriners, and standard core defaults.
 - Added MotionScore local/downloaded model bundle setup as a no-hosted-license-service alternative.
