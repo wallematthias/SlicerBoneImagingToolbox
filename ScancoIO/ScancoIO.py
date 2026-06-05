@@ -222,6 +222,10 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         display_node.SetVisibility(True)
         display_node.SetVisibility2DFill(True)
         display_node.SetVisibility2DOutline(True)
+        if hasattr(display_node, "SetAllSegmentsVisibility2DFill"):
+            display_node.SetAllSegmentsVisibility2DFill(True)
+        if hasattr(display_node, "SetAllSegmentsVisibility2DOutline"):
+            display_node.SetAllSegmentsVisibility2DOutline(True)
         if hasattr(display_node, "SetOpacity"):
             display_node.SetOpacity(0.5)
         if hasattr(display_node, "SetOpacity2DFill"):
