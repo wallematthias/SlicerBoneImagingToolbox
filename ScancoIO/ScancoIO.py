@@ -131,7 +131,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         return _aim_io_module().is_aimio_available()
 
     def install_or_update_core(self):
-        slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir aimio-py")
+        slicer.util.pip_install("aimio-py>=0.1.2 numpy>=1.26,<2.0")
 
     def import_aim(
         self,

@@ -16,6 +16,7 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
     assert "as_segmentation=False" in source
+    assert 'slicer.util.pip_install("aimio-py>=0.1.2 numpy>=1.26,<2.0")' in source
     assert "slicer.util.loadSegmentation" in source
     assert "slicer.util.loadLabelVolume" not in source
     assert "self._label_image_for_segmentation(image)" in source
