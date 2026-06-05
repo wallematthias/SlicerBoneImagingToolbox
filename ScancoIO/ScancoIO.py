@@ -81,7 +81,13 @@ def _parse_table_value(text):
 def _aim_io_module():
     from ScancoIOLib import aim_io
 
-    required = ("is_aimio_available", "read_aim", "write_aim", "log_to_dict")
+    required = (
+        "is_aimio_available",
+        "read_aim",
+        "write_aim",
+        "log_to_dict",
+        "image_with_aim_metadata_geometry",
+    )
     if not all(hasattr(aim_io, name) for name in required):
         aim_io = importlib.reload(aim_io)
     return aim_io

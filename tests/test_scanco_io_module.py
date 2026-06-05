@@ -19,6 +19,7 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "slicer.util.loadSegmentation" in source
     assert "slicer.util.loadLabelVolume" not in source
     assert "self._label_image_for_segmentation(image)" in source
+    assert '"image_with_aim_metadata_geometry"' in source
     assert "sitk.GetArrayFromImage(image)" in source
     assert "np.uint16" in source
     assert "sitk.Cast(image != 0" not in source
