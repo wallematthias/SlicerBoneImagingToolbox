@@ -77,6 +77,15 @@ def test_segmentation_module_does_not_emit_full_mask_without_outer_contour():
     assert "generated.metadata[\"voxel_counts\"][\"full\"] = 0" in source
 
 
+def test_segmentation_module_defaults_to_segmentation_node_only():
+    source = MODULE.read_text()
+
+    assert "create_labelmaps=False" in source
+    assert "self.createLabelmapsCheck" not in source
+    assert "create_labelmaps=False" in source
+    assert "label_text = \"\"" in source
+
+
 def test_laplace_hamming_segmentation_is_forced_from_support_mask():
     source = MODULE.read_text()
 

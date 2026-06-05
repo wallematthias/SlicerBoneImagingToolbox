@@ -132,6 +132,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         scaling,
         volume_name=None,
         as_segmentation=False,
+        as_labelmap=False,
         reference_volume_node=None,
     ):
         aim_io = _aim_io_module()
@@ -139,21 +140,32 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         aim_path = Path(aim_path)
         if not aim_path.exists():
             raise FileNotFoundError(f"AIM file does not exist: {aim_path}")
+        if as_segmentation and as_labelmap:
+            raise ValueError("Choose segmentation import or labelmap import, not both.")
+        if as_segmentation and reference_volume_node is None:
+            raise ValueError("Segmentation import requires a reference volume.")
         image, metadata = aim_io.read_aim(aim_path, scaling=scaling)
         name = volume_name.strip() if volume_name else aim_path.stem
 
         with tempfile.TemporaryDirectory(prefix="hrpqct_aim_import_") as temp_dir:
             nrrd_path = Path(temp_dir) / "imported_aim.nrrd"
-            if as_segmentation:
+            if as_segmentation or as_labelmap:
                 label_image = sitk.Cast(image != 0, sitk.sitkUInt8)
                 if reference_volume_node is not None:
                     self._validate_image_matches_reference(label_image, reference_volume_node)
                 sitk.WriteImage(label_image, str(nrrd_path))
-                loaded = slicer.util.loadSegmentation(
-                    str(nrrd_path),
-                    {"name": name},
-                    returnNode=True,
-                )
+                if as_segmentation:
+                    loaded = slicer.util.loadSegmentation(
+                        str(nrrd_path),
+                        {"name": name},
+                        returnNode=True,
+                    )
+                else:
+                    loaded = slicer.util.loadLabelVolume(
+                        str(nrrd_path),
+                        {"name": name},
+                        returnNode=True,
+                    )
             else:
                 sitk.WriteImage(image, str(nrrd_path))
                 loaded = slicer.util.loadVolume(str(nrrd_path), {"name": name}, returnNode=True)
@@ -228,14 +240,20 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         if not str(output_path).strip():
             raise ValueError("Choose an output AIM path.")
         output_path = Path(output_path)
-        if hasattr(volume_node, "IsA") and volume_node.IsA("vtkMRMLLabelMapVolumeNode"):
+        if hasattr(volume_node, "IsA") and (
+            volume_node.IsA("vtkMRMLLabelMapVolumeNode")
+            or volume_node.IsA("vtkMRMLSegmentationNode")
+        ):
             as_mask = True
 
-        with tempfile.TemporaryDirectory(prefix="hrpqct_aim_export_") as temp_dir:
-            nrrd_path = Path(temp_dir) / "slicer_volume.nrrd"
-            if not slicer.util.saveNode(volume_node, str(nrrd_path)):
-                raise RuntimeError("Could not save selected Slicer volume for AIM export.")
-            image = sitk.ReadImage(str(nrrd_path))
+        if hasattr(volume_node, "IsA") and volume_node.IsA("vtkMRMLSegmentationNode"):
+            image = self._segmentation_to_labelmap_image(volume_node)
+        else:
+            with tempfile.TemporaryDirectory(prefix="hrpqct_aim_export_") as temp_dir:
+                nrrd_path = Path(temp_dir) / "slicer_volume.nrrd"
+                if not slicer.util.saveNode(volume_node, str(nrrd_path)):
+                    raise RuntimeError("Could not save selected Slicer volume for AIM export.")
+                image = sitk.ReadImage(str(nrrd_path))
 
         metadata = None
         metadata_json = Path(metadata_json) if metadata_json else None
@@ -267,6 +285,32 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             metadata["unit"] = "native"
         aim_io.write_aim(image, output_path, metadata=metadata, unit=write_unit, mask=as_mask)
         return output_path
+
+    def _segmentation_to_labelmap_image(self, segmentation_node):
+        reference_role = slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()
+        reference_node = segmentation_node.GetNodeReference(reference_role)
+        if reference_node is None:
+            raise ValueError("Segmentation export requires reference image geometry.")
+
+        label_node = slicer.modules.volumes.logic().CreateAndAddLabelVolume(
+            reference_node,
+            "__hrpqct_segmentation_export__",
+        )
+        try:
+            ok = slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
+                segmentation_node,
+                label_node,
+                slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY,
+            )
+            if not ok:
+                raise RuntimeError("Could not export segmentation to labelmap for AIM export.")
+            with tempfile.TemporaryDirectory(prefix="hrpqct_seg_export_") as temp_dir:
+                nrrd_path = Path(temp_dir) / "segmentation_mask.nrrd"
+                if not slicer.util.saveNode(label_node, str(nrrd_path)):
+                    raise RuntimeError("Could not save temporary segmentation labelmap for AIM export.")
+                return sitk.ReadImage(str(nrrd_path))
+        finally:
+            slicer.mrmlScene.RemoveNode(label_node)
 
 
 class ScancoIOWidget(ScriptedLoadableModuleWidget):
@@ -328,6 +372,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
         self.importAsCombo = qt.QComboBox()
         self.importAsCombo.addItem("Scalar volume", "volume")
+        self.importAsCombo.addItem("Labelmap volume (nonzero mask)", "labelmap")
         self.importAsCombo.addItem("Segmentation (nonzero mask)", "segmentation")
         self.importAsCombo.currentIndexChanged.connect(self._on_import_as_changed)
         self._tip(self.importAsCombo, "Load AIM as an editable scalar volume or as a Slicer segmentation from nonzero voxels.")
@@ -345,7 +390,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.importReferenceSelector.enabled = False
         self._tip(
             self.importReferenceSelector,
-            "Optional reference volume for segmentation imports. Leave empty to use the AIM file geometry.",
+            "Reference volume required for segmentation imports. Labelmap imports use the AIM file geometry directly.",
         )
         form.addRow("Reference volume", self.importReferenceSelector)
 
@@ -365,15 +410,19 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         form = qt.QFormLayout(collapsible)
 
         self.volumeSelector = slicer.qMRMLNodeComboBox()
-        self.volumeSelector.nodeTypes = ["vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode"]
+        self.volumeSelector.nodeTypes = [
+            "vtkMRMLScalarVolumeNode",
+            "vtkMRMLLabelMapVolumeNode",
+            "vtkMRMLSegmentationNode",
+        ]
         self.volumeSelector.selectNodeUponCreation = False
         self.volumeSelector.addEnabled = False
         self.volumeSelector.removeEnabled = False
         self.volumeSelector.noneEnabled = True
         self.volumeSelector.setMRMLScene(slicer.mrmlScene)
         self.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self._on_volume_selected)
-        self._tip(self.volumeSelector, "Scalar or labelmap volume to export back to Scanco AIM format.")
-        form.addRow("Volume", self.volumeSelector)
+        self._tip(self.volumeSelector, "Scalar volume, labelmap, or Slicer segmentation to export back to Scanco AIM format.")
+        form.addRow("Node", self.volumeSelector)
 
         self.exportPathEdit = qt.QLineEdit()
         browse = qt.QPushButton("Browse...")
@@ -448,7 +497,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
         self.exportButton = qt.QPushButton("Export AIM")
         self.exportButton.clicked.connect(self._export_aim)
-        self._tip(self.exportButton, "Write the selected Slicer volume or mask to a Scanco AIM file.")
+        self._tip(self.exportButton, "Write the selected Slicer volume, labelmap, or segmentation to a Scanco AIM file.")
         form.addRow(self.exportButton)
 
     def _build_log_section(self):
@@ -561,7 +610,10 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
             if (
                 node is not None
                 and hasattr(node, "IsA")
-                and node.IsA("vtkMRMLLabelMapVolumeNode")
+                and (
+                    node.IsA("vtkMRMLLabelMapVolumeNode")
+                    or node.IsA("vtkMRMLSegmentationNode")
+                )
                 and hasattr(self, "exportModeCombo")
             ):
                 index = self.exportModeCombo.findData("mask")
@@ -600,8 +652,9 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self._update_volume_name_from_import_path(path)
 
     def _on_import_as_changed(self, _index=None):
-        as_segmentation = self.importAsCombo.currentData == "segmentation"
-        self.scalingCombo.enabled = not as_segmentation
+        import_kind = self.importAsCombo.currentData
+        as_segmentation = import_kind == "segmentation"
+        self.scalingCombo.enabled = import_kind == "volume"
         self.importReferenceSelector.enabled = as_segmentation
 
     def _update_volume_name_from_import_path(self, path):
@@ -616,20 +669,25 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
     def _import_aim(self):
         try:
-            as_segmentation = self.importAsCombo.currentData == "segmentation"
-            scaling = "native" if as_segmentation else self.scalingCombo.currentData
+            import_kind = self.importAsCombo.currentData
+            as_segmentation = import_kind == "segmentation"
+            as_labelmap = import_kind == "labelmap"
+            reference_volume_node = self.importReferenceSelector.currentNode() if as_segmentation else None
+            scaling = self.scalingCombo.currentData if import_kind == "volume" else "native"
             node = self.logic.import_aim(
                 self.importPathEdit.text,
                 scaling=scaling,
                 volume_name=self.volumeNameEdit.text,
                 as_segmentation=as_segmentation,
-                reference_volume_node=self.importReferenceSelector.currentNode() if as_segmentation else None,
+                as_labelmap=as_labelmap,
+                reference_volume_node=reference_volume_node,
             )
             if not as_segmentation:
                 self.volumeSelector.setCurrentNode(node)
-                self.importReferenceSelector.setCurrentNode(node)
+                if not as_labelmap:
+                    self.importReferenceSelector.setCurrentNode(node)
             self._set_header_metadata(self._node_header_metadata(node))
-            node_kind = "segmentation" if as_segmentation else "volume"
+            node_kind = "segmentation" if as_segmentation else "labelmap" if as_labelmap else "volume"
             self._log(f"Imported {node.GetName()} as {node_kind} from {self.importPathEdit.text}")
         except Exception as exc:
             self._error(exc)

@@ -658,7 +658,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         endosteal_contour_method="standard",
         method=None,
         output_prefix=None,
-        create_labelmaps=True,
+        create_labelmaps=False,
         open_segment_editor=False,
         params=None,
         progress_callback=None,
@@ -1027,11 +1027,6 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         self.outputPrefixEdit = qt.QLineEdit()
         self._tip(self.outputPrefixEdit, "Optional prefix for generated Slicer nodes. Leave empty to use the input volume name.")
         form.addRow("Output prefix", self.outputPrefixEdit)
-
-        self.createLabelmapsCheck = qt.QCheckBox()
-        self.createLabelmapsCheck.checked = True
-        self._tip(self.createLabelmapsCheck, "Keep generated full/trab/cort/seg labelmap volumes in the Slicer scene.")
-        form.addRow("Create labelmaps", self.createLabelmapsCheck)
 
         self.openEditorCheck = qt.QCheckBox()
         self.openEditorCheck.checked = False
@@ -1478,7 +1473,7 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
                     periosteal_contour_method=periosteal_method,
                     endosteal_contour_method=endosteal_method,
                     output_prefix=self.outputPrefixEdit.text.strip() or None,
-                    create_labelmaps=bool(self.createLabelmapsCheck.checked),
+                    create_labelmaps=False,
                     open_segment_editor=bool(self.openEditorCheck.checked),
                     params=self._collect_params(),
                     progress_callback=progress_callback,
@@ -1488,7 +1483,7 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
                 if progress_dialog is not None:
                     progress_dialog.close()
             counts = metadata.get("voxel_counts", {})
-            label_text = f" Created {len(labelmaps)} labelmaps." if labelmaps else ""
+            label_text = ""
             provenance_text = f" Method={metadata.get('segmentation_method')}."
             if metadata.get("segmentation_method") == "laplace_hamming":
                 provenance_text = (

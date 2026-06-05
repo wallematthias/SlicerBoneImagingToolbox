@@ -30,7 +30,7 @@ def test_scanco_io_has_import_export_tooltips():
         "The volume name updates when this path changes.",
         "Unit convention for grayscale export.",
         "Editable Scanco processing-log fields",
-        "Write the selected Slicer volume or mask to a Scanco AIM file.",
+        "Write the selected Slicer volume, labelmap, or segmentation to a Scanco AIM file.",
     ]:
         assert snippet in source
 
@@ -59,4 +59,3 @@ def test_timelapsed_has_control_level_tooltips_for_profiles_analysis_and_loading
         "Apply current analysis options to the selected loaded remodelling image.",
     ]:
         assert snippet in source
-

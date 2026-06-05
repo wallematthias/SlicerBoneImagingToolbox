@@ -16,9 +16,12 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
     assert "as_segmentation=False" in source
+    assert "as_labelmap=False" in source
     assert "reference_volume_node=None" in source
     assert "slicer.util.loadSegmentation" in source
+    assert "slicer.util.loadLabelVolume" in source
     assert "vtkMRMLSegmentationNode" in source
+    assert "Segmentation import requires a reference volume" in source
     assert "segmentation_node = volume_node" in source
     assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_volume_node)" in source
     assert "self._validate_image_matches_reference(label_image, reference_volume_node)" in source
@@ -30,14 +33,18 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "display_node.SetVisibility2DFill(True)" in source
     assert "display_node.SetVisibility2DOutline(True)" in source
     assert "Segmentation (nonzero mask)" in source
+    assert "Labelmap volume (nonzero mask)" in source
     assert "self.importReferenceSelector" in source
-    assert "reference_volume_node=self.importReferenceSelector.currentNode() if as_segmentation else None" in source
+    assert "reference_volume_node=reference_volume_node" in source
 
 
 def test_scanco_io_forces_labelmap_exports_to_binary_mask() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
     assert 'volume_node.IsA("vtkMRMLLabelMapVolumeNode")' in source
+    assert 'volume_node.IsA("vtkMRMLSegmentationNode")' in source
+    assert "ExportAllSegmentsToLabelmapNode" in source
+    assert "GetReferenceImageGeometryReferenceRole()" in source
     assert "as_mask = True" in source
     assert 'self.exportModeCombo.findData("mask")' in source
 
