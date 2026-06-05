@@ -86,6 +86,10 @@ def test_segmentation_module_defaults_to_segmentation_node_only():
     assert "create_labelmaps=False" in source
     assert "label_text = \"\"" in source
     assert "returnNode=True" not in source
+    assert "slicer.util.updateSegmentBinaryLabelmapFromArray(" in source
+    assert "_remove_empty_duplicate_segmentation_nodes(segmentation_node)" in source
+    assert "node.IsA(\"vtkMRMLSegmentationNode\")" in source
+    assert "node.GetSegmentation().GetNumberOfSegments() == 0" in source
 
 
 def test_gaussian_segmentation_without_compartments_uses_global_trab_threshold():

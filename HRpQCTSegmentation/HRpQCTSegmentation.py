@@ -465,6 +465,31 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             segment_id = segmentation.GetNthSegmentID(segmentation.GetNumberOfSegments() - 1)
             segmentation.GetSegment(segment_id).SetName(segment_name)
 
+    def _add_sitk_segment(self, image, segmentation_node, segment_name, reference_node):
+        array_zyx = sitk.GetArrayFromImage(image).astype(np.uint8, copy=False)
+        array_zyx = (array_zyx > 0).astype(np.uint8, copy=False)
+        segment_id = segmentation_node.GetSegmentation().AddEmptySegment(segment_name)
+        slicer.util.updateSegmentBinaryLabelmapFromArray(
+            array_zyx,
+            segmentation_node,
+            segment_id,
+            reference_node,
+        )
+
+    def _remove_empty_duplicate_segmentation_nodes(self, segmentation_node):
+        nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSegmentationNode")
+        nodes.UnRegister(None)
+        for index in range(nodes.GetNumberOfItems()):
+            node = nodes.GetItemAsObject(index)
+            if (
+                node is not None
+                and node is not segmentation_node
+                and node.IsA("vtkMRMLSegmentationNode")
+                and node.GetName() == segmentation_node.GetName()
+                and node.GetSegmentation().GetNumberOfSegments() == 0
+            ):
+                slicer.mrmlScene.RemoveNode(node)
+
     def _mask_array_from_node(self, node, role):
         if node is None:
             return None
@@ -933,12 +958,12 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
         generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
         for role, image_out, segment_name in output_specs:
-            label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
-            self._add_labelmap_segment(label_node, segmentation_node, segment_name)
+            self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node)
             if create_labelmaps:
+                label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
                 outputs[role] = label_node
-            else:
-                slicer.mrmlScene.RemoveNode(label_node)
+
+        self._remove_empty_duplicate_segmentation_nodes(segmentation_node)
 
         if open_segment_editor:
             slicer.util.selectModule("SegmentEditor")
