@@ -8,6 +8,7 @@ import qt
 import ctk
 import slicer
 import SimpleITK as sitk
+import numpy as np
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -153,13 +154,10 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
                 label_image = sitk.Cast(image != 0, sitk.sitkUInt8)
                 if reference_volume_node is not None:
                     self._validate_image_matches_reference(label_image, reference_volume_node)
-                sitk.WriteImage(label_image, str(nrrd_path))
                 if as_segmentation:
-                    loaded = slicer.util.loadSegmentation(
-                        str(nrrd_path),
-                        {"name": name},
-                    )
+                    loaded = self._segmentation_from_label_image(label_image, name, reference_volume_node)
                 else:
+                    sitk.WriteImage(label_image, str(nrrd_path))
                     loaded = slicer.util.loadLabelVolume(
                         str(nrrd_path),
                         {"name": name},
@@ -177,27 +175,8 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
 
         if as_segmentation:
             segmentation_node = volume_node
-            segmentation_node.CreateDefaultDisplayNodes()
             if reference_volume_node is not None:
-                segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_volume_node)
-                reference_role = slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()
-                segmentation_node.SetNodeReferenceID(reference_role, reference_volume_node.GetID())
-                segmentation_node.SetNodeReferenceID(
-                    "HRpQCT.ReferenceVolume",
-                    reference_volume_node.GetID(),
-                )
-                segmentation_node.SetAttribute(
-                    "HRpQCT.ReferenceVolumeID",
-                    reference_volume_node.GetID(),
-                )
-                transform_id = reference_volume_node.GetTransformNodeID()
-                if transform_id:
-                    segmentation_node.SetAndObserveTransformNodeID(transform_id)
-            display_node = segmentation_node.GetDisplayNode()
-            if display_node is not None:
-                display_node.SetVisibility(True)
-                display_node.SetVisibility2DFill(True)
-                display_node.SetVisibility2DOutline(True)
+                self._show_reference_with_segmentation(reference_volume_node, segmentation_node)
 
         metadata_text = json.dumps(metadata, sort_keys=True, default=_json_default)
         volume_node.SetAttribute(AIM_SOURCE_ATTRIBUTE, str(aim_path))
@@ -207,6 +186,58 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             metadata_text,
         )
         return volume_node
+
+    def _segmentation_from_label_image(self, label_image, name, reference_volume_node):
+        segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLSegmentationNode",
+            name,
+        )
+        segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_volume_node)
+        reference_role = slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()
+        segmentation_node.SetNodeReferenceID(reference_role, reference_volume_node.GetID())
+        segmentation_node.SetNodeReferenceID("HRpQCT.ReferenceVolume", reference_volume_node.GetID())
+        segmentation_node.SetAttribute("HRpQCT.ReferenceVolumeID", reference_volume_node.GetID())
+        transform_id = reference_volume_node.GetTransformNodeID()
+        if transform_id:
+            segmentation_node.SetAndObserveTransformNodeID(transform_id)
+        segmentation_node.CreateDefaultDisplayNodes()
+
+        segment_id = segmentation_node.GetSegmentation().AddEmptySegment("AIM mask")
+        array_zyx = sitk.GetArrayFromImage(label_image).astype(np.uint8, copy=False)
+        array_zyx = (array_zyx > 0).astype(np.uint8, copy=False)
+        slicer.util.updateSegmentBinaryLabelmapFromArray(
+            array_zyx,
+            segmentation_node,
+            segment_id,
+            reference_volume_node,
+        )
+        self._configure_segmentation_display(segmentation_node)
+        return segmentation_node
+
+    def _configure_segmentation_display(self, segmentation_node):
+        display_node = segmentation_node.GetDisplayNode()
+        if display_node is None:
+            return
+        display_node.SetVisibility(True)
+        display_node.SetVisibility2DFill(True)
+        display_node.SetVisibility2DOutline(True)
+        if hasattr(display_node, "SetOpacity"):
+            display_node.SetOpacity(0.5)
+        if hasattr(display_node, "SetOpacity3D"):
+            display_node.SetOpacity3D(0.4)
+
+    def _show_reference_with_segmentation(self, reference_volume_node, segmentation_node):
+        self._configure_segmentation_display(segmentation_node)
+        layout_manager = slicer.app.layoutManager()
+        if layout_manager is None:
+            return
+        for view_name in layout_manager.sliceViewNames():
+            slice_widget = layout_manager.sliceWidget(view_name)
+            if slice_widget is None:
+                continue
+            composite_node = slice_widget.mrmlSliceCompositeNode()
+            if composite_node is not None:
+                composite_node.SetBackgroundVolumeID(reference_volume_node.GetID())
 
     def _validate_image_matches_reference(self, image, reference_node):
         reference_image_data = reference_node.GetImageData()
