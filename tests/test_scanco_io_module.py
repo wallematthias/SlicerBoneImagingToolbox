@@ -18,8 +18,20 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "as_segmentation=False" in source
     assert "slicer.util.loadLabelVolume" in source
     assert "vtkMRMLSegmentationNode" in source
+    assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)" in source
+    assert "segmentation_node.CreateDefaultDisplayNodes()" in source
     assert "ImportLabelmapToSegmentationNode" in source
+    assert "display_node.SetVisibility2DFill(True)" in source
+    assert "display_node.SetVisibility2DOutline(True)" in source
     assert "Segmentation (nonzero mask)" in source
+
+
+def test_scanco_io_forces_labelmap_exports_to_binary_mask() -> None:
+    source = MODULE.read_text(encoding="utf-8")
+
+    assert 'volume_node.IsA("vtkMRMLLabelMapVolumeNode")' in source
+    assert "as_mask = True" in source
+    assert 'self.exportModeCombo.findData("mask")' in source
 
 
 def test_scanco_io_updates_volume_name_when_import_path_changes() -> None:
@@ -40,3 +52,12 @@ def test_aim_metadata_position_is_refreshed_from_image_origin() -> None:
 
     assert metadata["position"] == (100, 200, 300)
     assert metadata["offset"] == (0, 0, 0)
+
+
+def test_mask_write_forces_native_unit_even_with_bmd_metadata() -> None:
+    image = sitk.Image([4, 5, 6], sitk.sitkUInt8)
+    metadata = {"unit": "bmd"}
+
+    aim_io._prepare_aim_metadata_for_write(metadata, image, mask=True)
+
+    assert metadata["unit"] == "native"

@@ -181,6 +181,17 @@ def _refresh_position_from_image_geometry(meta: dict[str, Any], image: sitk.Imag
     meta["offset"] = tuple(int(round(v)) for v in offset)
 
 
+def _prepare_aim_metadata_for_write(meta: dict[str, Any], image: sitk.Image, *, mask: bool = False) -> None:
+    if mask:
+        meta["unit"] = "native"
+    meta.setdefault("dimensions", tuple(int(v) for v in image.GetSize()))
+    meta.setdefault("spacing", tuple(float(v) for v in image.GetSpacing()))
+    meta.setdefault("element_size", tuple(float(v) for v in image.GetSpacing()))
+    meta.setdefault("origin", tuple(float(v) for v in image.GetOrigin()))
+    meta.setdefault("direction", tuple(float(v) for v in image.GetDirection()))
+    _refresh_position_from_image_geometry(meta, image)
+
+
 def read_aim(path: Path, scaling: str = "bmd") -> tuple[sitk.Image, dict[str, Any]]:
     py_aimio = _load_py_aimio()
     scaling = _normalize_scaling(scaling)
@@ -306,17 +317,13 @@ def write_aim(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    meta = dict(metadata or {})
     arr_zyx = sitk.GetArrayFromImage(image)
     if mask:
         arr_zyx = (127 * (arr_zyx > 0)).astype(np.int8)
+        unit = "native"
 
-    meta = dict(metadata or {})
-    meta.setdefault("dimensions", tuple(int(v) for v in image.GetSize()))
-    meta.setdefault("spacing", tuple(float(v) for v in image.GetSpacing()))
-    meta.setdefault("element_size", tuple(float(v) for v in image.GetSpacing()))
-    meta.setdefault("origin", tuple(float(v) for v in image.GetOrigin()))
-    meta.setdefault("direction", tuple(float(v) for v in image.GetDirection()))
-    _refresh_position_from_image_geometry(meta, image)
+    _prepare_aim_metadata_for_write(meta, image, mask=mask)
 
     if unit is None:
         unit = _normalize_aim_write_unit(meta.get("unit"))

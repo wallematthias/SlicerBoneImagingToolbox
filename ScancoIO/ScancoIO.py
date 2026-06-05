@@ -161,10 +161,17 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
                 "vtkMRMLSegmentationNode",
                 name,
             )
+            segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
+            segmentation_node.CreateDefaultDisplayNodes()
             slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
                 volume_node,
                 segmentation_node,
             )
+            display_node = segmentation_node.GetDisplayNode()
+            if display_node is not None:
+                display_node.SetVisibility(True)
+                display_node.SetVisibility2DFill(True)
+                display_node.SetVisibility2DOutline(True)
             slicer.mrmlScene.RemoveNode(volume_node)
             volume_node = segmentation_node
 
@@ -196,6 +203,8 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         if not str(output_path).strip():
             raise ValueError("Choose an output AIM path.")
         output_path = Path(output_path)
+        if hasattr(volume_node, "IsA") and volume_node.IsA("vtkMRMLLabelMapVolumeNode"):
+            as_mask = True
 
         with tempfile.TemporaryDirectory(prefix="hrpqct_aim_export_") as temp_dir:
             nrrd_path = Path(temp_dir) / "slicer_volume.nrrd"
@@ -508,6 +517,15 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
     def _on_volume_selected(self, node):
         try:
+            if (
+                node is not None
+                and hasattr(node, "IsA")
+                and node.IsA("vtkMRMLLabelMapVolumeNode")
+                and hasattr(self, "exportModeCombo")
+            ):
+                index = self.exportModeCombo.findData("mask")
+                if index >= 0:
+                    self.exportModeCombo.setCurrentIndex(index)
             metadata = self._node_header_metadata(node)
             if metadata is not None:
                 self._set_header_metadata(metadata)
