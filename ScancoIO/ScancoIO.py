@@ -159,6 +159,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             raise RuntimeError(f"Could not load imported AIM volume into Slicer: {aim_path}")
 
         if as_segmentation:
+            self._attach_matching_reference_volume(volume_node)
             self._configure_segmentation_display(volume_node)
 
         metadata_text = json.dumps(metadata, sort_keys=True, default=_json_default)
@@ -169,6 +170,62 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             metadata_text,
         )
         return volume_node
+
+    def _attach_matching_reference_volume(self, segmentation_node):
+        reference_node = self._find_matching_reference_volume(segmentation_node)
+        if reference_node is None:
+            return None
+        segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)
+        reference_role = slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()
+        segmentation_node.SetNodeReferenceID(reference_role, reference_node.GetID())
+        layout_manager = slicer.app.layoutManager()
+        if layout_manager is not None:
+            for view_name in layout_manager.sliceViewNames():
+                slice_widget = layout_manager.sliceWidget(view_name)
+                if slice_widget is not None:
+                    composite_node = slice_widget.mrmlSliceCompositeNode()
+                    if composite_node is not None:
+                        composite_node.SetBackgroundVolumeID(reference_node.GetID())
+        return reference_node
+
+    def _find_matching_reference_volume(self, segmentation_node):
+        segmentation_geometry = segmentation_node.GetSegmentation().GetConversionParameter("Reference image geometry")
+        if not segmentation_geometry:
+            return None
+        extent_match = None
+        for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode"):
+            nodes = slicer.mrmlScene.GetNodesByClass(class_name)
+            nodes.UnRegister(None)
+            for index in range(nodes.GetNumberOfItems()):
+                node = nodes.GetItemAsObject(index)
+                volume_geometry = self._volume_geometry_string(node)
+                if volume_geometry == segmentation_geometry:
+                    return node
+                if extent_match is None and self._same_geometry_extent(segmentation_geometry, volume_geometry):
+                    extent_match = node
+        if extent_match is not None:
+            return extent_match
+        return None
+
+    def _same_geometry_extent(self, geometry_a, geometry_b):
+        try:
+            values_a = [float(value) for value in str(geometry_a).split(";") if value != ""]
+            values_b = [float(value) for value in str(geometry_b).split(";") if value != ""]
+        except Exception:
+            return False
+        if len(values_a) < 22 or len(values_b) < 22:
+            return False
+        return values_a[16:22] == values_b[16:22]
+
+    def _volume_geometry_string(self, volume_node):
+        if volume_node is None:
+            return None
+        probe = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "__hrpqct_geometry_probe__")
+        try:
+            probe.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
+            return probe.GetSegmentation().GetConversionParameter("Reference image geometry")
+        finally:
+            slicer.mrmlScene.RemoveNode(probe)
 
     def _configure_segmentation_display(self, segmentation_node):
         display_node = segmentation_node.GetDisplayNode()

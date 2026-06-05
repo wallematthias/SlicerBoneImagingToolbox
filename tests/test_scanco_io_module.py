@@ -21,6 +21,13 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "vtkMRMLSegmentationNode" in source
     assert "Segmentation import requires a reference volume" not in source
     assert 'loaded = slicer.util.loadSegmentation(str(nrrd_path), {"name": name})' in source
+    assert "self._attach_matching_reference_volume(volume_node)" in source
+    assert "def _attach_matching_reference_volume" in source
+    assert "def _same_geometry_extent" in source
+    assert "volume_geometry = self._volume_geometry_string(node)" in source
+    assert "self._same_geometry_extent(segmentation_geometry, volume_geometry)" in source
+    assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)" in source
+    assert "segmentation_node.SetNodeReferenceID(reference_role, reference_node.GetID())" in source
     assert "display_node.SetOpacity(0.5)" in source
     assert "display_node.SetOpacity2DFill(0.35)" in source
     assert "display_node.SetAllSegmentsOpacity2DFill(0.35)" in source
