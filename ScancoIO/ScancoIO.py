@@ -192,16 +192,17 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         return volume_node
 
     def _find_matching_reference_volume(self, image):
-        for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode"):
-            nodes = slicer.mrmlScene.GetNodesByClass(class_name)
-            nodes.UnRegister(None)
-            for index in range(nodes.GetNumberOfItems()):
-                node = nodes.GetItemAsObject(index)
-                if self._volume_geometry_matches_image(node, image):
-                    return node
+        for require_origin in (True, False):
+            for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode"):
+                nodes = slicer.mrmlScene.GetNodesByClass(class_name)
+                nodes.UnRegister(None)
+                for index in range(nodes.GetNumberOfItems()):
+                    node = nodes.GetItemAsObject(index)
+                    if self._volume_geometry_matches_image(node, image, require_origin=require_origin):
+                        return node
         return None
 
-    def _volume_geometry_matches_image(self, node, image):
+    def _volume_geometry_matches_image(self, node, image, *, require_origin=True):
         if node is None or node.GetImageData() is None:
             return False
         if tuple(node.GetImageData().GetDimensions()) != tuple(image.GetSize()):
@@ -212,8 +213,8 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
                 return False
             reference_image = sitk.ReadImage(str(nrrd_path))
         return (
-            np.allclose(reference_image.GetSpacing(), image.GetSpacing(), atol=1e-6)
-            and np.allclose(reference_image.GetOrigin(), image.GetOrigin(), atol=1e-5)
+            np.allclose(reference_image.GetSpacing(), image.GetSpacing(), atol=1e-5)
+            and (not require_origin or np.allclose(reference_image.GetOrigin(), image.GetOrigin(), atol=1e-5))
             and np.allclose(reference_image.GetDirection(), image.GetDirection(), atol=1e-6)
         )
 
