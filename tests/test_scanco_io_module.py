@@ -54,6 +54,8 @@ def test_scanco_io_can_export_labelmaps_and_segmentations_without_binarizing() -
     assert 'self.exportModeCombo.addItem("Label image (preserve labels)", "label")' in source
     assert 'self.exportModeCombo.findData("label")' in source
     assert 'unit="native" if mode == "label" else self.unitCombo.currentData' in source
+    assert "if is_segmentation and metadata is not None" not in source
+    assert "if metadata is not None:\n            image = aim_io.image_with_aim_metadata_geometry(image, metadata)" in source
     assert "arr_zyx = (127 * (arr_zyx > 0)).astype(np.int8)" not in source
 
 

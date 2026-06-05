@@ -287,7 +287,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         if header_metadata:
             metadata = {**(metadata or {}), **header_metadata}
 
-        if is_segmentation and metadata is not None:
+        if metadata is not None:
             image = aim_io.image_with_aim_metadata_geometry(image, metadata)
 
         if metadata is not None:
