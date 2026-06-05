@@ -444,7 +444,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         with tempfile.TemporaryDirectory(prefix="hrpqct_seg_out_") as temp_dir:
             path = Path(temp_dir) / f"{name}.nrrd"
             sitk.WriteImage(sitk.Cast(image > 0, sitk.sitkUInt8), str(path))
-            loaded = slicer.util.loadLabelVolume(str(path), {"name": name}, returnNode=True)
+            loaded = slicer.util.loadLabelVolume(str(path), {"name": name})
         if isinstance(loaded, tuple):
             success, label_node = loaded
         else:

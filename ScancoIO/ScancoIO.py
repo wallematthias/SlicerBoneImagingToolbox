@@ -158,17 +158,15 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
                     loaded = slicer.util.loadSegmentation(
                         str(nrrd_path),
                         {"name": name},
-                        returnNode=True,
                     )
                 else:
                     loaded = slicer.util.loadLabelVolume(
                         str(nrrd_path),
                         {"name": name},
-                        returnNode=True,
                     )
             else:
                 sitk.WriteImage(image, str(nrrd_path))
-                loaded = slicer.util.loadVolume(str(nrrd_path), {"name": name}, returnNode=True)
+                loaded = slicer.util.loadVolume(str(nrrd_path), {"name": name})
 
         if isinstance(loaded, tuple):
             success, volume_node = loaded

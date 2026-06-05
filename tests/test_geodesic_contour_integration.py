@@ -85,6 +85,7 @@ def test_segmentation_module_defaults_to_segmentation_node_only():
     assert "self.createLabelmapsCheck" not in source
     assert "create_labelmaps=False" in source
     assert "label_text = \"\"" in source
+    assert "returnNode=True" not in source
 
 
 def test_gaussian_segmentation_without_compartments_uses_global_trab_threshold():

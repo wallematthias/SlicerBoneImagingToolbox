@@ -36,6 +36,7 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "Labelmap volume (nonzero mask)" in source
     assert "self.importReferenceSelector" in source
     assert "reference_volume_node=reference_volume_node" in source
+    assert "returnNode=True" not in source
 
 
 def test_scanco_io_forces_labelmap_exports_to_binary_mask() -> None:
