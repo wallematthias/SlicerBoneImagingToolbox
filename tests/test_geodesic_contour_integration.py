@@ -90,9 +90,9 @@ def test_segmentation_module_defaults_to_segmentation_node_only():
     assert "_remove_empty_duplicate_segmentation_nodes(segmentation_node)" in source
     assert "node.IsA(\"vtkMRMLSegmentationNode\")" in source
     assert "node.GetSegmentation().GetNumberOfSegments() == 0" in source
-    assert "display_node.SetOpacity2DFill(0.35)" in source
+    assert "display_node.SetOpacity2DFill(0.65)" in source
     assert "display_node.SetAllSegmentsVisibility2DFill(True)" in source
-    assert "display_node.SetAllSegmentsOpacity2DFill(0.35)" in source
+    assert "display_node.SetAllSegmentsOpacity2DFill(0.65)" in source
 
 
 def test_gaussian_segmentation_without_compartments_uses_global_trab_threshold():

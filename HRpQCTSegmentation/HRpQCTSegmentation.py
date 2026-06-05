@@ -490,13 +490,13 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         if hasattr(display_node, "SetOpacity"):
             display_node.SetOpacity(0.5)
         if hasattr(display_node, "SetOpacity2DFill"):
-            display_node.SetOpacity2DFill(0.35)
+            display_node.SetOpacity2DFill(0.65)
         if hasattr(display_node, "SetOpacity2DOutline"):
             display_node.SetOpacity2DOutline(1.0)
         if hasattr(display_node, "SetOpacity3D"):
             display_node.SetOpacity3D(0.4)
         if hasattr(display_node, "SetAllSegmentsOpacity2DFill"):
-            display_node.SetAllSegmentsOpacity2DFill(0.35)
+            display_node.SetAllSegmentsOpacity2DFill(0.65)
         if hasattr(display_node, "SetAllSegmentsOpacity2DOutline"):
             display_node.SetAllSegmentsOpacity2DOutline(1.0)
 

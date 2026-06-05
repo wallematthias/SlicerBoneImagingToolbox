@@ -30,9 +30,9 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "def _same_geometry_extent" not in source
     assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)" not in source
     assert "display_node.SetOpacity(0.5)" in source
-    assert "display_node.SetOpacity2DFill(0.35)" in source
+    assert "display_node.SetOpacity2DFill(0.65)" in source
     assert "display_node.SetAllSegmentsVisibility2DFill(True)" in source
-    assert "display_node.SetAllSegmentsOpacity2DFill(0.35)" in source
+    assert "display_node.SetAllSegmentsOpacity2DFill(0.65)" in source
     assert "slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()" in source
     assert "display_node.SetVisibility2DFill(True)" in source
     assert "display_node.SetVisibility2DOutline(True)" in source
