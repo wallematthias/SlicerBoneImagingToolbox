@@ -708,6 +708,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         inner_params.update(params.get("inner", {}))
         outer_params.update(params.get("outer", {}))
         inner_params["site"] = str(site)
+        compartment_split_requested = endosteal_contour_method == "standard"
 
         contour_params = ContourGenerationParams(
             outer=OuterContourParams(**outer_params),
@@ -790,12 +791,18 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             full_xyz = _ensure_bool(full_xyz)
             trab_xyz = _ensure_bool(trab_xyz) & full_xyz
             cort_xyz = _ensure_bool(cort_xyz) & full_xyz
+            global_threshold_without_compartments = (
+                segmentation_method == "seg_gauss" and not compartment_split_requested
+            )
             if segmentation_method == "none":
                 seg_xyz = np.zeros_like(full_xyz, dtype=bool)
             elif segmentation_method == "laplace_hamming" and inner_support_xyz is not None:
                 seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
             elif segmentation_method == "adaptive" and inner_support_xyz is not None:
                 seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
+            elif global_threshold_without_compartments:
+                trab_threshold = float(segmentation_support_params.trab_threshold)
+                seg_xyz = (segmentation_image_xyz >= trab_threshold) & full_xyz
             else:
                 seg_xyz = _segment_bone_xyz(
                     image_xyz=segmentation_image_xyz,
@@ -827,9 +834,15 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                     },
                 },
             )
+            if global_threshold_without_compartments:
+                generated.metadata["segmentation_warning"] = (
+                    "No cortical mask was provided; Gaussian segmentation used the trabecular threshold "
+                    f"{trab_threshold:g} globally."
+                )
+                generated.metadata["segmentation_threshold_applied_global"] = float(trab_threshold)
 
         periosteal_contour_generated = periosteal_contour_method != "none"
-        compartment_split_generated = endosteal_contour_method == "standard"
+        compartment_split_generated = compartment_split_requested
         if not compartment_split_generated:
             full_xyz = sitk_to_numpy_xyz(generated.full) > 0
             empty_xyz = np.zeros_like(full_xyz, dtype=bool)
@@ -896,6 +909,8 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             "segmentation_input_unit",
             "segmentation_input_reader",
             "segmentation_input_path",
+            "segmentation_warning",
+            "segmentation_threshold_applied_global",
             "periosteal_contour_method",
             "periosteal_contour_generated",
             "periosteal_contour_reason",
@@ -1490,10 +1505,13 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
                     f" Method=laplace_hamming; input={metadata.get('segmentation_input_unit')} "
                     f"via {metadata.get('segmentation_input_reader')}."
                 )
+            warning_text = ""
+            if metadata.get("segmentation_warning"):
+                warning_text = f" Warning: {metadata.get('segmentation_warning')}"
             self._log(
                 f"Created {segmentation_node.GetName()}.{label_text} "
                 f"Voxel counts: full={counts.get('full')}, trab={counts.get('trab')}, "
-                f"cort={counts.get('cort')}, seg={counts.get('seg')}.{provenance_text}"
+                f"cort={counts.get('cort')}, seg={counts.get('seg')}.{provenance_text}{warning_text}"
             )
         except Exception as exc:
             self._error(exc)

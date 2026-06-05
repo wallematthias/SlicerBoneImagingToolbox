@@ -56,7 +56,8 @@ def test_segmentation_module_splits_segmentation_and_contour_choices():
 def test_segmentation_module_skips_compartments_without_endosteal_split():
     source = MODULE.read_text()
 
-    assert "compartment_split_generated = endosteal_contour_method == \"standard\"" in source
+    assert "compartment_split_requested = endosteal_contour_method == \"standard\"" in source
+    assert "compartment_split_generated = compartment_split_requested" in source
     assert "generated.metadata[\"compartment_split_generated\"]" in source
     assert "generated.metadata[\"compartment_split_reason\"] = \"endosteal_contour_method_none\"" in source
     assert "generated.trab = numpy_xyz_to_sitk_binary(empty_xyz, image)" in source
@@ -84,6 +85,19 @@ def test_segmentation_module_defaults_to_segmentation_node_only():
     assert "self.createLabelmapsCheck" not in source
     assert "create_labelmaps=False" in source
     assert "label_text = \"\"" in source
+
+
+def test_gaussian_segmentation_without_compartments_uses_global_trab_threshold():
+    source = MODULE.read_text()
+
+    assert "global_threshold_without_compartments = (" in source
+    assert "segmentation_method == \"seg_gauss\"" in source
+    assert "not compartment_split_requested" in source
+    assert "seg_xyz = (segmentation_image_xyz >= trab_threshold) & full_xyz" in source
+    assert "generated.metadata[\"segmentation_warning\"]" in source
+    assert "No cortical mask was provided; Gaussian segmentation used the trabecular threshold" in source
+    assert "segmentation_threshold_applied_global" in source
+    assert "warning_text = f\" Warning: {metadata.get('segmentation_warning')}\"" in source
 
 
 def test_laplace_hamming_segmentation_is_forced_from_support_mask():
