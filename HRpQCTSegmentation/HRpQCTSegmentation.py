@@ -476,6 +476,26 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             reference_node,
         )
 
+    def _configure_segmentation_display(self, segmentation_node):
+        display_node = segmentation_node.GetDisplayNode()
+        if display_node is None:
+            return
+        display_node.SetVisibility(True)
+        display_node.SetVisibility2DFill(True)
+        display_node.SetVisibility2DOutline(True)
+        if hasattr(display_node, "SetOpacity"):
+            display_node.SetOpacity(0.5)
+        if hasattr(display_node, "SetOpacity2DFill"):
+            display_node.SetOpacity2DFill(0.35)
+        if hasattr(display_node, "SetOpacity2DOutline"):
+            display_node.SetOpacity2DOutline(1.0)
+        if hasattr(display_node, "SetOpacity3D"):
+            display_node.SetOpacity3D(0.4)
+        if hasattr(display_node, "SetAllSegmentsOpacity2DFill"):
+            display_node.SetAllSegmentsOpacity2DFill(0.35)
+        if hasattr(display_node, "SetAllSegmentsOpacity2DOutline"):
+            display_node.SetAllSegmentsOpacity2DOutline(1.0)
+
     def _remove_empty_duplicate_segmentation_nodes(self, segmentation_node):
         nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLSegmentationNode")
         nodes.UnRegister(None)
@@ -928,6 +948,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         )
         segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
         segmentation_node.CreateDefaultDisplayNodes()
+        self._configure_segmentation_display(segmentation_node)
         self._copy_aim_attributes(volume_node, segmentation_node)
         for key in (
             "segmentation_method",

@@ -253,8 +253,16 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         display_node.SetVisibility2DOutline(True)
         if hasattr(display_node, "SetOpacity"):
             display_node.SetOpacity(0.5)
+        if hasattr(display_node, "SetOpacity2DFill"):
+            display_node.SetOpacity2DFill(0.35)
+        if hasattr(display_node, "SetOpacity2DOutline"):
+            display_node.SetOpacity2DOutline(1.0)
         if hasattr(display_node, "SetOpacity3D"):
             display_node.SetOpacity3D(0.4)
+        if hasattr(display_node, "SetAllSegmentsOpacity2DFill"):
+            display_node.SetAllSegmentsOpacity2DFill(0.35)
+        if hasattr(display_node, "SetAllSegmentsOpacity2DOutline"):
+            display_node.SetAllSegmentsOpacity2DOutline(1.0)
 
     def _show_reference_with_segmentation(self, reference_volume_node, segmentation_node):
         self._configure_segmentation_display(segmentation_node)

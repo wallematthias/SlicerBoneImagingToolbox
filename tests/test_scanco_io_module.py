@@ -30,6 +30,8 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "slicer.util.updateSegmentBinaryLabelmapFromArray(" in source
     assert "composite_node.SetBackgroundVolumeID(reference_volume_node.GetID())" in source
     assert "display_node.SetOpacity(0.5)" in source
+    assert "display_node.SetOpacity2DFill(0.35)" in source
+    assert "display_node.SetAllSegmentsOpacity2DFill(0.35)" in source
     assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_volume_node)" in source
     assert "self._validate_image_matches_reference(label_image, reference_volume_node)" in source
     assert "AIM segmentation dimensions do not match the selected reference volume" in source
