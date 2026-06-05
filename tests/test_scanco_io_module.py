@@ -16,14 +16,22 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
     assert "as_segmentation=False" in source
-    assert "slicer.util.loadLabelVolume" in source
+    assert "reference_volume_node=None" in source
+    assert "slicer.util.loadSegmentation" in source
     assert "vtkMRMLSegmentationNode" in source
-    assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)" in source
+    assert "segmentation_node = volume_node" in source
+    assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_volume_node)" in source
+    assert "self._validate_image_matches_reference(label_image, reference_volume_node)" in source
+    assert "AIM segmentation dimensions do not match the selected reference volume" in source
+    assert "slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()" in source
+    assert "segmentation_node.SetNodeReferenceID(" in source
+    assert '"HRpQCT.ReferenceVolume"' in source
     assert "segmentation_node.CreateDefaultDisplayNodes()" in source
-    assert "ImportLabelmapToSegmentationNode" in source
     assert "display_node.SetVisibility2DFill(True)" in source
     assert "display_node.SetVisibility2DOutline(True)" in source
     assert "Segmentation (nonzero mask)" in source
+    assert "self.importReferenceSelector" in source
+    assert "reference_volume_node=self.importReferenceSelector.currentNode() if as_segmentation else None" in source
 
 
 def test_scanco_io_forces_labelmap_exports_to_binary_mask() -> None:
