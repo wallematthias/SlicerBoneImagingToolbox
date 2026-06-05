@@ -145,6 +145,34 @@ def _resolve_origin(meta: dict[str, Any], spacing: tuple[float, float, float]) -
     return (0.0, 0.0, 0.0)
 
 
+def image_with_aim_metadata_geometry(image: sitk.Image, metadata: dict[str, Any] | None) -> sitk.Image:
+    """Return a copy of image with AIM spacing/origin restored when dimensions match."""
+    if not metadata:
+        return image
+
+    dimensions_raw = metadata.get("dimensions")
+    if isinstance(dimensions_raw, (list, tuple)) and len(dimensions_raw) == 3:
+        dimensions = tuple(int(v) for v in dimensions_raw)
+        if dimensions != tuple(int(v) for v in image.GetSize()):
+            return image
+
+    spacing_raw = metadata.get("element_size", metadata.get("spacing"))
+    if not (isinstance(spacing_raw, (list, tuple)) and len(spacing_raw) == 3):
+        return image
+
+    spacing = tuple(float(v) for v in spacing_raw)
+    origin = _resolve_origin(metadata, spacing)
+    restored = sitk.Image(image)
+    restored.SetSpacing(spacing)
+    restored.SetOrigin(origin)
+
+    direction_raw = metadata.get("direction")
+    if isinstance(direction_raw, (list, tuple)) and len(direction_raw) == 9:
+        restored.SetDirection(tuple(float(v) for v in direction_raw))
+
+    return restored
+
+
 def _metadata_vector(
     meta: dict[str, Any],
     key: str,

@@ -75,6 +75,27 @@ def test_aim_metadata_position_is_refreshed_from_image_origin() -> None:
     assert metadata["offset"] == (0, 0, 0)
 
 
+def test_segmentation_export_can_restore_aim_geometry_from_metadata() -> None:
+    image = sitk.Image([290, 253, 335], sitk.sitkUInt8)
+    image.SetSpacing((1.0, 1.0, 1.0))
+    image.SetOrigin((0.0, 0.0, 0.0))
+    metadata = {
+        "dimensions": (290, 253, 335),
+        "element_size": (0.06069965288043022, 0.06069965288043022, 0.060698509216308594),
+        "position": (930, 702, 0),
+        "offset": (0, 0, 0),
+    }
+
+    restored = aim_io.image_with_aim_metadata_geometry(image, metadata)
+
+    assert restored.GetSpacing() == metadata["element_size"]
+    assert restored.GetOrigin() == (
+        (930 + 0.5) * metadata["element_size"][0],
+        (702 + 0.5) * metadata["element_size"][1],
+        (0 + 0.5) * metadata["element_size"][2],
+    )
+
+
 def test_mask_write_forces_native_unit_even_with_bmd_metadata() -> None:
     image = sitk.Image([4, 5, 6], sitk.sitkUInt8)
     metadata = {"unit": "bmd"}

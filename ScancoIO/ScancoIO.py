@@ -259,7 +259,8 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         if not str(output_path).strip():
             raise ValueError("Choose an output AIM path.")
         output_path = Path(output_path)
-        if hasattr(volume_node, "IsA") and volume_node.IsA("vtkMRMLSegmentationNode"):
+        is_segmentation = hasattr(volume_node, "IsA") and volume_node.IsA("vtkMRMLSegmentationNode")
+        if is_segmentation:
             image = self._segmentation_to_labelmap_image(volume_node)
         else:
             with tempfile.TemporaryDirectory(prefix="hrpqct_aim_export_") as temp_dir:
@@ -279,6 +280,9 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
 
         if header_metadata:
             metadata = {**(metadata or {}), **header_metadata}
+
+        if is_segmentation and metadata is not None:
+            image = aim_io.image_with_aim_metadata_geometry(image, metadata)
 
         if metadata is not None:
             metadata.update(_image_geometry_metadata(image))
