@@ -2,6 +2,7 @@ import tempfile
 import sys
 import importlib
 import inspect
+import json
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +33,9 @@ from slicer.ScriptedLoadableModule import (
 
 
 MODULE_VERSION = "0.2.0"
+AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
+AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
 
 SITE_PRESETS = {
     "radius": {
@@ -210,29 +213,104 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 raise RuntimeError("Could not save selected Slicer volume for processing.")
             return sitk.ReadImage(str(path))
 
-    def _laplace_hamming_support_image(self, volume_node, reference_image):
-        source_path = volume_node.GetAttribute(AIM_SOURCE_ATTRIBUTE) if volume_node is not None else None
-        if not source_path:
-            raise ValueError(
-                "Laplace-Hamming segmentation needs the original AIM source. "
-                "Load the image with the Scanco I/O module first so scanner-source metadata is attached."
-            )
-        source_path = Path(source_path)
-        if not source_path.exists():
-            raise FileNotFoundError(f"Original AIM source for Laplace-Hamming does not exist: {source_path}")
+    def _node_aim_metadata(self, volume_node):
+        if volume_node is None:
+            return {}
+        metadata_text = volume_node.GetAttribute(AIM_METADATA_ATTRIBUTE)
+        if not metadata_text:
+            return {}
+        try:
+            metadata = json.loads(metadata_text)
+        except Exception:
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
 
+    def _processing_log_from_metadata(self, metadata):
+        for raw in (
+            metadata.get("processing_log_raw"),
+            metadata.get("processing_log"),
+        ):
+            if isinstance(raw, str) and raw.strip():
+                return raw
+        raw = metadata.get("processing_log")
+        if isinstance(raw, dict) and raw:
+            try:
+                from timelapsedhrpqct.io.metadata import dicttolog
+
+                return dicttolog(raw)
+            except Exception:
+                pass
+        raise ValueError("AIM metadata does not contain calibration processing_log.")
+
+    def _density_image_to_laplace_hamming_native(self, reference_image, metadata):
+        from timelapsedhrpqct.io.aim import density_to_native_int16
+
+        arr_zyx = sitk.GetArrayFromImage(reference_image)
+        native_zyx = density_to_native_int16(
+            arr_zyx,
+            self._processing_log_from_metadata(metadata),
+        )
+        image = sitk.GetImageFromArray(native_zyx)
+        image.CopyInformation(reference_image)
+        return image
+
+    def _selected_volume_native_image(self, reference_image):
+        arr_zyx = np.rint(sitk.GetArrayFromImage(reference_image)).astype(np.int16, copy=False)
+        image = sitk.GetImageFromArray(arr_zyx)
+        image.CopyInformation(reference_image)
+        return image
+
+    def _read_laplace_hamming_native_aim(self, source_path, reference_image):
         from timelapsedhrpqct.io.aim import read_aim
 
-        hu_image, _metadata = read_aim(source_path, scaling="hu")
-        hu_arr = np.rint(sitk.GetArrayFromImage(hu_image)).astype(np.int16, copy=False)
-        image = sitk.GetImageFromArray(hu_arr)
+        native_image, _metadata = read_aim(source_path, scaling="native")
+        native_arr = np.rint(sitk.GetArrayFromImage(native_image)).astype(np.int16, copy=False)
+        image = sitk.GetImageFromArray(native_arr)
         if image.GetSize() != reference_image.GetSize():
             raise ValueError(
                 "Original AIM source size does not match the selected Slicer volume. "
                 f"AIM size={image.GetSize()}, selected volume size={reference_image.GetSize()}."
             )
         image.CopyInformation(reference_image)
-        return image, source_path
+        return image
+
+    def _laplace_hamming_support_image(self, volume_node, reference_image):
+        metadata = self._node_aim_metadata(volume_node)
+        scaling = str(volume_node.GetAttribute(AIM_SCALING_ATTRIBUTE) or "").strip().lower() if volume_node is not None else ""
+        if scaling in {"native", "none"}:
+            return self._selected_volume_native_image(reference_image), {
+                "segmentation_input_unit": "scanco_native_int16",
+                "segmentation_input_reader": "selected_volume_native_int16",
+                "segmentation_input_path": str(volume_node.GetName()) if volume_node is not None else "",
+                "segmentation_input_reason": "Laplace-Hamming threshold is calibrated for native Scanco attenuation values.",
+            }
+        try:
+            return self._density_image_to_laplace_hamming_native(reference_image, metadata), {
+                "segmentation_input_unit": "scanco_native_int16",
+                "segmentation_input_reader": "imported_density_to_native_int16",
+                "segmentation_input_path": str(volume_node.GetName()) if volume_node is not None else "",
+                "segmentation_input_reason": "Laplace-Hamming threshold is calibrated for native Scanco attenuation values.",
+            }
+        except ValueError:
+            pass
+
+        source_path = volume_node.GetAttribute(AIM_SOURCE_ATTRIBUTE) if volume_node is not None else None
+        if not source_path:
+            raise ValueError(
+                "Laplace-Hamming segmentation needs the original AIM source. "
+                "Load the image with the Scanco I/O module first so scanner-source metadata is attached, "
+                "or use a volume with AIM calibration metadata so density can be converted back to native Scanco units."
+            )
+        source_path = Path(source_path)
+        if not source_path.exists():
+            raise FileNotFoundError(f"Original AIM source for Laplace-Hamming does not exist: {source_path}")
+
+        return self._read_laplace_hamming_native_aim(source_path, reference_image), {
+            "segmentation_input_unit": "scanco_native_int16",
+            "segmentation_input_reader": "py_aimio_native_int16",
+            "segmentation_input_path": str(source_path),
+            "segmentation_input_reason": "Laplace-Hamming threshold is calibrated for native Scanco attenuation values.",
+        }
 
     def _sitk_to_labelmap(self, image, name, reference_node):
         with tempfile.TemporaryDirectory(prefix="hrpqct_seg_out_") as temp_dir:
@@ -354,9 +432,9 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         segmentation_support_params = contour_params.segmentation
 
         segmentation_image = None
-        source_path = None
+        segmentation_source_meta = {}
         if segmentation_method == "laplace_hamming":
-            segmentation_image, source_path = self._laplace_hamming_support_image(volume_node, image)
+            segmentation_image, segmentation_source_meta = self._laplace_hamming_support_image(volume_node, image)
 
         if (
             periosteal_contour_method == "standard"
@@ -420,14 +498,16 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 )
             else:
                 trab_xyz = np.zeros_like(full_xyz, dtype=bool)
-                cort_xyz = _ensure_bool(full_xyz)
+                cort_xyz = np.zeros_like(full_xyz, dtype=bool)
 
             full_xyz = _ensure_bool(full_xyz)
             trab_xyz = _ensure_bool(trab_xyz) & full_xyz
             cort_xyz = _ensure_bool(cort_xyz) & full_xyz
             if segmentation_method == "none":
                 seg_xyz = np.zeros_like(full_xyz, dtype=bool)
-            elif segmentation_method in {"adaptive", "laplace_hamming"} and inner_support_xyz is not None:
+            elif segmentation_method == "laplace_hamming" and inner_support_xyz is not None:
+                seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
+            elif segmentation_method == "adaptive" and inner_support_xyz is not None:
                 seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
             else:
                 seg_xyz = _segment_bone_xyz(
@@ -461,17 +541,51 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 },
             )
 
+        compartment_split_generated = endosteal_contour_method == "standard"
+        if not compartment_split_generated:
+            full_xyz = sitk_to_numpy_xyz(generated.full) > 0
+            empty_xyz = np.zeros_like(full_xyz, dtype=bool)
+            generated.trab = numpy_xyz_to_sitk_binary(empty_xyz, image)
+            generated.cort = numpy_xyz_to_sitk_binary(empty_xyz, image)
+
+        if segmentation_method == "laplace_hamming" and segmentation_image is not None:
+            full_xyz = sitk_to_numpy_xyz(generated.full) > 0
+            segmentation_image_xyz = sitk_to_numpy_xyz(segmentation_image)
+            spacing_xyz = tuple(float(value) for value in image.GetSpacing())
+            lh_support_xyz = _contour_support_binarization_xyz(
+                segmentation_image_xyz,
+                params=segmentation_support_params,
+                spacing_xyz=spacing_xyz,
+                full_mask_xyz=full_xyz,
+                role="inner",
+            )
+            if lh_support_xyz is not None:
+                seg_xyz = _ensure_bool(lh_support_xyz) & full_xyz
+                generated.seg = numpy_xyz_to_sitk_binary(seg_xyz, image)
+                generated.metadata.setdefault("voxel_counts", {})
+                generated.metadata["voxel_counts"]["seg"] = int(seg_xyz.sum())
+
         generated.metadata["segmentation_method"] = segmentation_method
         generated.metadata["periosteal_contour_method"] = periosteal_contour_method
         generated.metadata["endosteal_contour_method"] = endosteal_contour_method
+        generated.metadata["compartment_split_generated"] = bool(compartment_split_generated)
+        if not compartment_split_generated:
+            generated.metadata["compartment_split_reason"] = "endosteal_contour_method_none"
+            generated.metadata.setdefault("voxel_counts", {})
+            generated.metadata["voxel_counts"]["trab"] = 0
+            generated.metadata["voxel_counts"]["cort"] = 0
         if segmentation_method == "laplace_hamming":
             generated.metadata["segmentation_method"] = "laplace_hamming"
-            generated.metadata["segmentation_input_unit"] = "scanco_hu_int16"
-            generated.metadata["segmentation_input_path"] = str(source_path)
-            generated.metadata["segmentation_input_reader"] = "py_aimio_hu_int16"
+            generated.metadata.update(segmentation_source_meta)
             generated.metadata["voxel_counts"]["seg"] = int(
                 sitk.GetArrayFromImage(generated.seg).astype(bool, copy=False).sum()
             )
+            if generated.metadata["voxel_counts"]["seg"] == 0:
+                raise RuntimeError(
+                    "Laplace-Hamming produced an empty bone segmentation. "
+                    "Check that the selected volume has valid AIM calibration metadata "
+                    "or an original AIM source, and that LH parameters match native Scanco units."
+                )
 
         prefix = output_prefix.strip() if output_prefix else volume_node.GetName()
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
@@ -479,14 +593,30 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             f"{prefix}_HRpQCT_segmentation",
         )
         segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
+        segmentation_node.CreateDefaultDisplayNodes()
+        for key in (
+            "segmentation_method",
+            "segmentation_input_unit",
+            "segmentation_input_reader",
+            "segmentation_input_path",
+            "periosteal_contour_method",
+            "endosteal_contour_method",
+            "compartment_split_generated",
+        ):
+            if key in generated.metadata:
+                segmentation_node.SetAttribute(f"HRpQCT.{key}", str(generated.metadata[key]))
 
         outputs = {}
-        for role, image_out, segment_name in [
+        output_specs = [
             ("full", generated.full, "Full mask"),
             ("trab", generated.trab, "Trabecular mask"),
             ("cort", generated.cort, "Cortical mask"),
             ("seg", generated.seg, "Bone segmentation"),
-        ]:
+        ]
+        if not compartment_split_generated:
+            output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
+        generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
+        for role, image_out, segment_name in output_specs:
             label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
             self._add_labelmap_segment(label_node, segmentation_node, segment_name)
             if create_labelmaps:
@@ -761,6 +891,11 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
                 if not self.logic.is_geodesic_contour_available():
                     raise RuntimeError("Install or update contouring dependencies first.")
                 progress_dialog, progress_callback, cancel_callback = self._create_geodesic_progress_dialog()
+            elif segmentation_method == "laplace_hamming":
+                progress_dialog = self._create_busy_progress_dialog(
+                    "Running Laplace-Hamming bone segmentation...",
+                    "Laplace-Hamming Segmentation",
+                )
             if (
                 segmentation_method != "none"
                 or periosteal_method == "standard"
@@ -786,10 +921,16 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
                     progress_dialog.close()
             counts = metadata.get("voxel_counts", {})
             label_text = f" Created {len(labelmaps)} labelmaps." if labelmaps else ""
+            provenance_text = f" Method={metadata.get('segmentation_method')}."
+            if metadata.get("segmentation_method") == "laplace_hamming":
+                provenance_text = (
+                    f" Method=laplace_hamming; input={metadata.get('segmentation_input_unit')} "
+                    f"via {metadata.get('segmentation_input_reader')}."
+                )
             self._log(
                 f"Created {segmentation_node.GetName()}.{label_text} "
                 f"Voxel counts: full={counts.get('full')}, trab={counts.get('trab')}, "
-                f"cort={counts.get('cort')}, seg={counts.get('seg')}."
+                f"cort={counts.get('cort')}, seg={counts.get('seg')}.{provenance_text}"
             )
         except Exception as exc:
             self._error(exc)
@@ -829,6 +970,22 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
             return bool(self._geodesic_cancel_requested or dialog.wasCanceled)
 
         return dialog, progress_callback, cancel_callback
+
+    def _create_busy_progress_dialog(self, message, title):
+        dialog = qt.QProgressDialog(
+            str(message),
+            None,
+            0,
+            0,
+            slicer.util.mainWindow(),
+        )
+        dialog.setWindowTitle(str(title))
+        dialog.setWindowModality(qt.Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setCancelButton(None)
+        dialog.show()
+        slicer.app.processEvents()
+        return dialog
 
     def _request_geodesic_cancel(self):
         self._geodesic_cancel_requested = True

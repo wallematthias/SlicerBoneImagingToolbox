@@ -53,6 +53,57 @@ def test_segmentation_module_splits_segmentation_and_contour_choices():
     assert "form.addRow(\"Segmentation method\", self.methodCombo)" not in source
 
 
+def test_segmentation_module_skips_compartments_without_endosteal_split():
+    source = MODULE.read_text()
+
+    assert "compartment_split_generated = endosteal_contour_method == \"standard\"" in source
+    assert "generated.metadata[\"compartment_split_generated\"]" in source
+    assert "generated.metadata[\"compartment_split_reason\"] = \"endosteal_contour_method_none\"" in source
+    assert "generated.trab = numpy_xyz_to_sitk_binary(empty_xyz, image)" in source
+    assert "generated.cort = numpy_xyz_to_sitk_binary(empty_xyz, image)" in source
+    assert "output_specs = [spec for spec in output_specs if spec[0] in {\"full\", \"seg\"}]" in source
+    assert "generated.metadata[\"emitted_roles\"]" in source
+    assert "cort_xyz = _ensure_bool(full_xyz)" not in source
+
+
+def test_laplace_hamming_segmentation_is_forced_from_support_mask():
+    source = MODULE.read_text()
+
+    assert "if segmentation_method == \"laplace_hamming\" and segmentation_image is not None:" in source
+    assert "lh_support_xyz = _contour_support_binarization_xyz(" in source
+    assert "full_mask_xyz=full_xyz" in source
+    assert "seg_xyz = _ensure_bool(lh_support_xyz) & full_xyz" in source
+    assert "generated.seg = numpy_xyz_to_sitk_binary(seg_xyz, image)" in source
+    assert "Laplace-Hamming produced an empty bone segmentation" in source
+
+
+def test_laplace_hamming_uses_core_native_scanco_input_convention():
+    source = MODULE.read_text()
+
+    assert "AIM_METADATA_ATTRIBUTE = \"HRpQCT.AIMMetadata\"" in source
+    assert "AIM_SCALING_ATTRIBUTE = \"HRpQCT.AIMScaling\"" in source
+    assert "from timelapsedhrpqct.io.aim import density_to_native_int16" in source
+    assert "segmentation_input_unit\": \"scanco_native_int16\"" in source
+    assert "segmentation_input_reader\": \"imported_density_to_native_int16\"" in source
+    assert "read_aim(source_path, scaling=\"native\")" in source
+    assert "segmentation_input_reader\": \"py_aimio_native_int16\"" in source
+    assert "scanco_hu_int16" not in source
+    assert "py_aimio_hu_int16" not in source
+    assert "segmentation_node.CreateDefaultDisplayNodes()" in source
+    assert "segmentation_node.SetAttribute(f\"HRpQCT.{key}\", str(generated.metadata[key]))" in source
+    assert "Method=laplace_hamming; input={metadata.get('segmentation_input_unit')}" in source
+
+
+def test_laplace_hamming_shows_busy_progress_dialog():
+    source = MODULE.read_text()
+
+    assert "elif segmentation_method == \"laplace_hamming\":" in source
+    assert "Running Laplace-Hamming bone segmentation..." in source
+    assert "Laplace-Hamming Segmentation" in source
+    assert "def _create_busy_progress_dialog" in source
+    assert "dialog.setCancelButton(None)" in source
+
+
 def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     source = PIPELINE_MODULE.read_text()
 
