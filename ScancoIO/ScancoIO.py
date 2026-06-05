@@ -8,6 +8,7 @@ import qt
 import ctk
 import slicer
 import SimpleITK as sitk
+import numpy as np
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -144,7 +145,10 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         with tempfile.TemporaryDirectory(prefix="hrpqct_aim_import_") as temp_dir:
             nrrd_path = Path(temp_dir) / "imported_aim.nrrd"
             if as_segmentation:
-                label_image = sitk.Cast(image != 0, sitk.sitkUInt8)
+                label_image = self._label_image_for_segmentation(image)
+                reference_image = self._matching_reference_image_for_label(label_image)
+                if reference_image is not None:
+                    label_image.CopyInformation(reference_image)
                 sitk.WriteImage(label_image, str(nrrd_path))
                 loaded = slicer.util.loadSegmentation(str(nrrd_path), {"name": name})
             else:
@@ -159,7 +163,6 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             raise RuntimeError(f"Could not load imported AIM volume into Slicer: {aim_path}")
 
         if as_segmentation:
-            self._attach_matching_reference_volume(volume_node)
             self._configure_segmentation_display(volume_node)
 
         metadata_text = json.dumps(metadata, sort_keys=True, default=_json_default)
@@ -171,61 +174,46 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         )
         return volume_node
 
-    def _attach_matching_reference_volume(self, segmentation_node):
-        reference_node = self._find_matching_reference_volume(segmentation_node)
-        if reference_node is None:
-            return None
-        segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)
-        reference_role = slicer.vtkMRMLSegmentationNode.GetReferenceImageGeometryReferenceRole()
-        segmentation_node.SetNodeReferenceID(reference_role, reference_node.GetID())
-        layout_manager = slicer.app.layoutManager()
-        if layout_manager is not None:
-            for view_name in layout_manager.sliceViewNames():
-                slice_widget = layout_manager.sliceWidget(view_name)
-                if slice_widget is not None:
-                    composite_node = slice_widget.mrmlSliceCompositeNode()
-                    if composite_node is not None:
-                        composite_node.SetBackgroundVolumeID(reference_node.GetID())
-        return reference_node
+    def _label_image_for_segmentation(self, image):
+        labels = sitk.GetArrayFromImage(image)
+        if np.issubdtype(labels.dtype, np.signedinteger):
+            labels = labels.astype(np.int32, copy=False)
+            if labels.min(initial=0) < 0:
+                labels[labels < 0] += 256
+        labels = np.clip(labels, 0, np.iinfo(np.uint16).max).astype(np.uint16, copy=False)
+        label_image = sitk.GetImageFromArray(labels)
+        label_image.CopyInformation(image)
+        return label_image
 
-    def _find_matching_reference_volume(self, segmentation_node):
-        segmentation_geometry = segmentation_node.GetSegmentation().GetConversionParameter("Reference image geometry")
-        if not segmentation_geometry:
-            return None
-        extent_match = None
+    def _matching_reference_image_for_label(self, label_image):
+        spacing_match = None
         for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode"):
             nodes = slicer.mrmlScene.GetNodesByClass(class_name)
             nodes.UnRegister(None)
             for index in range(nodes.GetNumberOfItems()):
                 node = nodes.GetItemAsObject(index)
-                volume_geometry = self._volume_geometry_string(node)
-                if volume_geometry == segmentation_geometry:
-                    return node
-                if extent_match is None and self._same_geometry_extent(segmentation_geometry, volume_geometry):
-                    extent_match = node
-        if extent_match is not None:
-            return extent_match
+                reference_image = self._sitk_image_from_volume_node(node)
+                if reference_image is None or reference_image.GetSize() != label_image.GetSize():
+                    continue
+                spacing_matches = np.allclose(reference_image.GetSpacing(), label_image.GetSpacing(), atol=1e-5)
+                direction_matches = np.allclose(reference_image.GetDirection(), label_image.GetDirection(), atol=1e-6)
+                origin_matches = np.allclose(reference_image.GetOrigin(), label_image.GetOrigin(), atol=1e-5)
+                if spacing_matches and direction_matches and origin_matches:
+                    return reference_image
+                if spacing_match is None and spacing_matches and direction_matches:
+                    spacing_match = reference_image
+        if spacing_match is not None:
+            return spacing_match
         return None
 
-    def _same_geometry_extent(self, geometry_a, geometry_b):
-        try:
-            values_a = [float(value) for value in str(geometry_a).split(";") if value != ""]
-            values_b = [float(value) for value in str(geometry_b).split(";") if value != ""]
-        except Exception:
-            return False
-        if len(values_a) < 22 or len(values_b) < 22:
-            return False
-        return values_a[16:22] == values_b[16:22]
-
-    def _volume_geometry_string(self, volume_node):
-        if volume_node is None:
+    def _sitk_image_from_volume_node(self, volume_node):
+        if volume_node is None or volume_node.GetImageData() is None:
             return None
-        probe = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "__hrpqct_geometry_probe__")
-        try:
-            probe.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
-            return probe.GetSegmentation().GetConversionParameter("Reference image geometry")
-        finally:
-            slicer.mrmlScene.RemoveNode(probe)
+        with tempfile.TemporaryDirectory(prefix="hrpqct_ref_image_") as temp_dir:
+            path = Path(temp_dir) / "reference.nrrd"
+            if not slicer.util.saveNode(volume_node, str(path)):
+                return None
+            return sitk.ReadImage(str(path))
 
     def _configure_segmentation_display(self, segmentation_node):
         display_node = segmentation_node.GetDisplayNode()
@@ -267,12 +255,6 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         if not str(output_path).strip():
             raise ValueError("Choose an output AIM path.")
         output_path = Path(output_path)
-        if hasattr(volume_node, "IsA") and (
-            volume_node.IsA("vtkMRMLLabelMapVolumeNode")
-            or volume_node.IsA("vtkMRMLSegmentationNode")
-        ):
-            as_mask = True
-
         if hasattr(volume_node, "IsA") and volume_node.IsA("vtkMRMLSegmentationNode"):
             image = self._segmentation_to_labelmap_image(volume_node)
         else:
@@ -446,8 +428,9 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
         self.exportModeCombo = qt.QComboBox()
         self.exportModeCombo.addItem("Grayscale image", "grayscale")
+        self.exportModeCombo.addItem("Label image (preserve labels)", "label")
         self.exportModeCombo.addItem("Binary mask (0/127)", "mask")
-        self._tip(self.exportModeCombo, "Export scalar intensities, or convert nonzero voxels to a binary Scanco mask label.")
+        self._tip(self.exportModeCombo, "Export scalar intensities, preserve label values, or convert nonzero voxels to a binary Scanco mask.")
         form.addRow("Export as", self.exportModeCombo)
 
         self.unitCombo = qt.QComboBox()
@@ -626,7 +609,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
                 )
                 and hasattr(self, "exportModeCombo")
             ):
-                index = self.exportModeCombo.findData("mask")
+                index = self.exportModeCombo.findData("label")
                 if index >= 0:
                     self.exportModeCombo.setCurrentIndex(index)
             metadata = self._node_header_metadata(node)
@@ -701,7 +684,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
                 self.volumeSelector.currentNode(),
                 self.exportPathEdit.text,
                 as_mask=(mode == "mask"),
-                unit=self.unitCombo.currentData,
+                unit="native" if mode == "label" else self.unitCombo.currentData,
                 metadata_json=self.metadataJsonEdit.text.strip() or None,
                 header_metadata=self._edited_header_metadata(),
                 allow_minimal_metadata=bool(self.allowMinimalCheck.checked),

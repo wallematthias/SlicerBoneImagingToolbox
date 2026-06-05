@@ -18,16 +18,17 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "as_segmentation=False" in source
     assert "slicer.util.loadSegmentation" in source
     assert "slicer.util.loadLabelVolume" not in source
+    assert "self._label_image_for_segmentation(image)" in source
+    assert "sitk.GetArrayFromImage(image)" in source
+    assert "np.uint16" in source
+    assert "sitk.Cast(image != 0" not in source
     assert "vtkMRMLSegmentationNode" in source
     assert "Segmentation import requires a reference volume" not in source
     assert 'loaded = slicer.util.loadSegmentation(str(nrrd_path), {"name": name})' in source
-    assert "self._attach_matching_reference_volume(volume_node)" in source
-    assert "def _attach_matching_reference_volume" in source
-    assert "def _same_geometry_extent" in source
-    assert "volume_geometry = self._volume_geometry_string(node)" in source
-    assert "self._same_geometry_extent(segmentation_geometry, volume_geometry)" in source
-    assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)" in source
-    assert "segmentation_node.SetNodeReferenceID(reference_role, reference_node.GetID())" in source
+    assert "self._attach_matching_reference_volume(volume_node)" not in source
+    assert "def _attach_matching_reference_volume" not in source
+    assert "def _same_geometry_extent" not in source
+    assert "segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)" not in source
     assert "display_node.SetOpacity(0.5)" in source
     assert "display_node.SetOpacity2DFill(0.35)" in source
     assert "display_node.SetAllSegmentsOpacity2DFill(0.35)" in source
@@ -40,15 +41,17 @@ def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
     assert "returnNode=True" not in source
 
 
-def test_scanco_io_forces_labelmap_exports_to_binary_mask() -> None:
+def test_scanco_io_can_export_labelmaps_and_segmentations_without_binarizing() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
-    assert 'volume_node.IsA("vtkMRMLLabelMapVolumeNode")' in source
     assert 'volume_node.IsA("vtkMRMLSegmentationNode")' in source
+    assert '"vtkMRMLLabelMapVolumeNode"' in source
     assert "ExportAllSegmentsToLabelmapNode" in source
     assert "GetReferenceImageGeometryReferenceRole()" in source
-    assert "as_mask = True" in source
-    assert 'self.exportModeCombo.findData("mask")' in source
+    assert 'self.exportModeCombo.addItem("Label image (preserve labels)", "label")' in source
+    assert 'self.exportModeCombo.findData("label")' in source
+    assert 'unit="native" if mode == "label" else self.unitCombo.currentData' in source
+    assert "arr_zyx = (127 * (arr_zyx > 0)).astype(np.int8)" not in source
 
 
 def test_scanco_io_updates_volume_name_when_import_path_changes() -> None:
