@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-TOOLBOX_NAME = "SlicerBoneImagingToolbox"
+TOOLBOX_NAME = "BoneImagingToolbox"
 TOOLBOX_DISPLAY_NAME = "Bone Imaging Toolbox"
 MANIFEST_NAME = "toolbox_modules.json"
 DEFAULT_BUILTIN_MODULE_DIRS = (

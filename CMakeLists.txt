@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16.3...3.19.7 FATAL_ERROR)
 
-project(SlicerBoneImagingToolbox)
+project(BoneImagingToolbox)
 
 set(EXTENSION_HOMEPAGE "https://github.com/wallematthias/SlicerBoneImagingToolbox")
 set(EXTENSION_CATEGORY "Quantification")

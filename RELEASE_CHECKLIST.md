@@ -6,7 +6,7 @@
 - [ ] `EXTENSION_ICONURL` set to public raw URL.
 - [ ] `EXTENSION_SCREENSHOTURLS` set to real screenshots.
 - [ ] Extension description/category/contributors verified.
-- [ ] ExtensionIndex entry uses `SlicerBoneImagingToolbox.s4ext`.
+- [ ] ExtensionIndex entry uses `BoneImagingToolbox.json`.
 
 ## Module
 
