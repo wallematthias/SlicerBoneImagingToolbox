@@ -17,6 +17,7 @@ add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
 add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
 add_subdirectory(HRpQCTTools/SegmentationHRpQCT)
 add_subdirectory(IOTools/ScancoIO)
+add_subdirectory(CTTools/SpineSegmentationCT)
 
 file(GLOB TOOLBOX_EXTERNAL_CMAKES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/ExternalModules/*/CMakeLists.txt"

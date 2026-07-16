@@ -22,6 +22,7 @@ def _make_toolbox(root: Path) -> Path:
         "HRpQCTTools/MotionScoreHRpQCT",
         "HRpQCTTools/SegmentationHRpQCT",
         "IOTools/ScancoIO",
+        "CTTools/SpineSegmentationCT",
     ):
         module_dir = root / relative_path
         name = module_dir.name
@@ -94,6 +95,7 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "IOTools/ScancoIO/ScancoIO.py": 'parent.categories = ["Bone Imaging.I/O"]',
+        "CTTools/SpineSegmentationCT/SpineSegmentationCT.py": 'parent.categories = ["Bone Imaging.CT"]',
     }
     for relative_path, category_line in expected.items():
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
@@ -111,4 +113,5 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/MotionScoreHRpQCT": "HR-pQCT",
         "HRpQCTTools/SegmentationHRpQCT": "HR-pQCT",
         "IOTools/ScancoIO": "I/O",
+        "CTTools/SpineSegmentationCT": "CT",
     }

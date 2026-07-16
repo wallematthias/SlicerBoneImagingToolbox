@@ -13,6 +13,7 @@ DEFAULT_BUILTIN_MODULE_DIRS = (
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
     "IOTools/ScancoIO",
+    "CTTools/SpineSegmentationCT",
 )
 DEFAULT_EXTERNAL_MODULE_ROOTS = ("ExternalModules",)
 

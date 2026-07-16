@@ -4,7 +4,7 @@
 
 # Bone Imaging Toolbox for 3D Slicer
 
-Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It groups focused tools for longitudinal HR-pQCT analysis, motion grading, Scanco AIM import/export, and HR-pQCT segmentation into one installable Slicer extension.
+Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It groups focused tools for longitudinal HR-pQCT analysis, motion grading, Scanco image import/export, CT spine segmentation, and HR-pQCT segmentation into one installable Slicer extension.
 
 The extension appears in Slicer as:
 
@@ -16,6 +16,8 @@ Bone Imaging
     Timelapsed HR-pQCT
     Motion Scoring
     Segmentation and Contours
+  CT
+    Spine Segmentation
 ```
 
 ## Included Tools
@@ -25,12 +27,14 @@ Bone Imaging
 | Timelapsed HR-pQCT | `Bone Imaging > HR-pQCT` | Runs longitudinal HR-pQCT processing, registration, remodelling analysis, and review. | [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md) |
 | Motion Scoring | `Bone Imaging > HR-pQCT` | Runs and reviews HR-pQCT motion grading using MotionScore models. | [Motion Scoring](docs/tools/motion-scoring.md) |
 | Segmentation and Contours | `Bone Imaging > HR-pQCT` | Creates HR-pQCT full, trabecular, cortical, binary, and material labelmaps. | [Segmentation and Contours](docs/tools/segmentation-and-contours.md) |
-| Scanco I/O | `Bone Imaging > I/O` | Imports and exports Scanco AIM images, masks, and metadata. | [Scanco I/O](docs/tools/scanco-io.md) |
+| Scanco I/O | `Bone Imaging > I/O` | Imports Scanco AIM, ISQ, SCV, and GOBJ images, and exports AIM images, masks, and metadata. | [Scanco I/O](docs/tools/scanco-io.md) |
+| Spine Segmentation | `Bone Imaging > CT` | Runs PyTorch spine CT segmentation and loads vertebral-level, process/body, and cortical/trabecular outputs. | [Spine Segmentation](docs/tools/spine-segmentation-ct.md) |
 
 The Slicer modules are wrappers around core Python packages where possible:
 
 - `TimelapsedHRpQCT`: https://github.com/wallematthias/TimelapsedHRpQCT
 - `MotionScoreHRpQCT`: https://github.com/wallematthias/MotionScoreHRpQCT
+- `spine-segment`: https://github.com/wallematthias/spine-segment
 
 Each tool guide contains its own focused workflow instructions and attribution/citation notes.
 
@@ -39,8 +43,9 @@ Each tool guide contains its own focused workflow instructions and attribution/c
 Some tools need Slicer-side dependencies in addition to this toolbox:
 
 - **Motion Scoring** requires the `PyTorch` extension from Slicer's Extension Manager. Install `PyTorch`, restart Slicer, then run Motion Scoring.
+- **Spine Segmentation** requires the `PyTorch` extension from Slicer's Extension Manager and installs/updates `spine-segment` from inside the module.
 - **Timelapsed HR-pQCT** installs/updates the `timelapsed-hrpqct` Python runtime from inside the module.
-- **Scanco I/O** installs/updates the lightweight `aimio-py` / `py_aimio` AIM reader-writer stack from inside the module.
+- **Scanco I/O** installs/updates the lightweight `aimio-py` / `py_aimio` Scanco image reader-writer stack from inside the module.
 
 ## Installation
 
@@ -88,6 +93,7 @@ Instead of using the helper script, add the module folders in `Edit -> Applicati
 - `<repo>/HRpQCTTools/MotionScoreHRpQCT`
 - `<repo>/HRpQCTTools/SegmentationHRpQCT`
 - `<repo>/IOTools/ScancoIO`
+- `<repo>/CTTools/SpineSegmentationCT`
 
 Do not add only the top-level repository folder. Slicer needs each module folder above. The helper script also discovers any vendored scripted modules under `ExternalModules/`.
 
@@ -96,7 +102,8 @@ Do not add only the top-level repository folder. Slicer needs each module folder
 - [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md): longitudinal HR-pQCT analysis, input naming, results layout, remodelling review, and citations.
 - [Motion Scoring](docs/tools/motion-scoring.md): PyTorch setup, model bundle setup, prediction/review workflow, and motion-grading citation.
 - [Segmentation and Contours](docs/tools/segmentation-and-contours.md): segmentation presets, Laplace-Hamming notes, mask utilities, and attribution.
-- [Scanco I/O](docs/tools/scanco-io.md): AIM import/export, metadata handling, and attribution.
+- [Scanco I/O](docs/tools/scanco-io.md): AIM/ISQ/SCV/GOBJ import, AIM export, metadata handling, and attribution.
+- [Spine Segmentation](docs/tools/spine-segmentation-ct.md): CT input, PyTorch setup, `spine-segment` outputs, and attribution.
 
 ## Adding External Modules
 
@@ -123,6 +130,8 @@ HRpQCTTools/
   SegmentationHRpQCT/
 IOTools/
   ScancoIO/
+CTTools/
+  SpineSegmentationCT/
 ExternalModules/
 resources/
 docs/tools/

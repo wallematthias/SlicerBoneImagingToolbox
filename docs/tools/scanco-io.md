@@ -1,13 +1,15 @@
 # Scanco I/O
 
-`Scanco I/O` imports and exports Scanco AIM images in Slicer without requiring the full timelapsed HR-pQCT pipeline.
+`Scanco I/O` imports Scanco AIM, ISQ, SCV, and GOBJ images in Slicer without requiring the full timelapsed HR-pQCT pipeline. It can also export edited grayscale or mask volumes back to AIM.
 
 ## When To Use
 
 Use this tool when you want to:
 
-- import `.AIM` images into Slicer,
-- load AIM data as density/BMD, native Scanco values, mu, HU, or segmentation masks,
+- import `.AIM`, `.ISQ`, `.SCV`, and `.GOBJ` files into Slicer,
+- load calibrated image data as density, native Scanco values, or HU,
+- load nonzero image data as a Slicer segmentation,
+- create a transform node from image geometry,
 - edit or inspect volumes using standard Slicer tools,
 - export scalar volumes, labelmaps, or segmentations back to AIM,
 - preserve and edit AIM metadata during round trips.
@@ -15,23 +17,32 @@ Use this tool when you want to:
 ## Setup
 
 1. Open `Bone Imaging > I/O > Scanco I/O`.
-2. Click `Install / Update AIM I/O`.
+2. Click `Install / Update Scanco I/O`.
 
-This installs only the lightweight AIM dependency stack, including `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
+This installs only the lightweight Scanco image dependency stack, including `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
 
 ## Import Workflow
 
-1. Select the AIM file.
+1. Select the AIM, ISQ, SCV, or GOBJ file.
 2. Choose the import scaling:
-   - density/BMD,
+   - density,
    - native Scanco values,
-   - mu,
-   - HU,
-   - segmentation from nonzero voxels.
-3. Click import.
-4. Inspect or edit the loaded volume in Slicer.
+   - HU.
+3. Choose the Slicer target:
+   - scalar volume,
+   - segmentation from nonzero voxels,
+   - transform from image geometry.
+4. Click import.
+5. Inspect or edit the loaded node in Slicer.
 
-Imported AIM metadata is stored on the loaded Slicer volume.
+Imported metadata is stored on the loaded Slicer node.
+
+Drag and drop exposes explicit Scanco reader choices in Slicer's Add Data dialog:
+
+- `ScancoVolume`: reads native values into a scalar volume,
+- `ScancoHU`: reads HU values into a scalar volume,
+- `ScancoDensity`: reads density values into a scalar volume,
+- `ScancoSegmentation`: reads native values into a Slicer segmentation.
 
 ## Export Workflow
 
@@ -47,6 +58,6 @@ Geometry fields that can be read from the selected Slicer volume, such as dimens
 
 ## Attribution
 
-AIM import/export is backed by the `aimio-py` / `py_aimio` package.
+AIM, ISQ, SCV, and GOBJ import plus AIM export are backed by the `aimio-py` / `py_aimio` package.
 
 No separate method paper is currently specified for this module. Cite the toolbox and any acquisition, segmentation, or downstream analysis methods used with the exported data.

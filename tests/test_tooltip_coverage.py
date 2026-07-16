@@ -26,7 +26,7 @@ def test_scanco_io_has_import_export_tooltips():
     source = _source("IOTools/ScancoIO/ScancoIO.py")
 
     for snippet in [
-        "Load AIM as an editable scalar volume or as a Slicer segmentation from nonzero voxels.",
+        "Load Scanco images as editable scalar volumes, segmentations from nonzero voxels, or geometry transforms.",
         "The volume name updates when this path changes.",
         "Unit convention for grayscale export.",
         "Editable Scanco processing-log fields",

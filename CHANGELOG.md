@@ -13,7 +13,9 @@ All notable changes to this extension are documented in this file.
 - Renamed the internal segmentation module ID from `HRpQCTSegmentation` to `SegmentationHRpQCT` and its display title to `Segmentation and Contours`.
 - Grouped built-in module folders under `HRpQCTTools/` and `IOTools/` while keeping explicit top-level CMake entries for Slicer ExtensionIndex builds.
 - Reworked the README into a compact toolbox overview and moved detailed tool instructions and attribution into focused per-tool documentation.
-- Updated the toolbox logo image for the Bone Imaging Toolbox name.
+- Updated the toolbox logo image for the Bone Imaging Toolbox name, including a transparent PNG variant for README and extension metadata previews.
+- Extended Scanco I/O import to use `aimio-py` image dispatch for AIM, ISQ, SCV, and GOBJ files, with explicit Slicer drag/drop readers for native volume, HU volume, density volume, and native segmentation import.
+- Added a `Bone Imaging.CT` Spine Segmentation module that installs `spine-segment`, runs vertebral CT segmentation in a Slicer subprocess, and loads vertebral-level, process/body, and cortical/trabecular outputs.
 
 ## [0.2.0] - 2026-05-21
 

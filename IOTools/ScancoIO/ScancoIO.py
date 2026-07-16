@@ -9,6 +9,7 @@ import ctk
 import slicer
 import SimpleITK as sitk
 import numpy as np
+import vtk
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -31,6 +32,11 @@ from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dial
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
+SCANCO_FORMAT_ATTRIBUTE = "BoneImaging.ScancoIO.Format"
+SCANCO_LOAD_AS_ATTRIBUTE = "BoneImaging.ScancoIO.LoadAs"
+VOLUME_READER_EXTENSIONS = (".aim", ".isq", ".scv")
+SEGMENTATION_READER_EXTENSIONS = (".aim", ".isq", ".gobj")
+ALL_READER_EXTENSIONS = tuple(sorted(set(VOLUME_READER_EXTENSIONS + SEGMENTATION_READER_EXTENSIONS)))
 
 
 def _json_default(value):
@@ -84,6 +90,8 @@ def _aim_io_module():
     required = (
         "is_aimio_available",
         "read_aim",
+        "read_image",
+        "supported_image_extensions",
         "write_aim",
         "log_to_dict",
         "image_with_aim_metadata_geometry",
@@ -120,8 +128,8 @@ class ScancoIO(ScriptedLoadableModule):
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
-            "Import Scanco AIM images into Slicer and export edited grayscale "
-            f"or mask volumes back to AIM. Module version: {MODULE_VERSION}"
+            "Import Scanco AIM, ISQ, SCV, and GOBJ images into Slicer and export "
+            f"edited grayscale or mask volumes back to AIM. Module version: {MODULE_VERSION}"
         )
         parent.acknowledgementText = """Part of the Bone Imaging Toolbox for 3D Slicer.
 
@@ -133,7 +141,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         return _aim_io_module().is_aimio_available()
 
     def install_or_update_core(self):
-        slicer.util.pip_install("aimio-py>=0.1.2 numpy>=1.26,<2.0")
+        slicer.util.pip_install("aimio-py>=0.1.8 numpy>=1.26,<2.0")
 
     def import_aim(
         self,
@@ -142,17 +150,50 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         volume_name=None,
         as_segmentation=False,
     ):
+        return self.import_image(
+            aim_path,
+            scaling=scaling,
+            volume_name=volume_name,
+            load_as="segmentation" if as_segmentation else "volume",
+        )
+
+    def import_image(
+        self,
+        image_path,
+        scaling="density",
+        volume_name=None,
+        load_as="volume",
+    ):
         aim_io = _aim_io_module()
 
-        aim_path = Path(aim_path)
-        if not aim_path.exists():
-            raise FileNotFoundError(f"AIM file does not exist: {aim_path}")
-        image, metadata = aim_io.read_aim(aim_path, scaling=scaling)
-        name = volume_name.strip() if volume_name else aim_path.stem
+        image_path = Path(image_path)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Scanco image file does not exist: {image_path}")
+        load_as = str(load_as or "volume").strip().lower()
+        if load_as in {"mask", "labelmap"}:
+            load_as = "segmentation"
+        if load_as == "auto":
+            load_as = aim_io.suggested_slicer_load_as(image_path)
+        if load_as not in {"volume", "segmentation", "transform"}:
+            raise ValueError("Load mode must be one of: volume, segmentation, transform.")
+        read_scaling = scaling if load_as == "volume" else "native"
+        image, metadata = aim_io.read_image(image_path, scaling=read_scaling)
+        name = volume_name.strip() if volume_name else image_path.stem
+
+        if load_as == "transform":
+            node = self._transform_node_from_image(image, name)
+            self._attach_import_metadata(
+                node,
+                image_path=image_path,
+                scaling=read_scaling,
+                load_as=load_as,
+                metadata=metadata,
+            )
+            return node
 
         with tempfile.TemporaryDirectory(prefix="hrpqct_aim_import_") as temp_dir:
-            nrrd_path = Path(temp_dir) / "imported_aim.nrrd"
-            if as_segmentation:
+            nrrd_path = Path(temp_dir) / "imported_scanco_image.nrrd"
+            if load_as == "segmentation":
                 label_image = self._label_image_for_segmentation(image)
                 reference_image = self._matching_reference_image_for_label(label_image)
                 if reference_image is not None:
@@ -168,19 +209,43 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         else:
             success, volume_node = bool(loaded), loaded
         if not success or volume_node is None:
-            raise RuntimeError(f"Could not load imported AIM volume into Slicer: {aim_path}")
+            raise RuntimeError(f"Could not load imported Scanco image into Slicer: {image_path}")
 
-        if as_segmentation:
+        if load_as == "segmentation":
             self._configure_segmentation_display(volume_node)
 
-        metadata_text = json.dumps(metadata, sort_keys=True, default=_json_default)
-        volume_node.SetAttribute(AIM_SOURCE_ATTRIBUTE, str(aim_path))
-        volume_node.SetAttribute(AIM_SCALING_ATTRIBUTE, scaling)
-        volume_node.SetAttribute(
-            AIM_METADATA_ATTRIBUTE,
-            metadata_text,
+        self._attach_import_metadata(
+            volume_node,
+            image_path=image_path,
+            scaling=read_scaling,
+            load_as=load_as,
+            metadata=metadata,
         )
         return volume_node
+
+    def _attach_import_metadata(self, node, *, image_path, scaling, load_as, metadata):
+        metadata_text = json.dumps(metadata, sort_keys=True, default=_json_default)
+        node.SetAttribute(AIM_SOURCE_ATTRIBUTE, str(image_path))
+        node.SetAttribute(AIM_SCALING_ATTRIBUTE, scaling)
+        node.SetAttribute(SCANCO_FORMAT_ATTRIBUTE, str((metadata or {}).get("format") or "").lower())
+        node.SetAttribute(SCANCO_LOAD_AS_ATTRIBUTE, str(load_as))
+        node.SetAttribute(AIM_METADATA_ATTRIBUTE, metadata_text)
+
+    def _transform_node_from_image(self, image, name):
+        node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", name)
+        matrix = vtk.vtkMatrix4x4()
+        matrix.Identity()
+        spacing = tuple(float(v) for v in image.GetSpacing())
+        origin_lps = tuple(float(v) for v in image.GetOrigin())
+        direction = tuple(float(v) for v in image.GetDirection())
+        if image.GetDimension() == 3 and len(direction) == 9:
+            lps_to_ras = (-1.0, -1.0, 1.0)
+            for row in range(3):
+                for col in range(3):
+                    matrix.SetElement(row, col, lps_to_ras[row] * direction[row * 3 + col] * spacing[col])
+                matrix.SetElement(row, 3, lps_to_ras[row] * origin_lps[row])
+        node.SetMatrixTransformToParent(matrix)
+        return node
 
     def _label_image_for_segmentation(self, image):
         labels = sitk.GetArrayFromImage(image)
@@ -338,6 +403,65 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             slicer.mrmlScene.RemoveNode(label_node)
 
 
+class ScancoIOVariantFileReader:
+    """Shared implementation for explicit Scanco drag/drop reader choices."""
+
+    def __init__(
+        self,
+        parent,
+        *,
+        description,
+        file_type,
+        scaling,
+        load_as,
+        extensions,
+    ):
+        self.parent = parent
+        self._description = description
+        self._file_type = file_type
+        self._scaling = scaling
+        self._load_as = load_as
+        self._extensions = tuple(extensions)
+
+    def description(self):
+        return self._description
+
+    def fileType(self):
+        return self._file_type
+
+    def extensions(self):
+        suffixes = " ".join(f"*{suffix}" for suffix in self._extensions)
+        suffixes += " " + " ".join(f"*{suffix.upper()}" for suffix in self._extensions)
+        return [f"{self._description} ({suffixes})"]
+
+    def canLoadFileConfidence(self, filePath):
+        suffix = Path(str(filePath or "").rsplit(";", 1)[0]).suffix.lower()
+        if suffix in self._extensions:
+            return 0.95
+        return 0.0
+
+    def load(self, properties):
+        try:
+            file_path = properties.get("fileName") or properties.get("filePath")
+            if not file_path:
+                raise ValueError("No Scanco image path was provided.")
+            scaling = self._scaling
+            load_as = self._load_as
+            name = properties.get("name") or Path(str(file_path)).stem
+            node = ScancoIOLogic().import_image(
+                file_path,
+                scaling=scaling,
+                volume_name=name,
+                load_as=load_as,
+            )
+            self.parent.loadedNodes = [node.GetID()]
+            return True
+        except Exception as exc:
+            if hasattr(self.parent, "userMessages"):
+                self.parent.userMessages().AddMessage(vtk.vtkCommand.ErrorEvent, str(exc))
+            return False
+
+
 class ScancoIOWidget(ScriptedLoadableModuleWidget):
     def _tip(self, widget, text):
         widget.toolTip = str(text)
@@ -355,13 +479,13 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
     def _build_import_section(self):
         collapsible = ctk.ctkCollapsibleButton()
-        collapsible.text = "Import AIM"
+        collapsible.text = "Import Scanco image"
         self.layout.addWidget(collapsible)
         form = qt.QFormLayout(collapsible)
 
-        self.installButton = qt.QPushButton("Install / Update AIM I/O")
+        self.installButton = qt.QPushButton("Install / Update Scanco I/O")
         self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
-        self._tip(self.installButton, "Install or update the lightweight AIM I/O dependency in Slicer Python.")
+        self._tip(self.installButton, "Install or update the lightweight aimio-py Scanco image dependency in Slicer Python.")
         self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
         self.installButton.clicked.connect(self._install_core)
         self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
@@ -377,38 +501,38 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self._lastAutoVolumeName = ""
         browse = qt.QPushButton("Browse...")
         browse.clicked.connect(self._browse_import_path)
-        self._tip(self.importPathEdit, "Path to the Scanco AIM file to import. The volume name updates when this path changes.")
-        self._tip(browse, "Select an AIM file from disk.")
+        self._tip(self.importPathEdit, "Path to the Scanco AIM, ISQ, SCV, or GOBJ file to import. The volume name updates when this path changes.")
+        self._tip(browse, "Select a Scanco AIM, ISQ, SCV, or GOBJ file from disk.")
         row = qt.QHBoxLayout()
         row.addWidget(self.importPathEdit)
         row.addWidget(browse)
-        form.addRow("AIM file", row)
+        form.addRow("Image file", row)
 
         self.scalingCombo = qt.QComboBox()
         for label, value in [
-            ("Density/BMD", "bmd"),
-            ("Native Scanco values", "native"),
-            ("Mu", "mu"),
+            ("Density", "density"),
+            ("Native", "native"),
             ("HU", "hu"),
         ]:
             self.scalingCombo.addItem(label, value)
-        self._tip(self.scalingCombo, "Numeric scaling for scalar-volume import. Segmentations always load from native nonzero values.")
+        self._tip(self.scalingCombo, "Numeric scaling for scalar-volume import. Segmentations and transforms always load from native image geometry or labels.")
         form.addRow("Load values as", self.scalingCombo)
 
         self.importAsCombo = qt.QComboBox()
         self.importAsCombo.addItem("Scalar volume", "volume")
         self.importAsCombo.addItem("Segmentation (nonzero mask)", "segmentation")
+        self.importAsCombo.addItem("Transform (image geometry)", "transform")
         self.importAsCombo.currentIndexChanged.connect(self._on_import_as_changed)
-        self._tip(self.importAsCombo, "Load AIM as an editable scalar volume or as a Slicer segmentation from nonzero voxels.")
+        self._tip(self.importAsCombo, "Load Scanco images as editable scalar volumes, segmentations from nonzero voxels, or geometry transforms.")
         form.addRow("Load into Slicer as", self.importAsCombo)
 
         self.volumeNameEdit = qt.QLineEdit()
-        self._tip(self.volumeNameEdit, "Name assigned to the loaded Slicer volume or segmentation node.")
-        form.addRow("Volume name", self.volumeNameEdit)
+        self._tip(self.volumeNameEdit, "Name assigned to the loaded Slicer volume, segmentation, or transform node.")
+        form.addRow("Node name", self.volumeNameEdit)
 
-        self.importButton = qt.QPushButton("Import AIM")
-        self.importButton.clicked.connect(self._import_aim)
-        self._tip(self.importButton, "Import the selected AIM into the Slicer scene and attach available AIM metadata.")
+        self.importButton = qt.QPushButton("Import image")
+        self.importButton.clicked.connect(self._import_image)
+        self._tip(self.importButton, "Import the selected Scanco image into the Slicer scene and attach available metadata.")
         form.addRow(self.importButton)
 
     def _build_export_section(self):
@@ -517,9 +641,9 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
     def _browse_import_path(self):
         path = qt.QFileDialog.getOpenFileName(
             slicer.util.mainWindow(),
-            "Select AIM file",
+            "Select Scanco image file",
             "",
-            "AIM files (*.AIM *.aim);;All files (*)",
+            "AIM/ISQ/SCV/GOBJ files (*.AIM *.aim *.ISQ *.isq *.SCV *.scv *.GOBJ *.gobj);;All files (*)",
         )
         if isinstance(path, (tuple, list)):
             path = path[0] if path else ""
@@ -674,21 +798,21 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
             self.volumeNameEdit.text = suggested
             self._lastAutoVolumeName = suggested
 
-    def _import_aim(self):
+    def _import_image(self):
         try:
             import_kind = self.importAsCombo.currentData
             as_segmentation = import_kind == "segmentation"
             scaling = self.scalingCombo.currentData if import_kind == "volume" else "native"
-            node = self.logic.import_aim(
+            node = self.logic.import_image(
                 self.importPathEdit.text,
                 scaling=scaling,
                 volume_name=self.volumeNameEdit.text,
-                as_segmentation=as_segmentation,
+                load_as=import_kind,
             )
-            if not as_segmentation:
+            if not as_segmentation and import_kind != "transform":
                 self.volumeSelector.setCurrentNode(node)
             self._set_header_metadata(self._node_header_metadata(node))
-            node_kind = "segmentation" if as_segmentation else "volume"
+            node_kind = "segmentation" if as_segmentation else import_kind
             self._log(f"Imported {node.GetName()} as {node_kind} from {self.importPathEdit.text}")
         except Exception as exc:
             self._error(exc)

@@ -25,6 +25,12 @@
       "title": "Scanco I/O",
       "section": "I/O",
       "source": "built-in"
+    },
+    {
+      "path": "CTTools/SpineSegmentationCT",
+      "title": "Spine Segmentation",
+      "section": "CT",
+      "source": "built-in"
     }
   ],
   "external_module_roots": [

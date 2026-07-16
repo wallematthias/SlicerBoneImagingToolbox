@@ -6,10 +6,27 @@ from datetime import datetime
 import importlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
 import SimpleITK as sitk
+
+
+SUPPORTED_IMAGE_EXTENSIONS = (".aim", ".isq", ".scv", ".gobj")
+SUPPORTED_IMAGE_FORMATS = ("aim", "isq", "scv", "gobj")
+SEGMENTATION_FILENAME_TOKENS = {
+    "contour",
+    "contours",
+    "label",
+    "labels",
+    "mask",
+    "regmask",
+    "roi1",
+    "roi2",
+    "seg",
+    "segmentation",
+}
 
 
 def _load_py_aimio():
@@ -17,7 +34,7 @@ def _load_py_aimio():
         return importlib.import_module("py_aimio")
     except ImportError as exc:
         raise RuntimeError(
-            "py_aimio is required for AIM import/export. Use the module install button "
+            "py_aimio is required for Scanco image import/export. Use the module install button "
             "or install the PyPI package 'aimio-py' in Slicer Python."
         ) from exc
 
@@ -83,6 +100,15 @@ def _normalize_scaling(scaling: str) -> str:
     )
 
 
+def _normalize_image_scaling(scaling: str) -> str:
+    normalized = str(scaling or "density").strip().lower()
+    if normalized == "bmd":
+        return "density"
+    if normalized in {"density", "native", "none", "hu"}:
+        return normalized
+    raise ValueError(f"Unsupported scaling '{scaling}'. Use one of: density, native, HU.")
+
+
 def _apply_scaling(np_image: np.ndarray, processing_log: str, scaling: str) -> np.ndarray:
     scaling = scaling.lower()
     if scaling in {"native", "none"}:
@@ -127,6 +153,50 @@ def _as_zyx(array: np.ndarray, dimensions_xyz: tuple[int, int, int] | None) -> n
     return array
 
 
+def supported_image_extensions() -> tuple[str, ...]:
+    return SUPPORTED_IMAGE_EXTENSIONS
+
+
+def resolve_image_format(path: Path | str, image_format: str = "auto") -> str:
+    normalized = str(image_format or "auto").strip().lower()
+    if normalized != "auto":
+        if normalized not in SUPPORTED_IMAGE_FORMATS:
+            raise ValueError("image_format must be one of: auto, aim, isq, scv, or gobj.")
+        return normalized
+
+    path_without_version = str(path).rsplit(";", 1)
+    path_text = path_without_version[0] if len(path_without_version) == 2 and path_without_version[1].isdigit() else str(path)
+    suffix = Path(path_text).suffix.lower()
+    if suffix in SUPPORTED_IMAGE_EXTENSIONS:
+        return suffix.lstrip(".")
+    raise ValueError("Could not infer image format from extension; use AIM, ISQ, SCV, or GOBJ.")
+
+
+def suggested_slicer_load_as(path: Path | str, metadata: dict[str, Any] | None = None) -> str:
+    metadata_format = str((metadata or {}).get("format") or "").strip().lower()
+    image_format = metadata_format or resolve_image_format(path)
+    if image_format == "gobj":
+        return "segmentation"
+
+    stem = Path(str(path).rsplit(";", 1)[0]).stem.lower()
+    tokens = {token for token in re.split(r"[^a-z0-9]+", stem) if token}
+    if tokens & SEGMENTATION_FILENAME_TOKENS:
+        return "segmentation"
+    return "volume"
+
+
+def _image_scaling_kwargs(image_format: str, scaling: str) -> dict[str, Any]:
+    scaling = _normalize_image_scaling(scaling)
+    if image_format == "isq":
+        return {"unit": "native" if scaling == "none" else scaling}
+    if image_format == "aim":
+        return {
+            "density": scaling == "density",
+            "hu": scaling == "hu",
+        }
+    return {}
+
+
 def _resolve_origin(meta: dict[str, Any], spacing: tuple[float, float, float]) -> tuple[float, float, float]:
     origin_raw = meta.get("origin")
     if isinstance(origin_raw, (list, tuple)) and len(origin_raw) == 3:
@@ -143,6 +213,89 @@ def _resolve_origin(meta: dict[str, Any], spacing: tuple[float, float, float]) -
         )
 
     return (0.0, 0.0, 0.0)
+
+
+def _metadata_vector_for_image(
+    meta: dict[str, Any],
+    key: str,
+    default: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    raw = meta.get(key)
+    if isinstance(raw, (list, tuple)):
+        values = tuple(float(v) for v in raw[:3])
+        if len(values) == 3:
+            return values
+        if len(values) == 2:
+            return (values[0], values[1], default[2])
+    return default
+
+
+def _direction_for_image(meta: dict[str, Any], dimension: int) -> tuple[float, ...]:
+    raw = meta.get("direction")
+    if isinstance(raw, (list, tuple)):
+        if dimension == 3 and len(raw) == 9:
+            return tuple(float(v) for v in raw)
+        if dimension == 2 and len(raw) == 4:
+            return tuple(float(v) for v in raw)
+    if dimension == 2:
+        return (1.0, 0.0, 0.0, 1.0)
+    return (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def _image_from_array_and_metadata(
+    array: np.ndarray,
+    meta: dict[str, Any],
+    *,
+    scaling: str,
+) -> tuple[sitk.Image, dict[str, Any]]:
+    np_arr = np.asarray(array)
+    if np_arr.ndim == 2:
+        np_arr = np_arr[np.newaxis, :, :]
+    elif np_arr.ndim == 3:
+        dims_raw = meta.get("dimensions")
+        dimensions_xyz = (
+            tuple(int(v) for v in dims_raw)
+            if isinstance(dims_raw, (list, tuple)) and len(dims_raw) == 3
+            else None
+        )
+        np_arr = _as_zyx(np_arr, dimensions_xyz)
+    else:
+        raise ValueError(f"Expected 2D or 3D image array, got shape {np_arr.shape}.")
+
+    spacing = _metadata_vector_for_image(
+        meta,
+        "spacing",
+        _metadata_vector_for_image(meta, "element_size", (1.0, 1.0, 1.0)),
+    )
+    origin_raw = meta.get("origin")
+    if isinstance(origin_raw, (list, tuple)) and len(origin_raw) >= 3:
+        origin = tuple(float(v) for v in origin_raw[:3])
+    else:
+        origin = _resolve_origin(meta, spacing)
+
+    image = sitk.GetImageFromArray(np_arr)
+    image.SetSpacing(spacing)
+    image.SetOrigin(origin)
+    image.SetDirection(_direction_for_image(meta, image.GetDimension()))
+
+    metadata = dict(meta)
+    image_format = str(metadata.get("format") or "").upper()
+    unit = str(metadata.get("unit") or "").strip()
+    if not unit:
+        unit = "native" if image_format in {"SCV", "GOBJ"} else _normalize_image_scaling(scaling)
+    metadata.update(
+        {
+            "origin": origin,
+            "spacing": spacing,
+            "element_size": spacing,
+            "direction": tuple(float(v) for v in image.GetDirection()),
+            "dimensions": tuple(int(v) for v in image.GetSize()),
+            "unit": unit,
+        }
+    )
+    if image_format:
+        metadata["format"] = image_format
+    return image, metadata
 
 
 def image_with_aim_metadata_geometry(image: sitk.Image, metadata: dict[str, Any] | None) -> sitk.Image:
@@ -273,6 +426,27 @@ def read_aim(path: Path, scaling: str = "bmd") -> tuple[sitk.Image, dict[str, An
         "unit": image.GetMetaData("unit"),
     })
     return image, metadata
+
+
+def read_image(
+    path: Path | str,
+    scaling: str = "density",
+    image_format: str = "auto",
+    **kwargs,
+) -> tuple[sitk.Image, dict[str, Any]]:
+    image_format = resolve_image_format(path, image_format)
+    scaling = _normalize_image_scaling(scaling)
+
+    if image_format == "aim":
+        return read_aim(Path(path), scaling="density" if scaling == "density" else scaling)
+
+    py_aimio = _load_py_aimio()
+    read_kwargs = _image_scaling_kwargs(image_format, scaling)
+    read_kwargs.update(kwargs)
+    array, meta = py_aimio.read_image(str(path), format=image_format, **read_kwargs)
+    metadata = dict(meta)
+    metadata.setdefault("format", image_format.upper())
+    return _image_from_array_and_metadata(array, metadata, scaling=scaling)
 
 
 def _normalize_aim_write_unit(unit: Any) -> str | None:

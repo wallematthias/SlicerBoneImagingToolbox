@@ -2,6 +2,10 @@ set(MODULE_NAME ScancoIO)
 
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
+  ScancoDensity.py
+  ScancoHU.py
+  ScancoSegmentation.py
+  ScancoVolume.py
   ScancoIOLib/__init__.py
   ScancoIOLib/aim_io.py
 )
