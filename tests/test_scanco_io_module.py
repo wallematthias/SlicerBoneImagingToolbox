@@ -4,7 +4,7 @@ import sys
 import SimpleITK as sitk
 
 
-MODULE = Path(__file__).resolve().parents[1] / "ScancoIO" / "ScancoIO.py"
+MODULE = Path(__file__).resolve().parents[1] / "IOTools" / "ScancoIO" / "ScancoIO.py"
 LIB_DIR = MODULE.parent
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))

@@ -13,10 +13,10 @@ set(EXTENSION_DEPENDS "")
 find_package(Slicer REQUIRED)
 include(${Slicer_USE_FILE})
 
-add_subdirectory(TimelapsedHRpQCT)
-add_subdirectory(MotionScoreHRpQCT)
-add_subdirectory(ScancoIO)
-add_subdirectory(HRpQCTSegmentation)
+add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
+add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
+add_subdirectory(HRpQCTTools/SegmentationHRpQCT)
+add_subdirectory(IOTools/ScancoIO)
 
 file(GLOB TOOLBOX_EXTERNAL_CMAKES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/ExternalModules/*/CMakeLists.txt"

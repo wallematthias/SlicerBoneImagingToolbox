@@ -9,7 +9,7 @@ def _source(relative_path):
 
 
 def test_segmentation_toolbox_has_tooltips_for_generate_and_derive_tabs():
-    source = _source("HRpQCTSegmentation/HRpQCTSegmentation.py")
+    source = _source("HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py")
 
     for snippet in [
         "Input HR-pQCT volume used to generate masks and bone segmentation.",
@@ -23,7 +23,7 @@ def test_segmentation_toolbox_has_tooltips_for_generate_and_derive_tabs():
 
 
 def test_scanco_io_has_import_export_tooltips():
-    source = _source("ScancoIO/ScancoIO.py")
+    source = _source("IOTools/ScancoIO/ScancoIO.py")
 
     for snippet in [
         "Load AIM as an editable scalar volume or as a Slicer segmentation from nonzero voxels.",
@@ -36,7 +36,7 @@ def test_scanco_io_has_import_export_tooltips():
 
 
 def test_motion_score_has_run_review_and_retrain_tooltips():
-    source = _source("MotionScoreHRpQCT/MotionScoreHRpQCT.py")
+    source = _source("HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py")
 
     for snippet in [
         "Start manual review immediately for scans already discovered or processed.",
@@ -49,7 +49,7 @@ def test_motion_score_has_run_review_and_retrain_tooltips():
 
 
 def test_timelapsed_has_control_level_tooltips_for_profiles_analysis_and_loading():
-    source = _source("TimelapsedHRpQCT/TimelapsedHRpQCT.py")
+    source = _source("HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py")
 
     for snippet in [
         "Apply the selected profile to visible settings",

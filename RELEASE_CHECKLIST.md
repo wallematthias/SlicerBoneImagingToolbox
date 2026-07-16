@@ -10,11 +10,11 @@
 
 ## Module
 
-- [ ] All toolbox modules load in Slicer developer mode from the `Bone Imaging` category:
-  - [ ] `Timelapsed HR-pQCT`
-  - [ ] `Motion Scoring`
-  - [ ] `Scanco I/O`
-  - [ ] `Contours and Segmentation`
+- [ ] All toolbox modules load in Slicer developer mode from the expected `Bone Imaging` subcategories:
+  - [ ] `Bone Imaging > HR-pQCT > Timelapsed HR-pQCT`
+  - [ ] `Bone Imaging > HR-pQCT > Motion Scoring`
+  - [ ] `Bone Imaging > HR-pQCT > Segmentation and Contours`
+  - [ ] `Bone Imaging > I/O > Scanco I/O`
 - [ ] Any vendored modules under `ExternalModules/` load from their intended Slicer category.
 - [ ] `Install / Update timelapsed-hrpqct` works on clean Slicer install.
 - [ ] `Install / Update AIM I/O` installs `aimio-py` without installing the full timelapsed pipeline.
@@ -22,7 +22,7 @@
 - [ ] Analyze rerun works with changed threshold/cluster.
 - [ ] Raw/transformed/remodelling loading works.
 - [ ] Scanco AIM import/export round trip works on one representative AIM.
-- [ ] Contours and Segmentation creates full/trabecular/cortical/segmentation outputs.
+- [ ] Segmentation and Contours creates full/trabecular/cortical/segmentation outputs.
 - [ ] Motion Scoring can find a local or downloaded model bundle and export a review table.
 
 ## Testing
@@ -30,7 +30,7 @@
 - [ ] `TimelapsedHRpQCTTest` passes.
 - [ ] `MotionScoreHRpQCTTest` passes.
 - [ ] `ScancoIOTest` passes.
-- [ ] `HRpQCTSegmentationTest` passes.
+- [ ] `SegmentationHRpQCTTest` passes.
 - [ ] Manual smoke test done on at least one real dataset.
 
 ## Docs

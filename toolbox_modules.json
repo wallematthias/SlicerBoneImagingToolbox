@@ -3,27 +3,27 @@
   "display_name": "Bone Imaging Toolbox",
   "modules": [
     {
-      "path": "TimelapsedHRpQCT",
+      "path": "HRpQCTTools/TimelapsedHRpQCT",
       "title": "Timelapsed HR-pQCT",
       "section": "HR-pQCT",
       "source": "built-in"
     },
     {
-      "path": "MotionScoreHRpQCT",
+      "path": "HRpQCTTools/MotionScoreHRpQCT",
       "title": "Motion Scoring",
       "section": "HR-pQCT",
       "source": "built-in"
     },
     {
-      "path": "HRpQCTSegmentation",
-      "title": "Contours and Segmentation",
+      "path": "HRpQCTTools/SegmentationHRpQCT",
+      "title": "Segmentation and Contours",
       "section": "HR-pQCT",
       "source": "built-in"
     },
     {
-      "path": "ScancoIO",
+      "path": "IOTools/ScancoIO",
       "title": "Scanco I/O",
-      "section": "ScancoIO",
+      "section": "I/O",
       "source": "built-in"
     }
   ],

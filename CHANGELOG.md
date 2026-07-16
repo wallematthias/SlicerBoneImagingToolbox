@@ -9,6 +9,9 @@ All notable changes to this extension are documented in this file.
 - Renamed the extension container to SlicerBoneImagingToolbox and moved built-in modules under the `Bone Imaging` Slicer category.
 - Added a toolbox module manifest and external module discovery for vendored scripted modules under `ExternalModules/`.
 - Renamed updater/linker metadata to the Bone Imaging Toolbox while keeping legacy import shims for existing internal imports.
+- Added `Bone Imaging.HR-pQCT` and `Bone Imaging.I/O` Slicer subcategories for a clearer toolbox menu.
+- Renamed the internal segmentation module ID from `HRpQCTSegmentation` to `SegmentationHRpQCT` and its display title to `Segmentation and Contours`.
+- Grouped built-in module folders under `HRpQCTTools/` and `IOTools/` while keeping explicit top-level CMake entries for Slicer ExtensionIndex builds.
 
 ## [0.2.0] - 2026-05-21
 

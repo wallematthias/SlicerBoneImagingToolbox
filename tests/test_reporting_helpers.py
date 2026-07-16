@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 
-MODULE_DIR = Path(__file__).resolve().parents[1] / "TimelapsedHRpQCT"
+MODULE_DIR = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "TimelapsedHRpQCT"
 sys.path.insert(0, str(MODULE_DIR))
 
 from TimelapsedHRpQCTLib.Reporting import (  # noqa: E402
@@ -122,7 +122,9 @@ def test_default_export_filename_uses_timestamp_and_clear_prefix() -> None:
 def test_method_citations_are_documented_without_ui_citation_text() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
-    module_text = (repo_root / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py").read_text(encoding="utf-8")
+    module_text = (
+        repo_root / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
+    ).read_text(encoding="utf-8")
 
     assert "## Method Citations" in readme
     assert "Hosseinitabatabaei" not in readme

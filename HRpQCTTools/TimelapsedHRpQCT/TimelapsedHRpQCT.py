@@ -60,7 +60,7 @@ for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
 
 import SimpleITK as sitk
 
-_TOOLBOX_ROOT = Path(__file__).resolve().parent.parent
+_TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
 _PIPELINE_LOCAL_REPO = _TOOLBOX_ROOT.parent / "TimelapsedHRpQCT"
@@ -106,7 +106,7 @@ class TimelapsedHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Timelapsed HR-pQCT"
-        parent.categories = ["Bone Imaging"]
+        parent.categories = ["Bone Imaging.HR-pQCT"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

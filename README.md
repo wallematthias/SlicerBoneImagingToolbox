@@ -14,15 +14,18 @@ The extension appears in Slicer as one toolbox category:
 
 ```text
 Bone Imaging
-  Timelapsed HR-pQCT
-  Motion Scoring
-  Scanco I/O
-  Contours and Segmentation
+  I/O
+    Scanco I/O
+  HR-pQCT
+    Timelapsed HR-pQCT
+    Motion Scoring
+    Segmentation and Contours
 ```
 
 ## Repository Model
 
 `SlicerBoneImagingToolbox` is the container Slicer extension. Built-in modules live directly in this repository, while modules from other labs can be vendored under `ExternalModules/` as git submodules, subtrees, or maintained forks.
+The repository groups built-in modules by toolbox section (`HRpQCTTools/`, `IOTools/`, and future groups such as `FETools/`). Slicer ExtensionIndex compatibility is preserved by the top-level `CMakeLists.txt`, which explicitly adds each built-in module subdirectory.
 
 The built-in Slicer modules remain workflow wrappers around core Python packages:
 
@@ -50,13 +53,13 @@ The built-in Slicer modules remain workflow wrappers around core Python packages
   - Supports rapid reviewer grading, manual review of already processed scans while prediction is still running, review-table export, and interrupted-run continuation.
   - Keeps model inference and retraining logic in the MotionScore core package.
   - Supports local or downloaded model bundles without requiring a hosted license API.
-- **Contours and Segmentation**: Lightweight Slicer workflow helper for masks and contours.
+- **Segmentation and Contours**: Lightweight Slicer workflow helper for masks and contours.
   - Generates HR-pQCT full, trabecular, cortical, and binary segmentation outputs from an input volume.
   - Provides radius, tibia, and knee contour presets plus standard Gaussian, Laplace-Hamming, and adaptive segmentation methods.
   - Provides mask utility tools for deriving missing full/trabecular/cortical masks, boolean mask operations, relabelling, validation, and HOM/material labelmap creation.
   - Keeps expert threshold and morphology settings collapsed by default, then optionally opens Slicer's Segment Editor for cleanup.
 
-### ScancoIO
+### I/O
 
 - **Scanco I/O**: Focused AIM import/export utility.
   - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, HU, or a Slicer segmentation from nonzero voxels.
@@ -94,10 +97,10 @@ The toolbox is not yet available in the full stable Slicer Extensions Index for 
    ```
 5. Restart Slicer.
 6. Open modules from the `Bone Imaging` category:
-   - `Timelapsed HR-pQCT`
-   - `Motion Scoring`
-   - `Scanco I/O`
-   - `Contours and Segmentation`
+   - `I/O > Scanco I/O`
+   - `HR-pQCT > Timelapsed HR-pQCT`
+   - `HR-pQCT > Motion Scoring`
+   - `HR-pQCT > Segmentation and Contours`
 
 Example script paths:
 
@@ -114,10 +117,10 @@ If you prefer not to run the helper script, add the module folders through Slice
 
 Add these folders, replacing `<repo>` with the downloaded/cloned repository folder:
 
-- `<repo>/TimelapsedHRpQCT`
-- `<repo>/MotionScoreHRpQCT`
-- `<repo>/ScancoIO`
-- `<repo>/HRpQCTSegmentation`
+- `<repo>/HRpQCTTools/TimelapsedHRpQCT`
+- `<repo>/HRpQCTTools/MotionScoreHRpQCT`
+- `<repo>/HRpQCTTools/SegmentationHRpQCT`
+- `<repo>/IOTools/ScancoIO`
 
 Do not add only the top-level repository folder. Slicer needs each module folder above to load the whole toolbox. If `ExternalModules/` contains vendored scripted modules, the helper script discovers them automatically; when adding paths manually, add each vendored module folder too.
 
@@ -135,7 +138,7 @@ ExternalModules/
 
 The top-level `CMakeLists.txt` discovers these scripted module folders during ExtensionIndex builds. The local `scripts/link_local_toolbox_modules.py` helper also discovers them and adds them to Slicer's `Modules/AdditionalPaths`.
 
-For a module to feel native inside this toolbox, set its Slicer category to `Bone Imaging` in the vendored fork. The original upstream repository can keep its own category and release cadence.
+For a module to feel native inside this toolbox, set its Slicer category to a dot-separated submenu path such as `Bone Imaging.FEA`, `Bone Imaging.I/O`, or `Bone Imaging.HR-pQCT` in the vendored fork. The original upstream repository can keep its own category and release cadence.
 
 ## Tutorial
 
@@ -241,9 +244,9 @@ The Slicer module is only the GUI layer. AIM parsing and writing are handled by 
 
 Imported AIM metadata is stored on the loaded Slicer volume. The processing log is shown as an editable field table using `aimio-py`'s `log_to_dict` / `dict_to_log` helpers, while the remaining AIM header metadata is shown as editable JSON. For exports from volumes that did not originate from `Scanco I/O`, provide an imported-stack metadata JSON from the timelapsed pipeline, paste/edit header JSON manually, or explicitly enable minimal metadata export. Geometry fields that can be read from the selected Slicer volume, such as dimensions, spacing, origin, and direction, are refreshed at export time.
 
-## Contours And Segmentation
+## Segmentation And Contours
 
-The `Contours and Segmentation` module wraps the core `timelapsed-hrpqct` contour-generation code. It can generate full, trabecular, cortical, and binary segmentation outputs from a selected HR-pQCT volume using radius, tibia, or knee presets. The interface separates bone segmentation from contour generation: choose a bone segmentation method (Gaussian, Laplace-Hamming, adaptive, or none), then choose periosteal/outer and endosteal/inner contour strategies. Standard contours follow the selected bone segmentation method as their support; the local geodesic fracture contour can be selected as the periosteal contour for radius fracture cases. Expert thresholds and morphology settings are available in a collapsed panel for method validation and scanner-specific tuning.
+The `Segmentation and Contours` module wraps the core `timelapsed-hrpqct` contour-generation code. It can generate full, trabecular, cortical, and binary segmentation outputs from a selected HR-pQCT volume using radius, tibia, or knee presets. The interface separates bone segmentation from contour generation: choose a bone segmentation method (Gaussian, Laplace-Hamming, adaptive, or none), then choose periosteal/outer and endosteal/inner contour strategies. Standard contours follow the selected bone segmentation method as their support; the local geodesic fracture contour can be selected as the periosteal contour for radius fracture cases. Expert thresholds and morphology settings are available in a collapsed panel for method validation and scanner-specific tuning.
 
 Laplace-Hamming segmentation follows the same native Scanco-unit convention as the core pipeline. When the selected Slicer volume came from Scanco I/O, the module uses attached AIM calibration metadata to convert density images back to native Scanco values; otherwise it can reload the original AIM source when that path is available.
 

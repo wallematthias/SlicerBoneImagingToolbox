@@ -13,7 +13,7 @@ import qt
 import slicer
 import SimpleITK as sitk
 
-_TOOLBOX_ROOT = Path(__file__).resolve().parent.parent
+_TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
 
@@ -254,11 +254,11 @@ def _material_labels_from_arrays(seg, trab, cort, *, trab_label=126, cort_label=
     }
 
 
-class HRpQCTSegmentation(ScriptedLoadableModule):
+class SegmentationHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "Contours and Segmentation"
-        parent.categories = ["Bone Imaging"]
+        parent.title = "Segmentation and Contours"
+        parent.categories = ["Bone Imaging.HR-pQCT"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -268,7 +268,7 @@ class HRpQCTSegmentation(ScriptedLoadableModule):
         parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
 
 
-class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
+class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
     def is_pipeline_available(self):
         try:
             import timelapsedhrpqct  # noqa: F401
@@ -1018,14 +1018,14 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         return segmentation_node, outputs, generated.metadata
 
 
-class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
+class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _tip(self, widget, text):
         widget.toolTip = str(text)
         return widget
 
     def setup(self):
         super().setup()
-        self.logic = HRpQCTSegmentationLogic()
+        self.logic = SegmentationHRpQCTLogic()
         self._geodesic_cancel_requested = False
         self._build_segmentation_section()
         self._build_log_section()
@@ -1691,6 +1691,6 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         slicer.util.errorDisplay(str(exc))
 
 
-class HRpQCTSegmentationTest(ScriptedLoadableModuleTest):
+class SegmentationHRpQCTTest(ScriptedLoadableModuleTest):
     def runTest(self):
-        self.delayDisplay("HRpQCTSegmentation smoke test passed.")
+        self.delayDisplay("SegmentationHRpQCT smoke test passed.")

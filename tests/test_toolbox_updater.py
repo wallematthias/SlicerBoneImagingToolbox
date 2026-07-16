@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 
 
@@ -16,8 +17,14 @@ from SlicerBoneImagingToolboxLib.updater import (
 
 
 def _make_toolbox(root: Path) -> Path:
-    for name in ("TimelapsedHRpQCT", "MotionScoreHRpQCT", "HRpQCTSegmentation", "ScancoIO"):
-        module_dir = root / name
+    for relative_path in (
+        "HRpQCTTools/TimelapsedHRpQCT",
+        "HRpQCTTools/MotionScoreHRpQCT",
+        "HRpQCTTools/SegmentationHRpQCT",
+        "IOTools/ScancoIO",
+    ):
+        module_dir = root / relative_path
+        name = module_dir.name
         module_dir.mkdir(parents=True, exist_ok=True)
         (module_dir / f"{name}.py").write_text("# module\n", encoding="utf-8")
     return root
@@ -25,7 +32,7 @@ def _make_toolbox(root: Path) -> Path:
 
 def test_find_toolbox_root_from_module_file(tmp_path: Path) -> None:
     toolbox = _make_toolbox(tmp_path / "SlicerBoneImagingToolbox-main")
-    module_file = toolbox / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
+    module_file = toolbox / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
 
     assert find_toolbox_root(module_file) == toolbox
 
@@ -34,14 +41,14 @@ def test_find_git_root_detects_normal_checkout(tmp_path: Path) -> None:
     toolbox = _make_toolbox(tmp_path / "checkout")
     (toolbox / ".git").mkdir()
 
-    assert find_git_root(toolbox / "ScancoIO" / "ScancoIO.py") == toolbox
+    assert find_git_root(toolbox / "IOTools" / "ScancoIO" / "ScancoIO.py") == toolbox
 
 
 def test_find_git_root_detects_worktree_git_file(tmp_path: Path) -> None:
     toolbox = _make_toolbox(tmp_path / "worktree")
     (toolbox / ".git").write_text("gitdir: ../.git/worktrees/worktree\n", encoding="utf-8")
 
-    assert find_git_root(toolbox / "HRpQCTSegmentation" / "HRpQCTSegmentation.py") == toolbox
+    assert find_git_root(toolbox / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py") == toolbox
 
 
 def test_find_git_root_ignores_unrelated_parent_git_checkout(tmp_path: Path) -> None:
@@ -50,14 +57,14 @@ def test_find_git_root_ignores_unrelated_parent_git_checkout(tmp_path: Path) -> 
     (parent / ".git").mkdir()
     toolbox = _make_toolbox(parent / "manual-download")
 
-    assert find_git_root(toolbox / "ScancoIO" / "ScancoIO.py") is None
+    assert find_git_root(toolbox / "IOTools" / "ScancoIO" / "ScancoIO.py") is None
 
 
 def test_detect_update_context_prefers_git_strategy_for_git_clone(tmp_path: Path) -> None:
     toolbox = _make_toolbox(tmp_path / "checkout")
     (toolbox / ".git").mkdir()
 
-    context = detect_update_context(toolbox / "MotionScoreHRpQCT" / "MotionScoreHRpQCT.py")
+    context = detect_update_context(toolbox / "HRpQCTTools" / "MotionScoreHRpQCT" / "MotionScoreHRpQCT.py")
 
     assert context == ModuleUpdateContext(toolbox_root=toolbox, git_root=toolbox, strategy="git")
 
@@ -65,7 +72,7 @@ def test_detect_update_context_prefers_git_strategy_for_git_clone(tmp_path: Path
 def test_detect_update_context_uses_zip_strategy_for_manual_download(tmp_path: Path) -> None:
     toolbox = _make_toolbox(tmp_path / "SlicerBoneImagingToolbox-main")
 
-    context = detect_update_context(toolbox / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py")
+    context = detect_update_context(toolbox / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py")
 
     assert context == ModuleUpdateContext(toolbox_root=toolbox, git_root=None, strategy="zip")
 
@@ -79,3 +86,29 @@ def test_toolbox_module_dirs_include_external_scripted_modules(tmp_path: Path) -
 
     assert discover_external_module_dirs(toolbox) == (external_module.resolve(),)
     assert toolbox_module_dirs(toolbox)[-1] == external_module.resolve()
+
+
+def test_builtin_modules_use_expected_slicer_subcategories() -> None:
+    expected = {
+        "HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
+        "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
+        "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
+        "IOTools/ScancoIO/ScancoIO.py": 'parent.categories = ["Bone Imaging.I/O"]',
+    }
+    for relative_path, category_line in expected.items():
+        source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        assert category_line in source
+
+    segmentation_source = (
+        REPO_ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    assert 'parent.title = "Segmentation and Contours"' in segmentation_source
+
+    manifest = json.loads((REPO_ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
+    sections = {module["path"]: module["section"] for module in manifest["modules"]}
+    assert sections == {
+        "HRpQCTTools/TimelapsedHRpQCT": "HR-pQCT",
+        "HRpQCTTools/MotionScoreHRpQCT": "HR-pQCT",
+        "HRpQCTTools/SegmentationHRpQCT": "HR-pQCT",
+        "IOTools/ScancoIO": "I/O",
+    }

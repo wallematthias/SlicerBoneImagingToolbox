@@ -22,7 +22,7 @@ MODULE_VERSION = "0.1.0"
 MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
-TOOLBOX_ROOT = MODULE_DIR.parent
+TOOLBOX_ROOT = MODULE_DIR.parents[1]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
@@ -116,7 +116,7 @@ class ScancoIO(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Scanco I/O"
-        parent.categories = ["Bone Imaging"]
+        parent.categories = ["Bone Imaging.I/O"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

@@ -1,8 +1,8 @@
 from pathlib import Path
 
 
-MODULE = Path(__file__).resolve().parents[1] / "HRpQCTSegmentation" / "HRpQCTSegmentation.py"
-PIPELINE_MODULE = Path(__file__).resolve().parents[1] / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
+MODULE = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
+PIPELINE_MODULE = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
 
 
 def test_segmentation_module_exposes_geodesic_method_for_local_testing():
@@ -192,6 +192,7 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     assert "Periosteal contour" in source
     assert "self.maskGeodesicThreshold" in source
     assert "self.maskGeodesicFillHoles" in source
+    assert "_TOOLBOX_ROOT = Path(__file__).resolve().parents[2]" in source
     assert "_PIPELINE_LOCAL_REPO = _TOOLBOX_ROOT.parent / \"TimelapsedHRpQCT\"" in source
     assert "_PIPELINE_LOCAL_SRC = _PIPELINE_LOCAL_REPO / \"src\"" in source
     assert "def _local_pipeline_usable" in source

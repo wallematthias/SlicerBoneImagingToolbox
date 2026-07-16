@@ -1,4 +1,4 @@
-set(MODULE_NAME HRpQCTSegmentation)
+set(MODULE_NAME SegmentationHRpQCT)
 
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py

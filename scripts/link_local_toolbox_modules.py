@@ -5,11 +5,18 @@ import slicer
 
 
 DEFAULT_BUILTIN_MODULE_DIRS = (
+    "HRpQCTTools/TimelapsedHRpQCT",
+    "HRpQCTTools/MotionScoreHRpQCT",
+    "HRpQCTTools/SegmentationHRpQCT",
+    "IOTools/ScancoIO",
+)
+LEGACY_MODULE_DIR_NAMES = {
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "ScancoIO",
+    "SegmentationHRpQCT",
     "HRpQCTSegmentation",
-)
+}
 
 
 def _as_list(value):
@@ -37,6 +44,18 @@ def _is_stale_python_relative_path(path, module_names):
         and "Python" in path_obj.parts
         and path_obj.name in module_names
     )
+
+
+def _is_stale_toolbox_path(path, repo_root, active_module_paths):
+    path_obj = Path(path).expanduser()
+    resolved = path_obj.resolve()
+    if str(resolved) in active_module_paths:
+        return False
+    try:
+        resolved.relative_to(repo_root)
+    except ValueError:
+        return False
+    return resolved.name in LEGACY_MODULE_DIR_NAMES
 
 
 def _load_registry(repo_root):
@@ -73,6 +92,7 @@ def main():
             "Run this script with SCRIPT_PATH set to the full script path, as shown in the README."
         )
     module_paths = [str(path) for path in module_dirs if path.is_dir()]
+    active_module_paths = set(module_paths)
     module_names = {Path(path).name for path in module_paths}
 
     settings = slicer.app.revisionUserSettings()
@@ -81,6 +101,7 @@ def main():
         path
         for path in _as_list(settings.value(key))
         if not _is_stale_python_relative_path(path, module_names)
+        and not _is_stale_toolbox_path(path, repo_root, active_module_paths)
     ]
 
     for path in module_paths:

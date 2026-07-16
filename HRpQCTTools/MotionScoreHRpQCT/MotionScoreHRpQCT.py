@@ -23,7 +23,7 @@ import qt
 import slicer
 import vtk
 
-_TOOLBOX_ROOT = Path(__file__).resolve().parent.parent
+_TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
 
@@ -59,7 +59,7 @@ class MotionScoreHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Motion Scoring"
-        parent.categories = ["Bone Imaging"]
+        parent.categories = ["Bone Imaging.HR-pQCT"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

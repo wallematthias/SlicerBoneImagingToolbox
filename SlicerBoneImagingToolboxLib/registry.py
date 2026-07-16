@@ -9,10 +9,10 @@ TOOLBOX_NAME = "SlicerBoneImagingToolbox"
 TOOLBOX_DISPLAY_NAME = "Bone Imaging Toolbox"
 MANIFEST_NAME = "toolbox_modules.json"
 DEFAULT_BUILTIN_MODULE_DIRS = (
-    "TimelapsedHRpQCT",
-    "MotionScoreHRpQCT",
-    "HRpQCTSegmentation",
-    "ScancoIO",
+    "HRpQCTTools/TimelapsedHRpQCT",
+    "HRpQCTTools/MotionScoreHRpQCT",
+    "HRpQCTTools/SegmentationHRpQCT",
+    "IOTools/ScancoIO",
 )
 DEFAULT_EXTERNAL_MODULE_ROOTS = ("ExternalModules",)
 
@@ -121,4 +121,3 @@ def toolbox_module_dirs(root: str | Path, *, include_external: bool = True) -> t
     if not include_external:
         return builtins
     return (*builtins, *discover_external_module_dirs(toolbox_root))
-
