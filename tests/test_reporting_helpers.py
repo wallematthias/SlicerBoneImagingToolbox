@@ -119,17 +119,33 @@ def test_default_export_filename_uses_timestamp_and_clear_prefix() -> None:
     )
 
 
-def test_method_citations_are_documented_without_ui_citation_text() -> None:
+def test_method_citations_are_documented_and_exposed_in_module_acknowledgements() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
-    module_text = (
+    timelapsed_module = (
         repo_root / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
     ).read_text(encoding="utf-8")
+    motion_module = (
+        repo_root / "HRpQCTTools" / "MotionScoreHRpQCT" / "MotionScoreHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    segmentation_module = (
+        repo_root / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    scanco_module = (repo_root / "IOTools" / "ScancoIO" / "ScancoIO.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "## Method Citations" in readme
     assert "Hosseinitabatabaei" not in readme
     assert "Zhou M" not in readme
     assert "Galateia Kazakia lab" in readme
     assert "Motion grading of high-resolution quantitative computed tomography" in readme
-    assert "Hosseinitabatabaei" not in module_text
-    assert "Zhou M" not in module_text
+    assert "Precision of bone mechanoregulation assessment in humans" in timelapsed_module
+    assert "A multi-stack registration technique" in timelapsed_module
+    assert "Motion grading of high-resolution quantitative computed tomography" in motion_module
+    assert "Galateia Kazakia lab implementation" in segmentation_module
+    assert "aimio-py / py_aimio" in scanco_module
+    for module_text in (timelapsed_module, motion_module, segmentation_module, scanco_module):
+        assert "parent.acknowledgementText" in module_text
+        assert "Hosseinitabatabaei" not in module_text
+        assert "Zhou M" not in module_text

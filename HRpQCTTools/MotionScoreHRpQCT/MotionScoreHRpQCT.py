@@ -66,7 +66,10 @@ class MotionScoreHRpQCT(ScriptedLoadableModule):
             "GUI wrapper for motionscore core CLI.\n"
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Built for streamlined HR-pQCT motion grading workflows."
+        parent.acknowledgementText = """Built for streamlined HR-pQCT motion grading workflows.
+
+If you use Motion Scoring, please cite:
+Walle M, Eggemann D, Atkins PR, Kendall JJ, Stock K, Müller R, Collins CJ. Motion grading of high-resolution quantitative computed tomography supported by deep convolutional neural networks. Bone. 2023;166:116607. doi: 10.1016/j.bone.2022.116607."""
 
 
 class MotionScoreHRpQCTLogic(ScriptedLoadableModuleLogic):

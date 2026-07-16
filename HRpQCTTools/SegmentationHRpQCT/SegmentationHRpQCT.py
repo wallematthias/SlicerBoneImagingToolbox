@@ -265,7 +265,9 @@ class SegmentationHRpQCT(ScriptedLoadableModule):
             "Generate HR-pQCT full, trabecular, cortical, and binary segmentation "
             f"masks using site presets and standard segmentation methods. Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
+        parent.acknowledgementText = """Part of the Bone Imaging Toolbox for 3D Slicer.
+
+Laplace-Hamming segmentation follows the Galateia Kazakia lab implementation and related work: https://github.com/gkazakia."""
 
 
 class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):

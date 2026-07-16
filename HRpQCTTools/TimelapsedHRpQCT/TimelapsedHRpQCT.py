@@ -113,7 +113,13 @@ class TimelapsedHRpQCT(ScriptedLoadableModule):
             "GUI wrapper for timelapsed-hrpqct pipeline.\n"
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = """Built for streamlined longitudinal HR-pQCT workflows."""
+        parent.acknowledgementText = """Built for streamlined longitudinal HR-pQCT workflows.
+
+If you use the main timelapsed HR-pQCT workflow, please cite:
+Walle M, Whittier DE, Schenk D, Atkins PR, Blauth M, Zysset P, Lippuner K, Müller R, Collins CJ. Precision of bone mechanoregulation assessment in humans using longitudinal high-resolution peripheral quantitative computed tomography in vivo. Bone. 2023;172:116780. doi: 10.1016/j.bone.2023.116780.
+
+If you use multistack registration, please cite:
+Whittier DE, Walle M, Schenk D, Atkins PR, Collins CJ, Zysset P, Lippuner K, Müller R. A multi-stack registration technique to improve measurement accuracy and precision across longitudinal HR-pQCT scans. Bone. 2023;176:116893. doi: 10.1016/j.bone.2023.116893."""
 
 
 class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):

@@ -123,7 +123,9 @@ class ScancoIO(ScriptedLoadableModule):
             "Import Scanco AIM images into Slicer and export edited grayscale "
             f"or mask volumes back to AIM. Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
+        parent.acknowledgementText = """Part of the Bone Imaging Toolbox for 3D Slicer.
+
+AIM import/export is backed by the aimio-py / py_aimio package. Add a module-specific method citation here if one is adopted in the future."""
 
 
 class ScancoIOLogic(ScriptedLoadableModuleLogic):
