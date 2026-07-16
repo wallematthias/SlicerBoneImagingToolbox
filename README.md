@@ -34,6 +34,14 @@ The Slicer modules are wrappers around core Python packages where possible:
 
 Each tool guide contains its own focused workflow instructions and attribution/citation notes.
 
+## Runtime Dependencies
+
+Some tools need Slicer-side dependencies in addition to this toolbox:
+
+- **Motion Scoring** requires the `PyTorch` extension from Slicer's Extension Manager. Install `PyTorch`, restart Slicer, then run Motion Scoring.
+- **Timelapsed HR-pQCT** installs/updates the `timelapsed-hrpqct` Python runtime from inside the module.
+- **Scanco I/O** installs/updates the lightweight `aimio-py` / `py_aimio` AIM reader-writer stack from inside the module.
+
 ## Installation
 
 ### Extension Manager

@@ -154,6 +154,7 @@ def test_method_citations_are_documented_and_exposed_in_module_acknowledgements(
     assert "docs/tools/motion-scoring.md" in readme
     assert "docs/tools/segmentation-and-contours.md" in readme
     assert "docs/tools/scanco-io.md" in readme
+    assert "requires the `PyTorch` extension" in readme
     assert "Hosseinitabatabaei" not in readme
     assert "Zhou M" not in readme
     assert "## Attribution" in tool_docs["timelapsed"]
