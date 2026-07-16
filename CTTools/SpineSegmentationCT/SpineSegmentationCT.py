@@ -349,12 +349,14 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self.deviceCombo = qt.QComboBox()
         for label, value in [
             ("Auto", "auto"),
-            ("Apple MPS", "mps"),
             ("CUDA", "cuda"),
             ("CPU", "cpu"),
         ]:
             self.deviceCombo.addItem(label, value)
-        self._tip(self.deviceCombo, "PyTorch device used by spine-segment. Auto chooses CUDA, then MPS, then CPU.")
+        self._tip(
+            self.deviceCombo,
+            "PyTorch device used by spine-segment. Auto chooses CUDA, then MPS only if Conv3D is supported, then CPU.",
+        )
         form.addRow("Device", self.deviceCombo)
 
         self.modeCombo = qt.QComboBox()

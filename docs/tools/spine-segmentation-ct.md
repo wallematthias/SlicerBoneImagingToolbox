@@ -20,7 +20,7 @@ The first run may download the `spine-segment` model bundle into the user cache.
 ## Basic Workflow
 
 1. Select the input CT scalar volume.
-2. Choose the PyTorch device. `Auto` uses CUDA when available, then Apple MPS, then CPU.
+2. Choose the PyTorch device. `Auto` uses CUDA when available, Apple MPS only when the installed PyTorch supports 3D convolutions on MPS, then CPU.
 3. Choose the run mode:
    - `Localization only` writes centroids and loads Slicer fiducial markers.
    - `Vertebral levels only` writes vertebral-level labels and centroids.
