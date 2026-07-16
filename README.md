@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="resources/TimelapsedHRpQCTSlicer.png" alt="TimelapsedHRpQCTSlicer logo" width="320">
+  <img src="resources/SlicerBoneImagingToolbox.png" alt="Bone Imaging Toolbox logo" width="320">
 </p>
 
-# HR-pQCT Toolbox for 3D Slicer
+# Bone Imaging Toolbox for 3D Slicer
 
-3D Slicer scripted extension for HR-pQCT workflows: longitudinal timelapsed analysis, motion scoring, Scanco AIM import/export, and contouring/segmentation helpers.
+3D Slicer scripted extension for bone imaging workflows. The toolbox currently includes longitudinal HR-pQCT analysis, motion scoring, Scanco AIM import/export, and contouring/segmentation helpers, and it is structured so additional bone-analysis Slicer modules can be vendored into the same ExtensionIndex entry.
 
 `timelapsed-hrpqct` is a longitudinal high-resolution peripheral quantitative computed tomography (HR-pQCT) analysis workflow that aligns longitudinal scans of the same subject across timepoints and computes remodelling-related outputs from those registered volumes.
 It is designed for high-throughput, pipeline-style processing of multi-subject datasets.
@@ -13,16 +13,18 @@ It is intended for HR-pQCT datasets acquired on Scanco XtremeCT systems. The cur
 The extension appears in Slicer as one toolbox category:
 
 ```text
-HR-pQCT
+Bone Imaging
   Timelapsed HR-pQCT
   Motion Scoring
   Scanco I/O
   Contours and Segmentation
 ```
 
-## Core Repositories
+## Repository Model
 
-The Slicer modules remain workflow wrappers around core Python packages:
+`SlicerBoneImagingToolbox` is the container Slicer extension. Built-in modules live directly in this repository, while modules from other labs can be vendored under `ExternalModules/` as git submodules, subtrees, or maintained forks.
+
+The built-in Slicer modules remain workflow wrappers around core Python packages:
 
 - `TimelapsedHRpQCT`: https://github.com/wallematthias/TimelapsedHRpQCT
 - `MotionScoreHRpQCT`: https://github.com/wallematthias/MotionScoreHRpQCT
@@ -36,6 +38,8 @@ The Slicer modules remain workflow wrappers around core Python packages:
 
 ## Modules
 
+### HR-pQCT
+
 - **Timelapsed HR-pQCT**: End-to-end longitudinal HR-pQCT workflow in Slicer.
   - Parses AIM datasets into subject/site/session structure.
   - Uses bundled study profiles to configure mask generation, registration, multistack handling, and remodelling analysis.
@@ -46,16 +50,25 @@ The Slicer modules remain workflow wrappers around core Python packages:
   - Supports rapid reviewer grading, manual review of already processed scans while prediction is still running, review-table export, and interrupted-run continuation.
   - Keeps model inference and retraining logic in the MotionScore core package.
   - Supports local or downloaded model bundles without requiring a hosted license API.
-- **Scanco I/O**: Focused AIM import/export utility.
-  - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, HU, or a Slicer segmentation from nonzero voxels.
-  - Preserves AIM metadata on imported Slicer volumes so edited data can be exported without a reference AIM.
-  - Exports edited grayscale volumes or binary masks back to `.AIM`.
-  - Uses a lightweight local wrapper around `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
 - **Contours and Segmentation**: Lightweight Slicer workflow helper for masks and contours.
   - Generates HR-pQCT full, trabecular, cortical, and binary segmentation outputs from an input volume.
   - Provides radius, tibia, and knee contour presets plus standard Gaussian, Laplace-Hamming, and adaptive segmentation methods.
   - Provides mask utility tools for deriving missing full/trabecular/cortical masks, boolean mask operations, relabelling, validation, and HOM/material labelmap creation.
   - Keeps expert threshold and morphology settings collapsed by default, then optionally opens Slicer's Segment Editor for cleanup.
+
+### ScancoIO
+
+- **Scanco I/O**: Focused AIM import/export utility.
+  - Imports Scanco `.AIM` images as density/BMD, native Scanco values, mu, HU, or a Slicer segmentation from nonzero voxels.
+  - Preserves AIM metadata on imported Slicer volumes so edited data can be exported without a reference AIM.
+  - Exports edited grayscale volumes or binary masks back to `.AIM`.
+  - Uses a lightweight local wrapper around `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
+
+This module is kept as a separate section because these utilities are useful beyond longitudinal HR-pQCT workflows.
+
+### Extensible Modules
+
+Additional Slicer modules can be added under `ExternalModules/`. This is intended for tools such as SlicerParOSol or lab-maintained micro-CT modules that should remain independently developed but still appear through the Bone Imaging Toolbox extension package.
 
 ## Installation
 
@@ -64,13 +77,13 @@ The toolbox is not yet available in the full stable Slicer Extensions Index for 
 ### Option A: Extension Manager (when listed)
 
 1. Open 3D Slicer.
-2. Install `HR-pQCT Toolbox` from Extension Manager.
+2. Install `Bone Imaging Toolbox` from Extension Manager.
 3. Restart 3D Slicer.
 
 ### Option B: Manual install from download or clone
 
 1. Download or clone this repository:
-   - Git clone: `git clone https://github.com/wallematthias/SlicerTimelapsedHRpQCT.git`
+   - Git clone: `git clone https://github.com/wallematthias/SlicerBoneImagingToolbox.git`
    - Or download the repository ZIP from GitHub and extract it somewhere permanent.
 2. Open 3D Slicer.
 3. Go to `View -> Python Interactor`.
@@ -80,7 +93,7 @@ The toolbox is not yet available in the full stable Slicer Extensions Index for 
    exec(open(script).read(), {"__name__": "__main__", "SCRIPT_PATH": script})
    ```
 5. Restart Slicer.
-6. Open modules from the `HR-pQCT` category:
+6. Open modules from the `Bone Imaging` category:
    - `Timelapsed HR-pQCT`
    - `Motion Scoring`
    - `Scanco I/O`
@@ -88,8 +101,8 @@ The toolbox is not yet available in the full stable Slicer Extensions Index for 
 
 Example script paths:
 
-- macOS/Linux: `script = "/Users/<you>/Downloads/SlicerTimelapsedHRpQCT/scripts/link_local_toolbox_modules.py"`
-- Windows: `script = r"C:\Users\<you>\Downloads\SlicerTimelapsedHRpQCT\scripts\link_local_toolbox_modules.py"`
+- macOS/Linux: `script = "/Users/<you>/Downloads/SlicerBoneImagingToolbox/scripts/link_local_toolbox_modules.py"`
+- Windows: `script = r"C:\Users\<you>\Downloads\SlicerBoneImagingToolbox\scripts\link_local_toolbox_modules.py"`
 
 ### Manual Slicer UI alternative
 
@@ -106,7 +119,23 @@ Add these folders, replacing `<repo>` with the downloaded/cloned repository fold
 - `<repo>/ScancoIO`
 - `<repo>/HRpQCTSegmentation`
 
-Do not add only the top-level repository folder. Slicer needs the four module folders above to load the whole toolbox.
+Do not add only the top-level repository folder. Slicer needs each module folder above to load the whole toolbox. If `ExternalModules/` contains vendored scripted modules, the helper script discovers them automatically; when adding paths manually, add each vendored module folder too.
+
+## Adding External Modules
+
+External modules should be checked into `ExternalModules/` as a maintained fork, git subtree, or git submodule. A direct module folder must contain `CMakeLists.txt` and a same-named scripted module file, for example:
+
+```text
+ExternalModules/
+  SlicerParOSol/
+    ParOSolFEA/
+      CMakeLists.txt
+      ParOSolFEA.py
+```
+
+The top-level `CMakeLists.txt` discovers these scripted module folders during ExtensionIndex builds. The local `scripts/link_local_toolbox_modules.py` helper also discovers them and adds them to Slicer's `Modules/AdditionalPaths`.
+
+For a module to feel native inside this toolbox, set its Slicer category to `Bone Imaging` in the vendored fork. The original upstream repository can keep its own category and release cadence.
 
 ## Tutorial
 

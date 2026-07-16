@@ -27,7 +27,7 @@ _TOOLBOX_ROOT = Path(__file__).resolve().parent.parent
 if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
 
-from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
+from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -59,7 +59,7 @@ class MotionScoreHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Motion Scoring"
-        parent.categories = ["HR-pQCT"]
+        parent.categories = ["Bone Imaging"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

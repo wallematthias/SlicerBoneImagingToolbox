@@ -1,6 +1,13 @@
 from pathlib import Path
+import sys
 
-from SlicerTimelapsedHRpQCTLib.updater import (
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from SlicerBoneImagingToolboxLib.registry import discover_external_module_dirs, toolbox_module_dirs
+from SlicerBoneImagingToolboxLib.updater import (
     ModuleUpdateContext,
     detect_update_context,
     find_git_root,
@@ -17,7 +24,7 @@ def _make_toolbox(root: Path) -> Path:
 
 
 def test_find_toolbox_root_from_module_file(tmp_path: Path) -> None:
-    toolbox = _make_toolbox(tmp_path / "SlicerTimelapsedHRpQCT-main")
+    toolbox = _make_toolbox(tmp_path / "SlicerBoneImagingToolbox-main")
     module_file = toolbox / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
 
     assert find_toolbox_root(module_file) == toolbox
@@ -56,8 +63,19 @@ def test_detect_update_context_prefers_git_strategy_for_git_clone(tmp_path: Path
 
 
 def test_detect_update_context_uses_zip_strategy_for_manual_download(tmp_path: Path) -> None:
-    toolbox = _make_toolbox(tmp_path / "SlicerTimelapsedHRpQCT-main")
+    toolbox = _make_toolbox(tmp_path / "SlicerBoneImagingToolbox-main")
 
     context = detect_update_context(toolbox / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py")
 
     assert context == ModuleUpdateContext(toolbox_root=toolbox, git_root=None, strategy="zip")
+
+
+def test_toolbox_module_dirs_include_external_scripted_modules(tmp_path: Path) -> None:
+    toolbox = _make_toolbox(tmp_path / "SlicerBoneImagingToolbox-main")
+    external_module = toolbox / "ExternalModules" / "SlicerParOSol" / "ParOSolFEA"
+    external_module.mkdir(parents=True)
+    (external_module / "CMakeLists.txt").write_text("project(ParOSolFEA)\n", encoding="utf-8")
+    (external_module / "ParOSolFEA.py").write_text("# module\n", encoding="utf-8")
+
+    assert discover_external_module_dirs(toolbox) == (external_module.resolve(),)
+    assert toolbox_module_dirs(toolbox)[-1] == external_module.resolve()

@@ -83,7 +83,7 @@ PROFILE_DISPLAY_ORDER = _reporting.PROFILE_DISPLAY_ORDER
 default_export_filename = _reporting.default_export_filename
 enrich_cohort_export_row = _reporting.enrich_cohort_export_row
 project_rows_to_fields = _reporting.project_rows_to_fields
-from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
+from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
     ScriptedLoadableModuleWidget,
@@ -106,7 +106,7 @@ class TimelapsedHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Timelapsed HR-pQCT"
-        parent.categories = ["HR-pQCT"]
+        parent.categories = ["Bone Imaging"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

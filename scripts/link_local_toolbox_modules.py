@@ -1,9 +1,10 @@
 from pathlib import Path
+import sys
 
 import slicer
 
 
-MODULE_DIRS = (
+DEFAULT_BUILTIN_MODULE_DIRS = (
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "ScancoIO",
@@ -29,30 +30,57 @@ def _repo_root():
     return Path(__file__).resolve().parents[1]
 
 
-def _is_stale_python_relative_path(path):
+def _is_stale_python_relative_path(path, module_names):
     path_obj = Path(path)
     return (
         "Slicer.app" in path_obj.parts
         and "Python" in path_obj.parts
-        and path_obj.name in MODULE_DIRS
+        and path_obj.name in module_names
     )
+
+
+def _load_registry(repo_root):
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    try:
+        from SlicerBoneImagingToolboxLib.registry import (
+            TOOLBOX_DISPLAY_NAME,
+            builtin_module_dirs,
+            toolbox_module_dirs,
+        )
+
+        return (
+            TOOLBOX_DISPLAY_NAME,
+            builtin_module_dirs(repo_root),
+            toolbox_module_dirs(repo_root),
+        )
+    except Exception:
+        return (
+            "Bone Imaging Toolbox",
+            DEFAULT_BUILTIN_MODULE_DIRS,
+            tuple((repo_root / name).resolve() for name in DEFAULT_BUILTIN_MODULE_DIRS),
+        )
 
 
 def main():
     repo_root = _repo_root()
-    if not all((repo_root / name).is_dir() for name in MODULE_DIRS):
+    display_name, builtin_module_dirs, module_dirs = _load_registry(repo_root)
+    missing_builtin_dirs = [name for name in builtin_module_dirs if not (repo_root / name).is_dir()]
+    if missing_builtin_dirs:
         raise RuntimeError(
-            "Could not resolve the TimelapsedHRpQCTSlicer repository root. "
+            f"Could not resolve the {display_name} repository root. "
+            f"Missing built-in module folders: {', '.join(missing_builtin_dirs)}. "
             "Run this script with SCRIPT_PATH set to the full script path, as shown in the README."
         )
-    module_paths = [str((repo_root / name).resolve()) for name in MODULE_DIRS]
+    module_paths = [str(path) for path in module_dirs if path.is_dir()]
+    module_names = {Path(path).name for path in module_paths}
 
     settings = slicer.app.revisionUserSettings()
     key = "Modules/AdditionalPaths"
     current = [
         path
         for path in _as_list(settings.value(key))
-        if not _is_stale_python_relative_path(path)
+        if not _is_stale_python_relative_path(path, module_names)
     ]
 
     for path in module_paths:
@@ -64,7 +92,7 @@ def main():
     print("Updated Modules/AdditionalPaths:")
     for path in current:
         print(f"  - {path}")
-    print("Restart Slicer to load the HR-pQCT toolbox modules.")
+    print(f"Restart Slicer to load the {display_name} modules.")
 
 
 if __name__ == "__main__":

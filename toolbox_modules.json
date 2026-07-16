@@ -1,0 +1,33 @@
+{
+  "name": "SlicerBoneImagingToolbox",
+  "display_name": "Bone Imaging Toolbox",
+  "modules": [
+    {
+      "path": "TimelapsedHRpQCT",
+      "title": "Timelapsed HR-pQCT",
+      "section": "HR-pQCT",
+      "source": "built-in"
+    },
+    {
+      "path": "MotionScoreHRpQCT",
+      "title": "Motion Scoring",
+      "section": "HR-pQCT",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTSegmentation",
+      "title": "Contours and Segmentation",
+      "section": "HR-pQCT",
+      "source": "built-in"
+    },
+    {
+      "path": "ScancoIO",
+      "title": "Scanco I/O",
+      "section": "ScancoIO",
+      "source": "built-in"
+    }
+  ],
+  "external_module_roots": [
+    "ExternalModules"
+  ]
+}

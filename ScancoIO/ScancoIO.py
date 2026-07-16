@@ -26,7 +26,7 @@ TOOLBOX_ROOT = MODULE_DIR.parent
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
-from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
+from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
 
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
@@ -116,14 +116,14 @@ class ScancoIO(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Scanco I/O"
-        parent.categories = ["HR-pQCT"]
+        parent.categories = ["Bone Imaging"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "Import Scanco AIM images into Slicer and export edited grayscale "
             f"or mask volumes back to AIM. Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Part of the HR-pQCT Toolbox for 3D Slicer."
+        parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
 
 
 class ScancoIOLogic(ScriptedLoadableModuleLogic):
@@ -256,7 +256,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         metadata_json=None,
         header_metadata=None,
         allow_minimal_metadata=False,
-        log="Exported from Slicer HR-pQCT Toolbox",
+        log="Exported from Slicer Bone Imaging Toolbox",
     ):
         aim_io = _aim_io_module()
 

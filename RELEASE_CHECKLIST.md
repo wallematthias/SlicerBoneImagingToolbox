@@ -6,14 +6,16 @@
 - [ ] `EXTENSION_ICONURL` set to public raw URL.
 - [ ] `EXTENSION_SCREENSHOTURLS` set to real screenshots.
 - [ ] Extension description/category/contributors verified.
+- [ ] ExtensionIndex entry uses `SlicerBoneImagingToolbox.s4ext`.
 
 ## Module
 
-- [ ] All toolbox modules load in Slicer developer mode from the `HR-pQCT` category:
+- [ ] All toolbox modules load in Slicer developer mode from the `Bone Imaging` category:
   - [ ] `Timelapsed HR-pQCT`
   - [ ] `Motion Scoring`
   - [ ] `Scanco I/O`
   - [ ] `Contours and Segmentation`
+- [ ] Any vendored modules under `ExternalModules/` load from their intended Slicer category.
 - [ ] `Install / Update timelapsed-hrpqct` works on clean Slicer install.
 - [ ] `Install / Update AIM I/O` installs `aimio-py` without installing the full timelapsed pipeline.
 - [ ] Full pipeline run works on representative dataset.

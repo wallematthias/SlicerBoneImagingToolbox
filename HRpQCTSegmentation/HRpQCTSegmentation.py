@@ -22,7 +22,7 @@ _GEODESIC_CONTOUR_LOCAL_SRC = _GEODESIC_CONTOUR_LOCAL_REPO / "src"
 if _GEODESIC_CONTOUR_LOCAL_SRC.exists() and str(_GEODESIC_CONTOUR_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(_GEODESIC_CONTOUR_LOCAL_SRC))
 
-from SlicerTimelapsedHRpQCTLib.slicer_update_ui import run_toolbox_update_dialog
+from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -258,14 +258,14 @@ class HRpQCTSegmentation(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Contours and Segmentation"
-        parent.categories = ["HR-pQCT"]
+        parent.categories = ["Bone Imaging"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "Generate HR-pQCT full, trabecular, cortical, and binary segmentation "
             f"masks using site presets and standard segmentation methods. Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Part of the HR-pQCT Toolbox for 3D Slicer."
+        parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
 
 
 class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
