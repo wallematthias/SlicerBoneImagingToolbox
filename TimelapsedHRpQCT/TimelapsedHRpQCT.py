@@ -663,6 +663,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.maskGeodesicFillHoles.checked = True
         _tip(self.maskGeodesicFillHoles, "Fill internal holes in the geodesic fracture periosteal mask.")
         _cap_width(self.maskGeodesicFillHoles, 220)
+        self.maskAlignedContourSupport = qt.QCheckBox()
+        self.maskAlignedContourSupport.checked = False
+        _tip(
+            self.maskAlignedContourSupport,
+            "When enabled, contour-support binarization follows the selected segmentation method. "
+            "Leave this off to keep full/trab/cort masks more stable across sessions.",
+        )
+        _cap_width(self.maskAlignedContourSupport, 220)
         maskForm.addRow(_label("Mask method", "Method used when automatic mask/segmentation generation is enabled."), self.maskMethod)
         maskForm.addRow(
             _label("Periosteal contour", "Outer/full mask contour method used during automatic mask generation."),
@@ -677,6 +685,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         maskForm.addRow(
             _label("Geodesic fill holes", "Fill internal holes in the geodesic fracture periosteal mask."),
             self.maskGeodesicFillHoles,
+        )
+        maskForm.addRow(
+            _label(
+                "Aligned contour support",
+                "Let contour-support binarization follow the selected segmentation method. Leave off for more stable full/trab/cort masks.",
+            ),
+            self.maskAlignedContourSupport,
         )
         self.doNotGenerateMasksCheck = qt.QCheckBox()
         self.doNotGenerateMasksCheck.checked = False
@@ -1679,6 +1694,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.maskPeriostealContour.setCurrentIndex(periosteal_idx)
         self.maskGeodesicThreshold.value = float(outer_cfg.get("geodesic_bone_threshold", 250.0))
         self.maskGeodesicFillHoles.checked = bool(outer_cfg.get("geodesic_fill_holes", True))
+        self.maskAlignedContourSupport.checked = bool(
+            seg_cfg.get("use_segmentation_aligned_contour_support", False)
+        )
 
         tl_cfg = cfg.get("timelapsed_registration") or {}
         ms_cfg = cfg.get("multistack_correction") or {}
@@ -2018,6 +2036,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         mask_low = float(self.maskLow.value)
         mask_high = float(self.maskHigh.value)
         segmentation_cfg = {"method": mask_method}
+        segmentation_cfg["use_segmentation_aligned_contour_support"] = bool(
+            profile_segmentation_cfg.get(
+                "use_segmentation_aligned_contour_support",
+                bool(self.maskAlignedContourSupport.checked),
+            )
+        )
         if mask_method == "seg_gauss":
             segmentation_cfg.update(
                 {

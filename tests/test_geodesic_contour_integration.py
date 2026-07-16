@@ -108,10 +108,12 @@ def test_gaussian_segmentation_without_compartments_uses_global_trab_threshold()
     assert "warning_text = f\" Warning: {metadata.get('segmentation_warning')}\"" in source
 
 
-def test_laplace_hamming_segmentation_is_forced_from_support_mask():
+def test_laplace_hamming_segmentation_support_override_is_opt_in():
     source = MODULE.read_text()
 
-    assert "if segmentation_method == \"laplace_hamming\" and segmentation_image is not None:" in source
+    assert "use_aligned_support = bool(segmentation_support_params.use_segmentation_aligned_contour_support)" in source
+    assert "contour_support_source = (" in source
+    assert "if use_aligned_support and segmentation_image is not None" in source
     assert "lh_support_xyz = _contour_support_binarization_xyz(" in source
     assert "full_mask_xyz=full_xyz" in source
     assert "seg_xyz = _ensure_bool(lh_support_xyz) & full_xyz" in source

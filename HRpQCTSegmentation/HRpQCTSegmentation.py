@@ -767,6 +767,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
         outer_options = asdict(contour_params.outer)
         inner_options = asdict(contour_params.inner)
         segmentation_support_params = contour_params.segmentation
+        use_aligned_support = bool(segmentation_support_params.use_segmentation_aligned_contour_support)
 
         segmentation_image = None
         segmentation_source_meta = {}
@@ -786,6 +787,12 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             )
         else:
             image_xyz = sitk_to_numpy_xyz(image)
+            contour_support_source = (
+                segmentation_image
+                if use_aligned_support and segmentation_image is not None
+                else image
+            )
+            contour_support_image_xyz = sitk_to_numpy_xyz(contour_support_source)
             segmentation_source = segmentation_image if segmentation_image is not None else image
             segmentation_image_xyz = sitk_to_numpy_xyz(segmentation_source)
             spacing_xyz = tuple(float(value) for value in image.GetSpacing())
@@ -801,7 +808,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 )
             elif periosteal_contour_method == "standard":
                 outer_support_xyz = _contour_support_binarization_xyz(
-                    segmentation_image_xyz,
+                    contour_support_image_xyz,
                     params=segmentation_support_params,
                     spacing_xyz=spacing_xyz,
                     role="outer",
@@ -817,7 +824,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 full_xyz = np.ones_like(image_xyz, dtype=bool)
 
             inner_support_xyz = _contour_support_binarization_xyz(
-                segmentation_image_xyz,
+                contour_support_image_xyz,
                 params=segmentation_support_params,
                 spacing_xyz=spacing_xyz,
                 full_mask_xyz=full_xyz,
@@ -845,9 +852,17 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             )
             if segmentation_method == "none":
                 seg_xyz = np.zeros_like(full_xyz, dtype=bool)
-            elif segmentation_method == "laplace_hamming" and inner_support_xyz is not None:
+            elif (
+                use_aligned_support
+                and segmentation_method == "laplace_hamming"
+                and inner_support_xyz is not None
+            ):
                 seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
-            elif segmentation_method == "adaptive" and inner_support_xyz is not None:
+            elif (
+                use_aligned_support
+                and segmentation_method == "adaptive"
+                and inner_support_xyz is not None
+            ):
                 seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
             elif global_threshold_without_compartments:
                 trab_threshold = float(segmentation_support_params.trab_threshold)
@@ -871,6 +886,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 metadata={
                     "contour_method": "split_contour_generation",
                     "segmentation_method": segmentation_method,
+                    "segmentation_aligned_contour_support": bool(use_aligned_support),
                     "periosteal_contour_method": periosteal_contour_method,
                     "endosteal_contour_method": endosteal_contour_method,
                     "geodesic_support_mask_count": geodesic_support_count,
@@ -898,7 +914,11 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             generated.trab = numpy_xyz_to_sitk_binary(empty_xyz, image)
             generated.cort = numpy_xyz_to_sitk_binary(empty_xyz, image)
 
-        if segmentation_method == "laplace_hamming" and segmentation_image is not None:
+        if (
+            use_aligned_support
+            and segmentation_method == "laplace_hamming"
+            and segmentation_image is not None
+        ):
             full_xyz = sitk_to_numpy_xyz(generated.full) > 0
             segmentation_image_xyz = sitk_to_numpy_xyz(segmentation_image)
             spacing_xyz = tuple(float(value) for value in image.GetSpacing())
@@ -916,6 +936,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
                 generated.metadata["voxel_counts"]["seg"] = int(seg_xyz.sum())
 
         generated.metadata["segmentation_method"] = segmentation_method
+        generated.metadata["segmentation_aligned_contour_support"] = bool(use_aligned_support)
         generated.metadata["periosteal_contour_method"] = periosteal_contour_method
         generated.metadata["endosteal_contour_method"] = endosteal_contour_method
         generated.metadata["periosteal_contour_generated"] = bool(periosteal_contour_generated)
@@ -959,6 +980,7 @@ class HRpQCTSegmentationLogic(ScriptedLoadableModuleLogic):
             "segmentation_input_unit",
             "segmentation_input_reader",
             "segmentation_input_path",
+            "segmentation_aligned_contour_support",
             "segmentation_warning",
             "segmentation_threshold_applied_global",
             "periosteal_contour_method",
@@ -1147,6 +1169,15 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
         self._tip(self.keepLargestCheck, "Keep only the largest connected segmentation component.")
         expert_form.addRow("Min component voxels", self.minSizeSpin)
         expert_form.addRow("Keep largest", self.keepLargestCheck)
+
+        self.segmentationAlignedSupportCheck = qt.QCheckBox()
+        self.segmentationAlignedSupportCheck.checked = False
+        self._tip(
+            self.segmentationAlignedSupportCheck,
+            "When enabled, periosteal/endosteal contour-support binarization follows the selected segmentation method. "
+            "Leave this off to keep full/trab/cort masks more stable across scans.",
+        )
+        expert_form.addRow("Aligned contour support", self.segmentationAlignedSupportCheck)
 
         self.geodesicBoneThresholdSpin = self._double_spin(0, 5000, 1, 250.0)
         self.geodesicFillHolesCheck = qt.QCheckBox()
@@ -1406,6 +1437,7 @@ class HRpQCTSegmentationWidget(ScriptedLoadableModuleWidget):
                 "adaptive_block_size": block_size,
                 "min_size_voxels": int(self.minSizeSpin.value),
                 "keep_largest_component": bool(self.keepLargestCheck.checked),
+                "use_segmentation_aligned_contour_support": bool(self.segmentationAlignedSupportCheck.checked),
                 "laplace_hamming_threshold": float(self.lhThresholdSpin.value),
                 "laplace_hamming_backend": str(self.lhBackendCombo.currentData),
             },
