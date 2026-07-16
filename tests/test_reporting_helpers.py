@@ -122,6 +122,20 @@ def test_default_export_filename_uses_timestamp_and_clear_prefix() -> None:
 def test_method_citations_are_documented_and_exposed_in_module_acknowledgements() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
+    tool_docs = {
+        "timelapsed": (repo_root / "docs" / "tools" / "timelapsed-hrpqct.md").read_text(
+            encoding="utf-8"
+        ),
+        "motion": (repo_root / "docs" / "tools" / "motion-scoring.md").read_text(
+            encoding="utf-8"
+        ),
+        "segmentation": (
+            repo_root / "docs" / "tools" / "segmentation-and-contours.md"
+        ).read_text(encoding="utf-8"),
+        "scanco": (repo_root / "docs" / "tools" / "scanco-io.md").read_text(
+            encoding="utf-8"
+        ),
+    }
     timelapsed_module = (
         repo_root / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
     ).read_text(encoding="utf-8")
@@ -135,11 +149,22 @@ def test_method_citations_are_documented_and_exposed_in_module_acknowledgements(
         encoding="utf-8"
     )
 
-    assert "## Method Citations" in readme
+    assert len(readme.splitlines()) < 180
+    assert "docs/tools/timelapsed-hrpqct.md" in readme
+    assert "docs/tools/motion-scoring.md" in readme
+    assert "docs/tools/segmentation-and-contours.md" in readme
+    assert "docs/tools/scanco-io.md" in readme
     assert "Hosseinitabatabaei" not in readme
     assert "Zhou M" not in readme
-    assert "Galateia Kazakia lab" in readme
-    assert "Motion grading of high-resolution quantitative computed tomography" in readme
+    assert "## Attribution" in tool_docs["timelapsed"]
+    assert "## Attribution" in tool_docs["motion"]
+    assert "## Attribution" in tool_docs["segmentation"]
+    assert "## Attribution" in tool_docs["scanco"]
+    assert "Precision of bone mechanoregulation assessment in humans" in tool_docs["timelapsed"]
+    assert "A multi-stack registration technique" in tool_docs["timelapsed"]
+    assert "Motion grading of high-resolution quantitative computed tomography" in tool_docs["motion"]
+    assert "Galateia Kazakia lab" in tool_docs["segmentation"]
+    assert "aimio-py" in tool_docs["scanco"]
     assert "Precision of bone mechanoregulation assessment in humans" in timelapsed_module
     assert "A multi-stack registration technique" in timelapsed_module
     assert "Motion grading of high-resolution quantitative computed tomography" in motion_module
