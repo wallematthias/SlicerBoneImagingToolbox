@@ -11,24 +11,34 @@ Use this tool when you have a spine CT volume and want to create:
 
 ## Requirements
 
-- Install Slicer's `PyTorch` extension from Extension Manager, then restart Slicer.
 - Open `Bone Imaging > CT > Spine Segmentation`.
-- Click `Install / Update Spine Segmentation` to install the `spine-segment` Python package into Slicer Python.
+- The main panel can run immediately when a valid runtime is already available.
+- For the simple Slicer-native runtime, open `Runtime setup`, install Slicer's `PyTorch` extension from Extension Manager, restart Slicer, then click `Install Slicer Runtime`.
+- For faster Apple Silicon inference, open `Runtime setup`, click `Install Conda MPS Runtime`, or point `Conda Python` to an existing arm64 environment with `torch` and `spine-segment` installed.
 
 The first run may download the `spine-segment` model bundle into the user cache. Later runs reuse that cached bundle.
 
 ## Basic Workflow
 
 1. Select the input CT scalar volume.
-2. Choose the PyTorch device. `Auto` uses CUDA when available, Apple MPS only when the installed PyTorch supports 3D convolutions on MPS, then CPU.
-3. Choose the run mode:
-   - `Localization only` writes centroids and loads Slicer fiducial markers.
-   - `Vertebral levels only` writes vertebral-level labels and centroids.
-   - `Full` writes vertebral-level, process/body, cortical/trabecular, and centroid outputs.
-4. Select an output folder.
-5. Click `Run Spine Segmentation`.
+2. Choose the output set:
+   - `Full segmentation + centroids` writes vertebral-level, process/body, cortical/trabecular, and centroid outputs.
+   - `Vertebral levels + centroids` writes vertebral-level labels and centroid markers.
+   - `Centroids only` writes centroid markers.
+3. Select an output folder.
+4. Click `Run`.
 
-The module exports the selected CT to NIfTI, runs `python -m spine_segment.cli`, and loads the generated centroid markers and/or NIfTI labelmaps for the selected run mode.
+The module exports the selected CT to NIfTI, runs `python -m spine_segment.cli` in the selected runtime, and loads the generated centroid markers and/or NIfTI labelmaps for the selected run mode.
+
+Centroid markers are loaded for every completed run and are named with anatomical VerSe levels such as `T12`, `L1`, and `L2`. Body/process and cortical/trabecular segmentations are generated together in full segmentation mode.
+
+## Runtime Notes
+
+The `Conda MPS Runtime` option is intentionally separate from Slicer Python. Current macOS Slicer builds can run under x86_64/Rosetta, while a Miniforge environment can be native arm64. The module probes the selected conda Python for `spine-segment`, PyTorch, MPS availability, and actual `Conv3D` support before using it.
+
+This mirrors the reliable part of the nnUNet Slicer extension design: Slicer exports an input file, launches a background process, then loads the output files back into the scene. The difference is that this module can launch an external conda Python instead of a script installed inside Slicer's Python folder.
+
+Runtime details live in the collapsed `Runtime setup` section. `Auto` probes the conda runtime first and uses it when `spine-segment` is installed and PyTorch supports 3D convolutions on MPS; otherwise it falls back to Slicer Python. The PyTorch device should usually stay on `Auto`.
 
 ## Outputs
 

@@ -1,6 +1,10 @@
 import importlib
+import json
+import os
+import platform
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,11 +23,13 @@ from slicer.ScriptedLoadableModule import (
 
 MODULE_VERSION = "0.1.0"
 CORE_REQUIREMENT = "spine-segment>=0.1.0"
+CONDA_RUNTIME_ENV = "spine-segment-pytorch"
 TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
 from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
+from SlicerBoneImagingToolboxLib.vertebra_labels import format_verse_label
 
 
 OUTPUT_SPECS = (
@@ -54,6 +60,93 @@ def _spine_segment_output_paths(input_path, output_dir):
         "cort_trab": root / f"{stem}_cort-trab.nii.gz",
         "centroids": root / f"{stem}_centroids.json",
     }
+
+
+def _default_conda_python_path():
+    return Path.home() / "miniforge3" / "envs" / CONDA_RUNTIME_ENV / "bin" / "python"
+
+
+def _candidate_conda_executables():
+    seen = set()
+    candidates = [
+        Path.home() / "miniforge3" / "bin" / "conda",
+        Path.home() / "miniforge3" / "condabin" / "conda",
+        Path("/opt/homebrew/bin/conda"),
+        Path("/usr/local/bin/conda"),
+    ]
+    found = shutil.which("conda")
+    if found:
+        candidates.append(Path(found))
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists():
+            yield candidate
+
+
+def _clean_python_subprocess_env():
+    env = os.environ.copy()
+    for key in (
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "ITK_AUTOLOAD_PATH",
+        "SITK_AUTOLOAD_PATH",
+        "SimpleITK_AUTOLOAD_PATH",
+    ):
+        env.pop(key, None)
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
+RUNTIME_PROBE_SCRIPT = r"""
+import importlib.util
+import json
+import platform
+import sys
+
+payload = {
+    "executable": sys.executable,
+    "machine": platform.machine(),
+    "python": platform.python_version(),
+    "spine_segment_available": False,
+    "torch_available": False,
+    "mps_available": False,
+    "mps_conv3d_supported": False,
+}
+
+try:
+    import spine_segment
+    payload["spine_segment_available"] = True
+    payload["spine_segment_path"] = getattr(spine_segment, "__file__", "")
+except Exception as exc:
+    payload["spine_segment_error"] = repr(exc)
+
+try:
+    import torch
+    payload["torch_available"] = True
+    payload["torch_version"] = getattr(torch, "__version__", "")
+    mps_available = bool(
+        hasattr(torch.backends, "mps")
+        and torch.backends.mps.is_built()
+        and torch.backends.mps.is_available()
+    )
+    payload["mps_available"] = mps_available
+    if mps_available:
+        try:
+            module = torch.nn.Conv3d(1, 1, 3, padding=1).to("mps")
+            tensor = torch.zeros((1, 1, 8, 8, 8), device="mps")
+            _ = module(tensor)
+            torch.mps.synchronize()
+            payload["mps_conv3d_supported"] = True
+        except Exception as exc:
+            payload["mps_conv3d_error"] = repr(exc)
+except Exception as exc:
+    payload["torch_error"] = repr(exc)
+
+print(json.dumps(payload, sort_keys=True))
+"""
 
 
 class SpineSegmentationCT(ScriptedLoadableModule):
@@ -98,6 +191,111 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
             if name == "spine_segment" or name.startswith("spine_segment."):
                 sys.modules.pop(name, None)
 
+    def default_conda_python_path(self):
+        return _default_conda_python_path()
+
+    def install_or_update_conda_runtime(self, conda_python=None, on_output=None):
+        python_path = Path(conda_python or self.default_conda_python_path()).expanduser()
+        if not python_path.exists():
+            default_path = self.default_conda_python_path()
+            if python_path != default_path:
+                raise RuntimeError(
+                    f"Custom conda Python does not exist: {python_path}. "
+                    "Create the environment first or use the default runtime path."
+                )
+            conda = next(_candidate_conda_executables(), None)
+            if conda is None:
+                raise RuntimeError(
+                    "Could not find conda. Install Miniforge/conda or set the runtime Python to an existing environment."
+                )
+            self._run_setup_command(
+                [str(conda), "create", "-y", "-n", CONDA_RUNTIME_ENV, "python=3.11"],
+                on_output=on_output,
+            )
+        self._run_setup_command(
+            [str(python_path), "-m", "pip", "install", "--upgrade", "pip"],
+            on_output=on_output,
+        )
+        self._run_setup_command(
+            [str(python_path), "-m", "pip", "install", "--upgrade", "torch", CORE_REQUIREMENT],
+            on_output=on_output,
+        )
+        return self.probe_python_runtime(python_path)
+
+    def _run_setup_command(self, args, *, on_output=None):
+        if on_output:
+            on_output(f"[setup] {' '.join(str(a) for a in args)}\n")
+        completed = subprocess.run(
+            [str(a) for a in args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_clean_python_subprocess_env(),
+            check=False,
+        )
+        if on_output and completed.stdout:
+            on_output(completed.stdout)
+        if completed.returncode != 0:
+            raise RuntimeError(f"Setup command failed with exit code {completed.returncode}: {' '.join(str(a) for a in args)}")
+
+    def probe_python_runtime(self, python_executable):
+        python_path = Path(str(python_executable or "")).expanduser()
+        if not python_path.exists():
+            return {
+                "available": False,
+                "executable": str(python_path),
+                "error": "Python executable does not exist.",
+            }
+        try:
+            completed = subprocess.run(
+                [str(python_path), "-c", RUNTIME_PROBE_SCRIPT],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=45,
+                env=_clean_python_subprocess_env(),
+                check=False,
+            )
+        except Exception as exc:
+            return {"available": False, "executable": str(python_path), "error": repr(exc)}
+
+        payload = None
+        for line in reversed((completed.stdout or "").splitlines()):
+            try:
+                payload = json.loads(line)
+                break
+            except Exception:
+                continue
+        if payload is None:
+            payload = {}
+        payload["available"] = completed.returncode == 0
+        payload["executable"] = str(python_path)
+        payload["probe_returncode"] = completed.returncode
+        if completed.returncode != 0:
+            payload["probe_output"] = completed.stdout
+        return payload
+
+    def runtime_summary(self, probe):
+        if not probe or not probe.get("available"):
+            return probe.get("error", "unavailable") if isinstance(probe, dict) else "unavailable"
+        parts = [
+            probe.get("machine") or platform.machine(),
+            f"Python {probe.get('python', '?')}",
+        ]
+        if probe.get("spine_segment_available"):
+            parts.append("spine-segment")
+        else:
+            parts.append("spine-segment missing")
+        if probe.get("torch_available"):
+            parts.append(f"torch {probe.get('torch_version', '?')}")
+        else:
+            parts.append("torch missing")
+        if probe.get("mps_conv3d_supported"):
+            parts.append("MPS Conv3D OK")
+        elif probe.get("mps_available"):
+            parts.append("MPS no Conv3D")
+        return ", ".join(str(p) for p in parts if p)
+
     def is_running(self):
         return self._proc is not None
 
@@ -112,17 +310,96 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
             raise RuntimeError(f"Could not save CT volume to {input_path}")
         return input_path
 
-    def run_cli(self, input_path, output_dir, *, device="auto", mode="full", on_output=None, on_finished=None):
+    def _python_slicer_executable(self):
+        candidates = []
+        found = shutil.which("PythonSlicer")
+        if found:
+            candidates.append(Path(found))
+        try:
+            app_path = Path(slicer.app.applicationFilePath())
+            candidates.extend(
+                [
+                    app_path.parent / "PythonSlicer",
+                    app_path.parent.parent / "bin" / "PythonSlicer",
+                ]
+            )
+        except Exception:
+            pass
+        candidates.extend(
+            [
+                Path(sys.executable).with_name("PythonSlicer"),
+                Path(sys.executable),
+            ]
+        )
+        for candidate in candidates:
+            try:
+                if candidate.exists():
+                    return str(candidate)
+            except Exception:
+                continue
+        return None
+
+    def select_runtime(self, runtime="auto", conda_python=None, on_output=None):
+        mode = str(runtime or "auto").lower()
+        conda_path = Path(conda_python or self.default_conda_python_path()).expanduser()
+
+        if mode in {"conda", "auto"} and conda_path.exists():
+            probe = self.probe_python_runtime(conda_path)
+            if on_output:
+                on_output(f"[runtime] Conda probe: {self.runtime_summary(probe)}\n")
+            if probe.get("available") and probe.get("spine_segment_available"):
+                if mode == "conda" or probe.get("mps_conv3d_supported"):
+                    return str(conda_path), "Conda MPS runtime", True
+            elif mode == "conda":
+                raise RuntimeError(f"Conda runtime is not ready: {self.runtime_summary(probe)}")
+        elif mode == "conda":
+            raise RuntimeError(
+                f"Conda runtime Python does not exist: {conda_path}. "
+                "Click Install / Update Conda MPS Runtime or choose a valid Python path."
+            )
+
+        python_exe = self._python_slicer_executable()
+        if python_exe is None:
+            raise RuntimeError("Could not find PythonSlicer for the Slicer Python runtime.")
+        if not self.is_core_available():
+            raise RuntimeError(
+                "spine-segment is not installed in Slicer Python, and no ready Conda MPS runtime was found."
+            )
+        if on_output:
+            on_output("[runtime] Using Slicer Python runtime.\n")
+        return python_exe, "Slicer Python runtime", False
+
+    def run_cli(
+        self,
+        input_path,
+        output_dir,
+        *,
+        device="auto",
+        mode="full",
+        runtime="auto",
+        conda_python=None,
+        on_output=None,
+        on_finished=None,
+    ):
         if self._proc is not None:
             raise RuntimeError("A spine segmentation process is already running.")
         self._user_terminated = False
+
+        python_exe, runtime_label, clean_runtime_env = self.select_runtime(
+            runtime=runtime,
+            conda_python=conda_python,
+            on_output=on_output,
+        )
 
         proc = qt.QProcess()
         proc.setProcessChannelMode(qt.QProcess.MergedChannels)
 
         env = qt.QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
-        for key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
+        keys_to_clear = ["ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH", "SimpleITK_AUTOLOAD_PATH"]
+        if clean_runtime_env:
+            keys_to_clear.extend(["PYTHONHOME", "PYTHONPATH"])
+        for key in keys_to_clear:
             if env.contains(key):
                 env.remove(key)
             env.insert(key, "")
@@ -157,15 +434,6 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
         proc.readyRead.connect(_read_output)
         proc.finished.connect(_finished)
 
-        python_exe = (
-            shutil.which("PythonSlicer")
-            or (sys.executable if Path(sys.executable).exists() else None)
-            or shutil.which("python3")
-            or shutil.which("python")
-        )
-        if python_exe is None:
-            raise RuntimeError("Could not find a Python executable for spine-segment.")
-
         args = [
             "-m",
             "spine_segment.cli",
@@ -181,6 +449,7 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
         elif mode == "level":
             args.append("--level-only")
         if on_output:
+            on_output(f"[runtime] {runtime_label}: {python_exe}\n")
             on_output(f"[process] launching: {python_exe} {' '.join(args)}\n")
 
         proc.start(python_exe, args)
@@ -256,8 +525,9 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
             ras = self._centroid_entry_to_ras(entry, reference_volume)
             if ras is None:
                 continue
-            label = f"V{entry.get('label', raw_label)}"
-            self._add_fiducial(node, ras, label)
+            raw_verse_label = entry.get("label", raw_label)
+            label = format_verse_label(raw_verse_label)
+            self._add_fiducial(node, ras, label, description=self._centroid_description(raw_verse_label, entry))
 
         try:
             display = node.GetDisplayNode()
@@ -284,14 +554,26 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
             return (-float(physical_xyz[0]), -float(physical_xyz[1]), float(physical_xyz[2]))
         return None
 
-    def _add_fiducial(self, node, ras, label):
+    def _centroid_description(self, raw_verse_label, entry):
+        parts = [f"VerSe label {raw_verse_label}"]
+        score = entry.get("score")
+        if score is not None:
+            try:
+                parts.append(f"score={float(score):.3f}")
+            except (TypeError, ValueError):
+                pass
+        return "; ".join(parts)
+
+    def _add_fiducial(self, node, ras, label, description=None):
         point = vtk.vtkVector3d(float(ras[0]), float(ras[1]), float(ras[2]))
         if hasattr(node, "AddControlPointWorld"):
-            node.AddControlPointWorld(point, str(label))
+            index = node.AddControlPointWorld(point, str(label))
         elif hasattr(node, "AddControlPoint"):
-            node.AddControlPoint(point, str(label))
+            index = node.AddControlPoint(point, str(label))
         else:
-            node.AddFiducial(float(ras[0]), float(ras[1]), float(ras[2]), str(label))
+            index = node.AddFiducial(float(ras[0]), float(ras[1]), float(ras[2]), str(label))
+        if description and isinstance(index, int) and hasattr(node, "SetNthControlPointDescription"):
+            node.SetNthControlPointDescription(index, str(description))
 
 
 class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
@@ -315,26 +597,18 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
             self.logic.interrupt()
 
     def _build_main_section(self):
-        box = ctk.ctkCollapsibleButton()
-        box.text = "Spine segmentation"
-        self.layout.addWidget(box)
-        form = qt.QFormLayout(box)
+        self.runBox = ctk.ctkCollapsibleButton()
+        self.runBox.text = "Run spine CT segmentation"
+        self.layout.addWidget(self.runBox)
+        form = qt.QFormLayout(self.runBox)
 
-        self.statusLabel = qt.QLabel("Checking dependency...")
-        self.installButton = qt.QPushButton("Install / Update Spine Segmentation")
-        self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
-        self._tip(self.statusLabel, "Shows whether the spine-segment package is available in Slicer Python.")
-        self._tip(self.installButton, "Install or update the spine-segment Python dependency in Slicer Python.")
-        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        self.installButton.clicked.connect(self._install_core)
-        self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
-        install_row_widget = qt.QWidget()
-        install_row = qt.QHBoxLayout(install_row_widget)
-        install_row.setContentsMargins(0, 0, 0, 0)
-        install_row.addWidget(self.installButton)
-        install_row.addWidget(self.updateToolboxButton)
-        form.addRow("Status", self.statusLabel)
-        form.addRow(install_row_widget)
+        self.statusLabel = qt.QLabel("Checking runtime...")
+        self.statusLabel.wordWrap = True
+        self._tip(
+            self.statusLabel,
+            "Shows whether the Slicer Python and optional Conda MPS runtimes are available.",
+        )
+        form.addRow("Ready", self.statusLabel)
 
         self.volumeSelector = slicer.qMRMLNodeComboBox()
         self.volumeSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
@@ -346,28 +620,18 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.volumeSelector, "Input clinical CT volume to segment.")
         form.addRow("Input CT", self.volumeSelector)
 
-        self.deviceCombo = qt.QComboBox()
-        for label, value in [
-            ("Auto", "auto"),
-            ("CUDA", "cuda"),
-            ("CPU", "cpu"),
-        ]:
-            self.deviceCombo.addItem(label, value)
-        self._tip(
-            self.deviceCombo,
-            "PyTorch device used by spine-segment. Auto chooses CUDA, then MPS only if Conv3D is supported, then CPU.",
-        )
-        form.addRow("Device", self.deviceCombo)
-
         self.modeCombo = qt.QComboBox()
         for label, value in [
-            ("Full: levels + body/process + cort/trab", "full"),
-            ("Vertebral levels only", "level"),
-            ("Localization only: centroid markers", "localization"),
+            ("Full segmentation + centroids", "full"),
+            ("Vertebral levels + centroids", "level"),
+            ("Centroids only", "localization"),
         ]:
             self.modeCombo.addItem(label, value)
-        self._tip(self.modeCombo, "Choose whether to load centroid markers only, vertebral-level labels, or the full compartment output set.")
-        form.addRow("Run mode", self.modeCombo)
+        self._tip(
+            self.modeCombo,
+            "Choose the output set. Body/process and cort/trab are generated together in full segmentation mode. Centroid markers are loaded for every completed run.",
+        )
+        form.addRow("Outputs", self.modeCombo)
 
         self.outputDirEdit = qt.QLineEdit(str(self._default_output_dir()))
         browse = qt.QPushButton("Browse...")
@@ -382,18 +646,19 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         button_row_widget = qt.QWidget()
         button_row = qt.QHBoxLayout(button_row_widget)
         button_row.setContentsMargins(0, 0, 0, 0)
-        self.runButton = qt.QPushButton("Run Spine Segmentation")
+        self.runButton = qt.QPushButton("Run")
         self.stopButton = qt.QPushButton("Stop")
         self.stopButton.enabled = False
         self.runButton.clicked.connect(self._run_segmentation)
         self.stopButton.clicked.connect(self._stop_segmentation)
-        self._tip(self.runButton, "Export the selected CT, run spine-segment, and load the outputs for the selected run mode.")
+        self._tip(self.runButton, "Export the selected CT, run spine-segment, and load centroids plus the selected segmentation outputs.")
         self._tip(self.stopButton, "Stop the active spine-segment process.")
         button_row.addWidget(self.runButton)
         button_row.addWidget(self.stopButton)
         form.addRow(button_row_widget)
 
         self.progressLabel = qt.QLabel("Idle")
+        self.progressLabel.wordWrap = True
         self.progressBar = qt.QProgressBar()
         self.progressBar.minimum = 0
         self.progressBar.maximum = 100
@@ -402,6 +667,71 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.progressBar, "Progress for the active spine-segment command.")
         form.addRow("Progress", self.progressLabel)
         form.addRow(self.progressBar)
+
+        self.runtimeBox = ctk.ctkCollapsibleButton()
+        self.runtimeBox.text = "Runtime setup"
+        self.runtimeBox.collapsed = True
+        self.layout.addWidget(self.runtimeBox)
+        runtime_form = qt.QFormLayout(self.runtimeBox)
+
+        self.installButton = qt.QPushButton("Install Slicer Runtime")
+        self.installCondaButton = qt.QPushButton("Install Conda MPS Runtime")
+        self.updateToolboxButton = qt.QPushButton("Check Toolbox Updates")
+        self._tip(self.installButton, "Install or update the spine-segment Python dependency in Slicer Python.")
+        self._tip(
+            self.installCondaButton,
+            "Create or update the arm64 conda runtime used for faster Apple Silicon inference outside Slicer Python.",
+        )
+        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
+        self.installButton.clicked.connect(self._install_core)
+        self.installCondaButton.clicked.connect(self._install_conda_runtime)
+        self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
+        install_row_widget = qt.QWidget()
+        install_row = qt.QHBoxLayout(install_row_widget)
+        install_row.setContentsMargins(0, 0, 0, 0)
+        install_row.addWidget(self.installButton)
+        install_row.addWidget(self.installCondaButton)
+        install_row.addWidget(self.updateToolboxButton)
+        runtime_form.addRow("Install", install_row_widget)
+
+        self.runtimeCombo = qt.QComboBox()
+        for label, value in [
+            ("Auto: Conda MPS if available, otherwise Slicer", "auto"),
+            ("Conda MPS runtime", "conda"),
+            ("Slicer Python runtime", "slicer"),
+        ]:
+            self.runtimeCombo.addItem(label, value)
+        self._tip(
+            self.runtimeCombo,
+            "Choose where spine-segment runs. Auto probes the conda runtime first, then falls back to Slicer Python.",
+        )
+        runtime_form.addRow("Runtime", self.runtimeCombo)
+
+        self.condaPythonEdit = qt.QLineEdit(str(self.logic.default_conda_python_path()))
+        self.probeRuntimeButton = qt.QPushButton("Probe runtime")
+        self.probeRuntimeButton.clicked.connect(self._probe_runtime)
+        self._tip(
+            self.condaPythonEdit,
+            "Python executable for the external arm64 conda runtime, usually ~/miniforge3/envs/spine-segment-pytorch/bin/python.",
+        )
+        self._tip(self.probeRuntimeButton, "Check whether this Python can import spine-segment and run PyTorch Conv3D on MPS.")
+        runtime_path_row = qt.QHBoxLayout()
+        runtime_path_row.addWidget(self.condaPythonEdit)
+        runtime_path_row.addWidget(self.probeRuntimeButton)
+        runtime_form.addRow("Conda Python", runtime_path_row)
+
+        self.deviceCombo = qt.QComboBox()
+        for label, value in [
+            ("Auto", "auto"),
+            ("CUDA", "cuda"),
+            ("CPU", "cpu"),
+        ]:
+            self.deviceCombo.addItem(label, value)
+        self._tip(
+            self.deviceCombo,
+            "PyTorch device used by spine-segment. Auto chooses CUDA, then MPS only if Conv3D is supported, then CPU.",
+        )
+        runtime_form.addRow("Device", self.deviceCombo)
 
         self.consoleBox = ctk.ctkCollapsibleButton()
         self.consoleBox.text = "Console"
@@ -427,10 +757,11 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
             self.outputDirEdit.text = path
 
     def _refresh_status(self):
-        if self.logic.is_core_available():
-            self.statusLabel.text = "spine-segment installed"
-        else:
-            self.statusLabel.text = "spine-segment not installed"
+        slicer_status = "Slicer: spine-segment installed" if self.logic.is_core_available() else "Slicer: not installed"
+        conda_text = getattr(self, "condaPythonEdit", None)
+        conda_path = Path(conda_text.text).expanduser() if conda_text is not None else self.logic.default_conda_python_path()
+        conda_status = "Conda: runtime found" if conda_path.exists() else "Conda: runtime not found"
+        self.statusLabel.text = f"{slicer_status}; {conda_status}"
 
     def _install_core(self):
         try:
@@ -441,15 +772,40 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._error(exc)
 
+    def _install_conda_runtime(self):
+        try:
+            self._set_running(True, "Installing Conda MPS runtime...")
+            probe = self.logic.install_or_update_conda_runtime(
+                self._conda_python_path(),
+                on_output=self._append_log,
+            )
+            self._append_log(f"[runtime] Conda probe: {self.logic.runtime_summary(probe)}\n")
+            self._refresh_status()
+            self._set_running(False, "Conda runtime ready")
+        except Exception as exc:
+            self._set_running(False, "Failed")
+            self._error(exc)
+
+    def _probe_runtime(self):
+        try:
+            probe = self.logic.probe_python_runtime(self._conda_python_path())
+            self._append_log(f"[runtime] Conda probe: {self.logic.runtime_summary(probe)}\n")
+            if probe.get("probe_output"):
+                self._append_log(str(probe.get("probe_output")) + "\n")
+            self._refresh_status()
+        except Exception as exc:
+            self._error(exc)
+
     def _check_toolbox_updates(self):
         run_toolbox_update_dialog(__file__, log=self._append_log)
+
+    def _conda_python_path(self):
+        return Path(self.condaPythonEdit.text).expanduser()
 
     def _run_segmentation(self):
         try:
             if self.logic.is_running():
                 raise RuntimeError("A spine segmentation process is already running.")
-            if not self.logic.is_core_available():
-                raise RuntimeError("Install spine-segment before running this module.")
             volume_node = self.volumeSelector.currentNode()
             output_dir = Path(self.outputDirEdit.text).expanduser()
             input_path = self.logic.save_input_volume(volume_node, output_dir)
@@ -462,6 +818,8 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
                 output_dir,
                 device=self.deviceCombo.currentData,
                 mode=self._currentMode,
+                runtime=self.runtimeCombo.currentData,
+                conda_python=self._conda_python_path(),
                 on_output=self._append_log,
                 on_finished=self._on_process_finished,
             )
@@ -512,20 +870,26 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
             nodes.append(node)
             self._append_log(f"[load] {title}: {paths[key]}\n")
         centroids = paths["centroids"]
-        if centroids.exists():
-            node = self.logic.load_centroid_markers(
-                centroids,
-                name=f"{base} Vertebral centroids",
-                reference_volume=reference_volume,
+        if not centroids.exists():
+            raise FileNotFoundError(
+                "Centroid markers are expected for every completed spine segmentation run: "
+                f"{centroids}"
             )
-            nodes.append(node)
-            self._append_log(f"[load] centroids: {centroids}\n")
+        node = self.logic.load_centroid_markers(
+            centroids,
+            name=f"{base} Vertebral centroids",
+            reference_volume=reference_volume,
+        )
+        nodes.append(node)
+        self._append_log(f"[load] centroids: {centroids}\n")
         return nodes
 
     def _set_running(self, running, text):
         self.runButton.enabled = not bool(running)
         self.stopButton.enabled = bool(running)
         self.installButton.enabled = not bool(running)
+        self.installCondaButton.enabled = not bool(running)
+        self.probeRuntimeButton.enabled = not bool(running)
         self.progressLabel.text = str(text)
         if running:
             self.progressBar.minimum = 0

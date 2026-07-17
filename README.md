@@ -43,7 +43,7 @@ Each tool guide contains its own focused workflow instructions and attribution/c
 Some tools need Slicer-side dependencies in addition to this toolbox:
 
 - **Motion Scoring** requires the `PyTorch` extension from Slicer's Extension Manager. Install `PyTorch`, restart Slicer, then run Motion Scoring.
-- **Spine Segmentation** requires the `PyTorch` extension from Slicer's Extension Manager and installs/updates `spine-segment` from inside the module.
+- **Spine Segmentation** can run in Slicer Python with the `PyTorch` extension, or in an external arm64 conda runtime for Apple Silicon MPS acceleration. The module includes buttons to install/update either runtime and probes MPS `Conv3D` support before using the conda path.
 - **Timelapsed HR-pQCT** installs/updates the `timelapsed-hrpqct` Python runtime from inside the module.
 - **Scanco I/O** installs/updates the lightweight `aimio-py` / `py_aimio` Scanco image reader-writer stack from inside the module.
 
