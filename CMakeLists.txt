@@ -13,6 +13,22 @@ set(EXTENSION_DEPENDS "")
 find_package(Slicer REQUIRED)
 include(${Slicer_USE_FILE})
 
+set(TOOLBOX_SHARED_PYTHON_SCRIPTS
+  SlicerBoneImagingToolboxLib/__init__.py
+  SlicerBoneImagingToolboxLib/registry.py
+  SlicerBoneImagingToolboxLib/slicer_update_ui.py
+  SlicerBoneImagingToolboxLib/updater.py
+  SlicerBoneImagingToolboxLib/vertebra_labels.py
+)
+
+ctkMacroCompilePythonScript(
+  TARGET_NAME SlicerBoneImagingToolboxLib
+  SCRIPTS "${TOOLBOX_SHARED_PYTHON_SCRIPTS}"
+  DESTINATION_DIR ${CMAKE_BINARY_DIR}/${Slicer_QTSCRIPTEDMODULES_LIB_DIR}
+  INSTALL_DIR ${Slicer_INSTALL_QTSCRIPTEDMODULES_LIB_DIR}
+  NO_INSTALL_SUBDIR
+)
+
 add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
 add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
 add_subdirectory(HRpQCTTools/SegmentationHRpQCT)

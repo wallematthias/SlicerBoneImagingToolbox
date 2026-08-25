@@ -33,6 +33,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
     ScriptedLoadableModuleWidget,
     ScriptedLoadableModuleLogic,
+    ScriptedLoadableModuleTest,
 )
 
 
@@ -3354,3 +3355,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                     except Exception:
                         return str(candidate)
         return ""
+
+
+class MotionScoreHRpQCTTest(ScriptedLoadableModuleTest):
+    def runTest(self):
+        logic = MotionScoreHRpQCTLogic()
+        self.assertFalse(logic.is_running())
