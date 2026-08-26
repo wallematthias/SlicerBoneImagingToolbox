@@ -5656,11 +5656,19 @@ class TimelapsedHRpQCTTest(ScriptedLoadableModuleTest):
 
     def test_logic_config_resolution(self):
         logic = TimelapsedHRpQCTLogic()
+        available, _detail = logic.pipeline_status()
+        if not available:
+            self.skipTest("timelapsed-hrpqct pipeline is not installed")
         config_path = logic.default_config_path()
         self.assertTrue(Path(config_path).exists())
         self.assertTrue(str(config_path).endswith(".yml"))
 
     def test_override_config_write(self):
+        try:
+            import yaml  # noqa: F401
+        except Exception:
+            self.skipTest("PyYAML is not available")
+
         logic = TimelapsedHRpQCTLogic()
         results_root = Path(tempfile.mkdtemp(prefix="timelapsed_slicer_test_"))
         path = logic.create_override_config(

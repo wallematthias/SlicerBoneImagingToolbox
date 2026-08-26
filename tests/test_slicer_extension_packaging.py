@@ -32,3 +32,17 @@ def test_python_unittest_scripts_define_matching_test_classes() -> None:
         assert (
             f"class {module_name}Test(" in module_source
         ), f"{module_name}.py is registered as a Python unittest but has no {module_name}Test class"
+
+
+def test_timelapsed_release_smoke_tests_skip_optional_runtime_dependencies() -> None:
+    module_source = (
+        ROOT / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
+    ).read_text(encoding="utf-8")
+
+    test_class_start = module_source.index("class TimelapsedHRpQCTTest(")
+    test_class_source = module_source[test_class_start:]
+
+    assert "self.skipTest" in test_class_source
+    assert "logic.pipeline_status()" in test_class_source
+    assert "timelapsed-hrpqct pipeline is not installed" in test_class_source
+    assert "PyYAML is not available" in test_class_source
