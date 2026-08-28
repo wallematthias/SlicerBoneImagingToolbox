@@ -13,13 +13,23 @@ def test_shared_toolbox_library_is_installed_with_scripted_modules() -> None:
     assert "TOOLBOX_SHARED_PYTHON_SCRIPTS" in cmake
     assert "ctkMacroCompilePythonScript" in cmake
     assert "SlicerBoneImagingToolboxLib/__init__.py" in cmake
+    assert "SlicerBoneImagingToolboxLib/package_status.py" in cmake
     assert "SlicerBoneImagingToolboxLib/slicer_update_ui.py" in cmake
     assert "SlicerBoneImagingToolboxLib/vertebra_labels.py" in cmake
     assert "Slicer_QTSCRIPTEDMODULES_LIB_DIR" in cmake
 
 
+def test_setup_module_is_registered_with_extension_packaging() -> None:
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
+
+    assert "add_subdirectory(Setup/BoneImagingToolboxSetup)" in cmake
+    assert '"path": "Setup/BoneImagingToolboxSetup"' in manifest
+    assert '"section": "Setup"' in manifest
+
+
 def test_python_unittest_scripts_define_matching_test_classes() -> None:
-    for cmake_path in ROOT.glob("*Tools/*/CMakeLists.txt"):
+    for cmake_path in [*ROOT.glob("*Tools/*/CMakeLists.txt"), *ROOT.glob("Setup/*/CMakeLists.txt")]:
         cmake = cmake_path.read_text(encoding="utf-8")
         if "slicer_add_python_unittest" not in cmake:
             continue

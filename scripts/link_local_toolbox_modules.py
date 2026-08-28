@@ -8,14 +8,20 @@ DEFAULT_BUILTIN_MODULE_DIRS = (
     "HRpQCTTools/TimelapsedHRpQCT",
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
+    "HRpQCTTools/MicroarchitectureHRpQCT",
     "IOTools/ScancoIO",
+    "CTTools/SpineSegmentationCT",
+    "Setup/BoneImagingToolboxSetup",
 )
 LEGACY_MODULE_DIR_NAMES = {
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "ScancoIO",
     "SegmentationHRpQCT",
+    "MicroarchitectureHRpQCT",
     "HRpQCTSegmentation",
+    "SpineSegmentationCT",
+    "BoneImagingToolboxSetup",
 }
 
 

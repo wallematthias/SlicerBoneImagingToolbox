@@ -21,6 +21,12 @@
       "source": "built-in"
     },
     {
+      "path": "HRpQCTTools/MicroarchitectureHRpQCT",
+      "title": "Microarchitecture",
+      "section": "HR-pQCT",
+      "source": "built-in"
+    },
+    {
       "path": "IOTools/ScancoIO",
       "title": "Scanco I/O",
       "section": "I/O",
@@ -30,6 +36,12 @@
       "path": "CTTools/SpineSegmentationCT",
       "title": "Spine Segmentation",
       "section": "CT",
+      "source": "built-in"
+    },
+    {
+      "path": "Setup/BoneImagingToolboxSetup",
+      "title": "Toolbox Setup",
+      "section": "Setup",
       "source": "built-in"
     }
   ],

@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = ROOT / "HRpQCTTools" / "MicroarchitectureHRpQCT" / "MicroarchitectureHRpQCT.py"
+
+
+def test_microarchitecture_module_is_registered_with_toolbox_manifest_and_cmake() -> None:
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
+
+    assert "add_subdirectory(HRpQCTTools/MicroarchitectureHRpQCT)" in cmake
+    assert '"path": "HRpQCTTools/MicroarchitectureHRpQCT"' in manifest
+    assert '"title": "Microarchitecture"' in manifest
+    assert '"section": "HR-pQCT"' in manifest
+
+
+def test_microarchitecture_module_wraps_toolbox_microarchitecture_api() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "from bone_microarchitecture import compute_microarchitecture" in source
+    assert "core_result = compute_microarchitecture(" in source
+    assert "slicer.util.saveNode" in source
+    assert "return self._volume_to_sitk(" in source
+    assert "sitk.sitkUInt8" in source
+    assert "return sitk.ReadImage(str(path), pixel_type)" in source
+    assert "slicer.util.loadVolume" in source
+    assert "vtkMRMLTableNode" in source
+    assert "write_measurement_csv" in source
+    assert "metadata.version(\"bone-microarchitecture\")" in source
+    assert "def core_runtime_status(self):" in source
+    assert 'sys.platform == "darwin"' in source
+    assert "pyobjc-framework-Metal>=10" in source
+    assert "pyopencl>=2024.1" in source
+    assert "Microarchitecture core available from local source." in source
+    assert "Microarchitecture core source found but not ready" in source
+    assert "Microarchitecture core installed but not ready" in source
+    assert ("OR" + "MiR-XCT") not in source
+
+
+def test_microarchitecture_module_accepts_segmentation_nodes_generated_by_segmentation_module() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert '"vtkMRMLSegmentationNode"' in source
+    assert "ExportSegmentsToLabelmapNode" in source
+    assert "_segment_id_for_role" in source
+    assert "selected_segment_id" in source
+    assert "_segment_tag_value(segment, \"HRpQCT.Role\")" in source
+    assert 'segment.GetTag("HRpQCT.Role")' not in source
+    assert "vtk.mutable(\"\")" in source
+    assert "_refresh_segment_combo" in source
+    assert 'hasattr(reference_node, "CopyOrientation")' in source
+    assert '"Trabecular mask"' in source
+    assert '"Trabecular compartment mask"' in source
+    assert '"Full mask"' in source
+    assert '"Bone segmentation"' in source
+    assert '"Cortical mask"' in source
+    assert '"Cortical compartment mask"' in source
+
+
+def test_microarchitecture_exports_segmentation_segments_with_shared_geometry() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "reference_node=None" in source
+    assert "reference_node=reference_node" in source
+    assert "_first_available_reference_node(" in source
+    assert "roles_and_segment_ids = [" in source
+    assert "if optional_node is trabecular_segmentation_node:" in source
+    assert "ExportSegmentsToLabelmapNode(" in source
+    assert "reference_node," in source
+    assert "EXTENT_REFERENCE_GEOMETRY" in source
+    assert "Shared reference geometry keeps segmentation segment exports on the same grid." in source
+
+
+def test_microarchitecture_module_uses_core_for_bmd_and_thickness_compartments() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "sitk.GetArrayFromImage(trab_seg)" in source
+    assert "sitk.GetArrayFromImage(peri_mask)" in source
+    assert "sitk.GetArrayFromImage(cort_mask)" in source
+    assert "Select a bone segmentation so trabecular and cortical bone measures can be intersected" in source
+    assert "grayscale=None if bmd_image is None else sitk.GetArrayFromImage(bmd_image)" in source
+    assert "for map_role, array in core_result.maps.items()" in source
+    assert "_array_to_sitk_like(array, trab_seg)" in source
+
+
+def test_microarchitecture_prefers_aimio_calibrated_grayscale_when_source_metadata_exists() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"' in source
+    assert "_calibrated_grayscale_image" in source
+    assert "from ScancoIOLib import aim_io" in source
+    assert "SCANCO_IO_DIR" in source
+    assert 'aim_io.read_image(source_path, scaling="density")' in source
+    assert 'metadata["grayscale_reader"] = "aimio-py"' in source
+    assert 'metadata["grayscale_units"] = "bmd"' in source
+
+
+def test_microarchitecture_loads_maps_for_cortical_thickness_and_masked_bmd() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "for map_role, array in core_result.maps.items()" in source
+    assert "f\"{prefix}_{map_role.replace('.', '')}_map\"" in source
+    assert "_array_to_sitk_like(array, trab_seg)" in source
+    assert "Tb.BMD" in source
+    assert "Ct.BMD" in source
+    assert "Ct.Po.Dm" in source
+    assert "TB.BMD" not in source
+    assert "CT.BMD" not in source
+    assert "_bmd_image(" in source
+    assert "attenuation = (image / 1000.0 + 1.0) * float(mu_water)" in source
+
+
+def test_microarchitecture_widget_exposes_minimal_clean_inputs_and_outputs() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def setup(self):", source.index("class MicroarchitectureHRpQCTWidget")) :]
+
+    assert "Grayscale/BMD volume" in source
+    assert widget_setup.index("Grayscale/BMD volume") < widget_setup.index("Bone segmentation")
+    assert "Bone segmentation" in source
+    assert "Full/periosteal mask" in source
+    assert "Trabecular compartment mask" in source
+    assert "Cortical compartment mask" in source
+    assert "BMD measures use the full compartment regions." in source
+    assert "Segment" in source
+    assert "Image units" in source
+    assert "BMD Calibration" in source
+    assert "Thickness Settings" in source
+    assert "Bounded EDT" in source
+    assert "Exact sphere fitting" in source
+    assert 'for label, value in [("Exact sphere fitting", "hildebrand"), ("Bounded EDT", "edt")]' in source
+    assert 'thickness_method="hildebrand"' in source
+    assert 'thickness_backend="auto"' in source
+    assert '("Apple MPS (macOS)", "mps")' in source
+    assert '("OpenCL GPU", "opencl")' in source
+    assert "default_thickness_backend" in source
+    assert "self.thicknessBackendCombo.setCurrentIndex(index)" in source
+    assert "Apple MPS" in source
+    assert "OpenCL" in source
+    assert "requires PyTorch" not in source
+    assert "mu_scaling" in source
+    assert "rescale_slope" in source
+    assert "Output prefix" in source
+    assert "Create measurement maps" not in widget_setup
+    assert "CSV output path" not in widget_setup
+    assert "Export measurements CSV" in source
+    assert "qt.QFileDialog.getSaveFileName" in source
+    assert "Run microarchitecture" in source
+    assert "Install / update microarchitecture core" in source
+
+
+def test_microarchitecture_run_always_loads_maps_and_shows_table() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    run_method = source[source.index("    def _run_microarchitecture(self):") :]
+
+    assert "create_maps=True" in run_method
+    assert "thickness_method=str(self.thicknessMethodCombo.currentData)" in run_method
+    assert "thickness_backend=str(self.thicknessBackendCombo.currentData)" in run_method
+    assert "Apple MPS sphere fitting is experimental" in run_method
+    assert "csv_output_path=" not in run_method
+    assert "self._lastMetrics = dict(metrics)" in run_method
+    assert "self._lastMaps = dict(maps)" in run_method
+    assert "self.exportCsvButton.enabled = True" in run_method
+    assert "self._show_measurement_table(table_node)" in run_method
+    assert 'slicer.util.selectModule("Tables")' in source
+    assert "tables_widget.setCurrentTableNode(table_node)" in source
+
+
+def test_microarchitecture_exports_last_measurements_from_button() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "self.exportCsvButton.clicked.connect(self._export_measurements_csv)" in source
+    assert "def _export_measurements_csv(self):" in source
+    assert "write_measurement_csv(path, self._lastMetrics, self._lastMaps)" in source
+    assert 'path = f"{path}.csv"' in source
+    assert "self._lastMetrics" in source
+    assert "self._lastMaps" in source
+
+
+def test_microarchitecture_module_records_measurement_provenance_attributes() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'SetAttribute("BoneImaging.Microarchitecture.Engine", "bone_microarchitecture")' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.ThicknessMethod"' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.ThicknessBackend"' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.TrabecularSegmentationID"' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.PeriostealMaskID"' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.MapRole", map_role)' in source

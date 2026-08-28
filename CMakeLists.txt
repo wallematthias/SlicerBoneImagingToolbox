@@ -15,7 +15,10 @@ include(${Slicer_USE_FILE})
 
 set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/__init__.py
+  SlicerBoneImagingToolboxLib/package_status.py
   SlicerBoneImagingToolboxLib/registry.py
+  SlicerBoneImagingToolboxLib/segmentation_methods.py
+  SlicerBoneImagingToolboxLib/slicer_pip.py
   SlicerBoneImagingToolboxLib/slicer_update_ui.py
   SlicerBoneImagingToolboxLib/updater.py
   SlicerBoneImagingToolboxLib/vertebra_labels.py
@@ -32,8 +35,10 @@ ctkMacroCompilePythonScript(
 add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
 add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
 add_subdirectory(HRpQCTTools/SegmentationHRpQCT)
+add_subdirectory(HRpQCTTools/MicroarchitectureHRpQCT)
 add_subdirectory(IOTools/ScancoIO)
 add_subdirectory(CTTools/SpineSegmentationCT)
+add_subdirectory(Setup/BoneImagingToolboxSetup)
 
 file(GLOB TOOLBOX_EXTERNAL_CMAKES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/ExternalModules/*/CMakeLists.txt"
