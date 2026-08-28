@@ -310,8 +310,11 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         path = self.registered_session_mask_path(output_root, row, role)
         path.parent.mkdir(parents=True, exist_ok=True)
         sitk.WriteImage(sitk.Cast(image > 0, sitk.sitkUInt8), str(path))
-        row[f"{role}_path" if role != "seg" else "seg_path"] = str(path)
+        row[self._registered_mask_key(role)] = str(path)
         return str(path)
+
+    def _registered_mask_key(self, role):
+        return f"{role}_path" if role != "seg" else "seg_path"
 
     def _read_optional_registered_mask(self, row, key, role):
         path = str(row.get(key) or "").strip()
@@ -335,10 +338,19 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             return generated
         image = self._read_registered_series_image(row["image_path"], role="image")
 
-        derived = self._derive_registered_compartment_masks(row)
-        for role, mask in derived.items():
-            path = self._write_registered_mask(output_root, row, role, mask)
-            generated.append({"session": row["session_id"], "role": role, "path": path, "source": "derived"})
+        resolved_compartments, provenance = self._resolve_registered_compartment_masks(row, image)
+        for role, mask in resolved_compartments.items():
+            key = self._registered_mask_key(role)
+            original = self._read_optional_registered_mask(row, key, role)
+            source = provenance.get(role, "provided")
+            needs_workspace_copy = (
+                source.startswith("derived_from_")
+                or original is None
+                or not self._same_image_geometry(original, image)
+            )
+            if needs_workspace_copy:
+                path = self._write_registered_mask(output_root, row, role, mask)
+                generated.append({"session": row["session_id"], "role": role, "path": path, "source": source})
 
         missing_compartments = [role for role in ("full", "trab", "cort") if role in self._registered_row_missing(row)]
         if missing_compartments and periosteal_contour_method != "none":
@@ -370,44 +382,38 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 generated.append({"session": row["session_id"], "role": "seg", "path": path, "source": "generated"})
         return generated
 
-    def _derive_registered_compartment_masks(self, row):
-        full = self._read_optional_registered_mask(row, "full_path", "full")
-        trab = self._read_optional_registered_mask(row, "trab_path", "trab")
-        cort = self._read_optional_registered_mask(row, "cort_path", "cort")
-        available = [mask for mask in (full, trab, cort) if mask is not None]
-        if len(available) < 2:
-            return {}
-        sizes = {mask.GetSize() for mask in available}
-        if len(sizes) != 1:
-            raise ValueError(
-                f"Compartment masks for sub-{row['subject_id']} ses-{row['session_id']} must have matching sizes."
-            )
-        derived = {}
-        if trab is None and full is not None and cort is not None:
-            full_array = sitk.GetArrayFromImage(full) > 0
-            cort_array = sitk.GetArrayFromImage(cort) > 0
-            trab_array = full_array & ~cort_array
-            derived["trab"] = self._array_to_sitk_like(
-                trab_array,
-                full,
-            )
-        if cort is None and full is not None and trab is not None:
-            full_array = sitk.GetArrayFromImage(full) > 0
-            trab_array = sitk.GetArrayFromImage(trab) > 0
-            cort_array = full_array & ~trab_array
-            derived["cort"] = self._array_to_sitk_like(
-                cort_array,
-                full,
-            )
-        if full is None and trab is not None and cort is not None:
-            trab_array = sitk.GetArrayFromImage(trab) > 0
-            cort_array = sitk.GetArrayFromImage(cort) > 0
-            full_array = trab_array | cort_array
-            derived["full"] = self._array_to_sitk_like(
-                full_array,
-                trab,
-            )
-        return derived
+    def _same_image_geometry(self, first, second):
+        return (
+            first.GetSize() == second.GetSize()
+            and first.GetSpacing() == second.GetSpacing()
+            and first.GetOrigin() == second.GetOrigin()
+            and first.GetDirection() == second.GetDirection()
+        )
+
+    def _resolve_registered_compartment_masks(self, row, image):
+        from timelapsedhrpqct.processing.masks import resolve_masks
+
+        provided = {
+            role: mask
+            for role, mask in {
+                "full": self._read_optional_registered_mask(row, "full_path", "full"),
+                "trab": self._read_optional_registered_mask(row, "trab_path", "trab"),
+                "cort": self._read_optional_registered_mask(row, "cort_path", "cort"),
+            }.items()
+            if mask is not None
+        }
+        if len(provided) < 2:
+            return {}, {}
+        resolved, provenance = resolve_masks(image=image, provided_masks=provided, desired_roles=["full", "trab", "cort"])
+        return resolved, provenance
+
+    def _derive_registered_compartment_masks(self, row, image):
+        resolved, provenance = self._resolve_registered_compartment_masks(row, image)
+        return {
+            role: mask
+            for role, mask in resolved.items()
+            if provenance.get(role, "").startswith("derived_from_")
+        }
 
     def _segmentation_defaults(self, segmentation_method):
         from SegmentationHRpQCT import METHOD_PRESETS

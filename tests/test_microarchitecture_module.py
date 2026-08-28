@@ -258,8 +258,10 @@ def test_registered_series_prepare_can_generate_missing_masks() -> None:
     assert "_derive_registered_compartment_masks" in source
     assert "_generate_registered_bone_segmentation" in source
     assert "_generate_registered_contours" in source
-    assert "trab_array = full_array & ~cort_array" in source
-    assert "cort_array = full_array & ~trab_array" in source
+    assert "from timelapsedhrpqct.processing.masks import resolve_masks" in source
+    assert "resolved, provenance = resolve_masks(" in source
+    assert 'source.startswith("derived_from_")' in source
+    assert 'provenance.get(role, "provided")' in source
     assert "sitk.WriteImage" in source
     assert "self.seriesSegmentationMethodCombo" in widget_setup
     assert "self.seriesPeriostealContourCombo" in widget_setup
