@@ -190,7 +190,7 @@ def test_microarchitecture_module_records_measurement_provenance_attributes() ->
     assert 'SetAttribute("BoneImaging.Microarchitecture.MapRole", map_role)' in source
 
 
-def test_registered_series_mode_uses_timelapsed_discovery_and_derivative_layout() -> None:
+def test_registered_series_mode_uses_timelapsed_discovery_and_slicer_timelapsed_layout() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 
     assert 'REGISTERED_MICROARCHITECTURE_DIR_NAME = "RegisteredMicroarchitecture"' in source
@@ -200,12 +200,15 @@ def test_registered_series_mode_uses_timelapsed_discovery_and_derivative_layout(
     assert "discover_registered_series(" in source
     assert "canonicalize_sessions=True" in source
     assert "registered_microarchitecture_root(" in source
-    assert 'dataset_root / "derivatives" / REGISTERED_MICROARCHITECTURE_DIR_NAME' in source
+    assert 'dataset_root / REGISTERED_MICROARCHITECTURE_DIR_NAME' in source
+    assert 'dataset_root / "derivatives" / REGISTERED_MICROARCHITECTURE_DIR_NAME' not in source
     assert "registered_session_output_dir(" in source
     assert '"native_space"' in source
     assert '"microarchitecture"' in source
     assert "sequential_registration_pairs(" in source
     assert "write_registered_series_manifest(" in source
+    assert "if not written:" in source
+    assert "No registered series measurements were run" in source
 
 
 def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:

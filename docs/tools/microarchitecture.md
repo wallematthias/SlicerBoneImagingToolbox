@@ -41,7 +41,7 @@ The trabecular parameters are not independent. In particular, `Tb.N` is a local-
 The `Registered Series` tab is for longitudinal datasets where registration is used to define common full, trabecular, and cortical regions, but each timepoint is measured in its native image space. Dataset discovery uses the Timelapsed HR-pQCT filename/header logic.
 
 1. Select the dataset root.
-2. Use the default output root or choose a folder. The default is `derivatives/RegisteredMicroarchitecture` under the dataset root.
+2. Use the default output root or choose a folder. The default is `RegisteredMicroarchitecture` under the dataset root.
 3. Run `Discover series`.
 4. Use the `Subject` and `Site` dropdowns to show all discovered sessions or a selected subset.
 5. Review the session table.

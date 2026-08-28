@@ -126,7 +126,9 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         if output_text:
             return Path(output_text).expanduser()
         dataset_root = Path(str(dataset_root)).expanduser()
-        return dataset_root / "derivatives" / REGISTERED_MICROARCHITECTURE_DIR_NAME
+        if dataset_root.name == REGISTERED_MICROARCHITECTURE_DIR_NAME:
+            return dataset_root
+        return dataset_root / REGISTERED_MICROARCHITECTURE_DIR_NAME
 
     def registered_subject_site_dir(self, output_root, subject_id, site):
         return Path(output_root) / f"sub-{subject_id}" / f"site-{site or 'unknown'}"
@@ -315,6 +317,14 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 long_row.update(summary_row)
                 long_rows.append(long_row)
             written.append(str(csv_path))
+
+        if not written:
+            skipped = len(rows)
+            raise RuntimeError(
+                "No registered series measurements were run. "
+                f"{skipped} session(s) were skipped because required image, segmentation, full, trabecular, "
+                "or cortical masks were missing. Run discovery, generate the missing masks, then run measurements."
+            )
 
         long_path = root / "microarchitecture_long.csv"
         with long_path.open("w", newline="", encoding="utf-8") as stream:
@@ -929,7 +939,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         )
         self._tip(
             self.seriesOutputRootEdit,
-            "Output folder. Defaults to derivatives/RegisteredMicroarchitecture under the dataset root.",
+            "Output folder. Defaults to RegisteredMicroarchitecture under the dataset root.",
         )
         self.seriesDatasetRootEdit.textChanged.connect(self._update_registered_output_default)
 
