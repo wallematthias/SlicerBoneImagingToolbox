@@ -18,6 +18,7 @@ LEGACY_MODULE_DIR_NAMES = {
     "MotionScoreHRpQCT",
     "ScancoIO",
     "SegmentationHRpQCT",
+    "MicroarchitectureHRpQCT",
     "BoneMicroarchitecture",
     "HRpQCTSegmentation",
     "SpineSegmentationCT",
