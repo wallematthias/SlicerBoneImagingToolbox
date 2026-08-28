@@ -246,3 +246,25 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert "_refresh_registered_series_table" in source
     assert "_prepare_registered_series" in source
     assert "_run_registered_series" in source
+
+
+def test_registered_series_prepare_can_generate_missing_masks() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def _setup_registered_series_tab(self, layout):") :]
+    prepare_method = source[source.index("    def _prepare_registered_series(self):") :]
+
+    assert "prepare_registered_series_workspace(" in source
+    assert "_complete_registered_series_masks" in source
+    assert "_derive_registered_compartment_masks" in source
+    assert "_generate_registered_bone_segmentation" in source
+    assert "_generate_registered_contours" in source
+    assert "trab_array = full_array & ~cort_array" in source
+    assert "cort_array = full_array & ~trab_array" in source
+    assert "sitk.WriteImage" in source
+    assert "self.seriesSegmentationMethodCombo" in widget_setup
+    assert "self.seriesPeriostealContourCombo" in widget_setup
+    assert "self.seriesEndostealContourCombo" in widget_setup
+    assert "Missing masks" in widget_setup
+    assert "segmentation_method=str(self.seriesSegmentationMethodCombo.currentData)" in prepare_method
+    assert "periosteal_contour_method=str(self.seriesPeriostealContourCombo.currentData)" in prepare_method
+    assert "endosteal_contour_method=str(self.seriesEndostealContourCombo.currentData)" in prepare_method

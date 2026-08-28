@@ -25,11 +25,19 @@ if MICROARCHITECTURE_LOCAL_SRC.exists() and str(MICROARCHITECTURE_LOCAL_SRC) not
 TIMELAPSED_LOCAL_SRC = TOOLBOX_ROOT.parent / "TimelapsedHRpQCT" / "src"
 if TIMELAPSED_LOCAL_SRC.exists() and str(TIMELAPSED_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(TIMELAPSED_LOCAL_SRC))
+SEGMENTATION_MODULE_DIR = TOOLBOX_ROOT / "HRpQCTTools" / "SegmentationHRpQCT"
+if str(SEGMENTATION_MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(SEGMENTATION_MODULE_DIR))
 SCANCO_IO_DIR = TOOLBOX_ROOT / "IOTools" / "ScancoIO"
 if str(SCANCO_IO_DIR) not in sys.path:
     sys.path.insert(0, str(SCANCO_IO_DIR))
 
 from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install  # noqa: E402
+from SlicerBoneImagingToolboxLib.segmentation_methods import (  # noqa: E402
+    BONE_SEGMENTATION_METHODS,
+    ENDOSTEAL_CONTOUR_METHODS,
+    PERIOSTEAL_CONTOUR_METHODS,
+)
 from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
@@ -141,6 +149,19 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             / "microarchitecture"
         )
 
+    def registered_session_masks_dir(self, output_root, row):
+        return (
+            self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
+            / "native_space"
+            / f"ses-{row['session_id']}"
+            / "masks"
+        )
+
+    def registered_session_mask_path(self, output_root, row, role):
+        site = row.get("site") or "unknown"
+        filename = f"sub-{row['subject_id']}_ses-{row['session_id']}_site-{site}_mask-{role}.nii.gz"
+        return self.registered_session_masks_dir(output_root, row) / filename
+
     def discover_registered_series(self, dataset_root, *, subject_filter="", site_filter=""):
         from timelapsedhrpqct.config.models import DiscoveryConfig
         from timelapsedhrpqct.dataset.discovery import discover_raw_sessions
@@ -240,6 +261,219 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         manifest_path = root / "registered_microarchitecture_manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return manifest_path
+
+    def prepare_registered_series_workspace(
+        self,
+        dataset_root,
+        output_root,
+        rows,
+        *,
+        segmentation_method="seg_gauss",
+        periosteal_contour_method="standard",
+        endosteal_contour_method="standard",
+    ):
+        root = self.registered_microarchitecture_root(dataset_root, output_root)
+        self.write_registered_series_manifest(dataset_root, root, rows)
+        prepared_rows = []
+        generated = []
+        for row in rows:
+            prepared = dict(row)
+            generated.extend(
+                self._complete_registered_series_masks(
+                    root,
+                    prepared,
+                    segmentation_method=segmentation_method,
+                    periosteal_contour_method=periosteal_contour_method,
+                    endosteal_contour_method=endosteal_contour_method,
+                )
+            )
+            missing = self._registered_row_missing(prepared)
+            prepared["status"] = "Ready" if not missing else f"Missing {', '.join(missing)}"
+            prepared_rows.append(prepared)
+        manifest_path = self.write_registered_series_manifest(dataset_root, root, prepared_rows)
+        return {"manifest": str(manifest_path), "rows": prepared_rows, "generated": generated}
+
+    def _registered_row_missing(self, row):
+        return [
+            label
+            for label, value in (
+                ("image", row.get("image_path")),
+                ("bone seg", row.get("seg_path")),
+                ("full", row.get("full_path")),
+                ("trab", row.get("trab_path")),
+                ("cort", row.get("cort_path")),
+            )
+            if not value or not Path(str(value)).expanduser().exists()
+        ]
+
+    def _write_registered_mask(self, output_root, row, role, image):
+        path = self.registered_session_mask_path(output_root, row, role)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        sitk.WriteImage(sitk.Cast(image > 0, sitk.sitkUInt8), str(path))
+        row[f"{role}_path" if role != "seg" else "seg_path"] = str(path)
+        return str(path)
+
+    def _read_optional_registered_mask(self, row, key, role):
+        path = str(row.get(key) or "").strip()
+        if not path:
+            return None
+        if not Path(path).expanduser().exists():
+            return None
+        return self._read_registered_series_image(path, role=role)
+
+    def _complete_registered_series_masks(
+        self,
+        output_root,
+        row,
+        *,
+        segmentation_method,
+        periosteal_contour_method,
+        endosteal_contour_method,
+    ):
+        generated = []
+        if not row.get("image_path"):
+            return generated
+        image = self._read_registered_series_image(row["image_path"], role="image")
+
+        derived = self._derive_registered_compartment_masks(row)
+        for role, mask in derived.items():
+            path = self._write_registered_mask(output_root, row, role, mask)
+            generated.append({"session": row["session_id"], "role": role, "path": path, "source": "derived"})
+
+        missing_compartments = [role for role in ("full", "trab", "cort") if role in self._registered_row_missing(row)]
+        if missing_compartments and periosteal_contour_method != "none":
+            contour_masks = self._generate_registered_contours(
+                image,
+                row,
+                segmentation_method=segmentation_method,
+                periosteal_contour_method=periosteal_contour_method,
+                endosteal_contour_method=endosteal_contour_method,
+            )
+            for role in missing_compartments:
+                if role in contour_masks:
+                    path = self._write_registered_mask(output_root, row, role, contour_masks[role])
+                    generated.append({"session": row["session_id"], "role": role, "path": path, "source": "generated"})
+
+        if "bone seg" in self._registered_row_missing(row) and segmentation_method != "none":
+            full = self._read_optional_registered_mask(row, "full_path", "full")
+            trab = self._read_optional_registered_mask(row, "trab_path", "trab")
+            cort = self._read_optional_registered_mask(row, "cort_path", "cort")
+            if full is not None and trab is not None and cort is not None:
+                seg = self._generate_registered_bone_segmentation(
+                    image,
+                    full,
+                    trab,
+                    cort,
+                    segmentation_method=segmentation_method,
+                )
+                path = self._write_registered_mask(output_root, row, "seg", seg)
+                generated.append({"session": row["session_id"], "role": "seg", "path": path, "source": "generated"})
+        return generated
+
+    def _derive_registered_compartment_masks(self, row):
+        full = self._read_optional_registered_mask(row, "full_path", "full")
+        trab = self._read_optional_registered_mask(row, "trab_path", "trab")
+        cort = self._read_optional_registered_mask(row, "cort_path", "cort")
+        available = [mask for mask in (full, trab, cort) if mask is not None]
+        if len(available) < 2:
+            return {}
+        sizes = {mask.GetSize() for mask in available}
+        if len(sizes) != 1:
+            raise ValueError(
+                f"Compartment masks for sub-{row['subject_id']} ses-{row['session_id']} must have matching sizes."
+            )
+        derived = {}
+        if trab is None and full is not None and cort is not None:
+            full_array = sitk.GetArrayFromImage(full) > 0
+            cort_array = sitk.GetArrayFromImage(cort) > 0
+            trab_array = full_array & ~cort_array
+            derived["trab"] = self._array_to_sitk_like(
+                trab_array,
+                full,
+            )
+        if cort is None and full is not None and trab is not None:
+            full_array = sitk.GetArrayFromImage(full) > 0
+            trab_array = sitk.GetArrayFromImage(trab) > 0
+            cort_array = full_array & ~trab_array
+            derived["cort"] = self._array_to_sitk_like(
+                cort_array,
+                full,
+            )
+        if full is None and trab is not None and cort is not None:
+            trab_array = sitk.GetArrayFromImage(trab) > 0
+            cort_array = sitk.GetArrayFromImage(cort) > 0
+            full_array = trab_array | cort_array
+            derived["full"] = self._array_to_sitk_like(
+                full_array,
+                trab,
+            )
+        return derived
+
+    def _segmentation_defaults(self, segmentation_method):
+        from SegmentationHRpQCT import METHOD_PRESETS
+
+        defaults = dict(METHOD_PRESETS.get(str(segmentation_method), METHOD_PRESETS["seg_gauss"]))
+        defaults["method"] = "seg_gauss" if str(segmentation_method) == "none" else str(segmentation_method)
+        defaults["enabled"] = str(segmentation_method) != "none"
+        return defaults
+
+    def _site_defaults(self, row):
+        from SegmentationHRpQCT import SITE_PRESETS
+
+        site = str(row.get("site") or "").lower()
+        if site not in SITE_PRESETS:
+            site = "radius"
+        return site, SITE_PRESETS[site]
+
+    def _generate_registered_contours(
+        self,
+        image,
+        row,
+        *,
+        segmentation_method,
+        periosteal_contour_method,
+        endosteal_contour_method,
+    ):
+        from timelapsedhrpqct.processing.contour_generation import (
+            ContourGenerationParams,
+            InnerContourParams,
+            OuterContourParams,
+            SegmentationParams,
+            generate_masks_from_image,
+        )
+
+        site, site_defaults = self._site_defaults(row)
+        inner = dict(site_defaults["inner"])
+        inner["site"] = site
+        inner["contour_method"] = str(endosteal_contour_method)
+        outer = dict(site_defaults["outer"])
+        outer["contour_method"] = str(periosteal_contour_method)
+        params = ContourGenerationParams(
+            outer=OuterContourParams(**outer),
+            inner=InnerContourParams(**inner),
+            segmentation=SegmentationParams(**self._segmentation_defaults(segmentation_method)),
+        )
+        generated = generate_masks_from_image(image, params, verbose=False)
+        return {"full": generated.full, "trab": generated.trab, "cort": generated.cort, "seg": generated.seg}
+
+    def _generate_registered_bone_segmentation(self, image, full_mask, trab_mask, cort_mask, *, segmentation_method):
+        from timelapsedhrpqct.processing.contour_generation import (
+            SegmentationParams,
+            _segment_bone_xyz,
+            numpy_xyz_to_sitk_binary,
+            sitk_to_numpy_xyz,
+        )
+
+        params = SegmentationParams(**self._segmentation_defaults(segmentation_method))
+        seg_xyz = _segment_bone_xyz(
+            image_xyz=sitk_to_numpy_xyz(image),
+            full_mask_xyz=sitk_to_numpy_xyz(full_mask) > 0,
+            trab_mask_xyz=sitk_to_numpy_xyz(trab_mask) > 0,
+            cort_mask_xyz=sitk_to_numpy_xyz(cort_mask) > 0,
+            params=params,
+            spacing_xyz=tuple(float(value) for value in image.GetSpacing()),
+        )
+        return numpy_xyz_to_sitk_binary(seg_xyz, image)
 
     def _read_registered_series_image(self, path, *, role):
         path = Path(str(path)).expanduser()
@@ -965,6 +1199,31 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         form.addRow("Subject", self.seriesSubjectCombo)
         form.addRow("Site", self.seriesSiteCombo)
 
+        missing_masks_row = qt.QWidget()
+        missing_masks_layout = qt.QHBoxLayout(missing_masks_row)
+        missing_masks_layout.setContentsMargins(0, 0, 0, 0)
+        self.seriesSegmentationMethodCombo = qt.QComboBox()
+        for value, descriptor in BONE_SEGMENTATION_METHODS.items():
+            self.seriesSegmentationMethodCombo.addItem(descriptor.label, value)
+        self.seriesPeriostealContourCombo = qt.QComboBox()
+        for value, descriptor in PERIOSTEAL_CONTOUR_METHODS.items():
+            self.seriesPeriostealContourCombo.addItem(descriptor.label, value)
+        self.seriesEndostealContourCombo = qt.QComboBox()
+        for value, descriptor in ENDOSTEAL_CONTOUR_METHODS.items():
+            self.seriesEndostealContourCombo.addItem(descriptor.label, value)
+        missing_masks_layout.addWidget(qt.QLabel("Bone"))
+        missing_masks_layout.addWidget(self.seriesSegmentationMethodCombo)
+        missing_masks_layout.addWidget(qt.QLabel("Peri"))
+        missing_masks_layout.addWidget(self.seriesPeriostealContourCombo)
+        missing_masks_layout.addWidget(qt.QLabel("Endo"))
+        missing_masks_layout.addWidget(self.seriesEndostealContourCombo)
+        self._tip(
+            missing_masks_row,
+            "Methods used by Prepare to create missing segmentation, full, trabecular, or cortical masks. "
+            "Masks that can be derived from existing compartments are derived first.",
+        )
+        form.addRow("Missing masks", missing_masks_row)
+
         settings_row = qt.QWidget()
         settings_layout = qt.QHBoxLayout(settings_row)
         settings_layout.setContentsMargins(0, 0, 0, 0)
@@ -1234,19 +1493,31 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         if not self._lastRegisteredRows:
             return
         try:
-            manifest_path = self._with_wait_cursor(
-                lambda: self.logic.write_registered_series_manifest(
+            prepared = self._with_wait_cursor(
+                lambda: self.logic.prepare_registered_series_workspace(
                     self.seriesDatasetRootEdit.text,
                     self.seriesOutputRootEdit.text,
                     self._lastRegisteredRows,
+                    segmentation_method=str(self.seriesSegmentationMethodCombo.currentData),
+                    periosteal_contour_method=str(self.seriesPeriostealContourCombo.currentData),
+                    endosteal_contour_method=str(self.seriesEndostealContourCombo.currentData),
                 )
             )
         except Exception as exc:
             slicer.util.errorDisplay(f"RegisteredMicroarchitecture workspace preparation failed:\n{exc}")
             self._series_log(f"[registered] workspace preparation failed: {exc}")
             return
-        self.seriesStatusLabel.text = f"Prepared RegisteredMicroarchitecture workspace: {manifest_path}"
-        self._series_log(f"[registered] wrote manifest: {manifest_path}")
+        self._allRegisteredRows = list(prepared["rows"])
+        self._populate_registered_series_filters(self._allRegisteredRows)
+        self._refresh_registered_series_table()
+        generated_count = len(prepared.get("generated", []))
+        self.seriesStatusLabel.text = (
+            f"Prepared RegisteredMicroarchitecture workspace: {prepared['manifest']} "
+            f"({generated_count} mask file(s) generated or derived)."
+        )
+        self._series_log(f"[registered] wrote manifest: {prepared['manifest']}")
+        for item in prepared.get("generated", []):
+            self._series_log(f"[registered] {item['source']} {item['role']}: {item['path']}")
 
     def _run_registered_series(self):
         if not self._lastRegisteredRows:
