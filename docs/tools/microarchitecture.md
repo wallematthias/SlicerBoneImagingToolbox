@@ -1,6 +1,6 @@
-# Microarchitecture
+# Bone Microarchitecture
 
-`Microarchitecture` computes microarchitecture measurements from Slicer masks using the lightweight `bone-microarchitecture` Python core. The Slicer module handles node selection, AIM calibration, segmentation export, table display, and map loading; the core package handles the measurements.
+`Bone Microarchitecture` computes microarchitecture measurements from Slicer masks using the lightweight `bone-microarchitecture` Python core. The Slicer module handles node selection, AIM calibration, segmentation export, table display, and map loading; the core package handles the measurements.
 
 ## Inputs
 
@@ -30,7 +30,7 @@ The trabecular parameters are not independent. In particular, `Tb.N` is a local-
 ### Single Scan
 
 1. Generate or load a bone segmentation plus full/trabecular/cortical masks.
-2. Open `Bone Imaging > HR-pQCT > Microarchitecture`.
+2. Open `Bone Imaging > HR-pQCT > Bone Microarchitecture`.
 3. Select the grayscale/BMD volume if BMD should be reported.
 4. Select the segmentation node or labelmaps for the bone, full/periosteal, trabecular, and cortical masks. If using a segmentation node, choose the matching segment in the adjacent `Segment` dropdown when needed.
 5. Run `Run microarchitecture`. The Slicer table opens automatically and available maps are loaded into the scene.

@@ -4,16 +4,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "HRpQCTTools" / "MicroarchitectureHRpQCT" / "MicroarchitectureHRpQCT.py"
+MODULE_PATH = ROOT / "HRpQCTTools" / "BoneMicroarchitecture" / "BoneMicroarchitecture.py"
 
 
 def test_microarchitecture_module_is_registered_with_toolbox_manifest_and_cmake() -> None:
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
 
-    assert "add_subdirectory(HRpQCTTools/MicroarchitectureHRpQCT)" in cmake
-    assert '"path": "HRpQCTTools/MicroarchitectureHRpQCT"' in manifest
-    assert '"title": "Microarchitecture"' in manifest
+    assert "add_subdirectory(HRpQCTTools/BoneMicroarchitecture)" in cmake
+    assert '"path": "HRpQCTTools/BoneMicroarchitecture"' in manifest
+    assert '"title": "Bone Microarchitecture"' in manifest
     assert '"section": "HR-pQCT"' in manifest
 
 
@@ -115,7 +115,7 @@ def test_microarchitecture_loads_maps_for_cortical_thickness_and_masked_bmd() ->
 
 def test_microarchitecture_widget_exposes_minimal_clean_inputs_and_outputs() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
-    widget_setup = source[source.index("    def setup(self):", source.index("class MicroarchitectureHRpQCTWidget")) :]
+    widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
 
     assert "Grayscale/BMD volume" in source
     assert widget_setup.index("Grayscale/BMD volume") < widget_setup.index("Bone segmentation")
@@ -210,7 +210,13 @@ def test_registered_series_mode_uses_timelapsed_discovery_and_derivative_layout(
 
 def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
-    widget_setup = source[source.index("    def setup(self):", source.index("class MicroarchitectureHRpQCTWidget")) :]
+    widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
+
+    assert "class BoneMicroarchitecture(ScriptedLoadableModule):" in source
+    assert "class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):" in source
+    assert "class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):" in source
+    assert "class BoneMicroarchitectureTest(ScriptedLoadableModuleTest):" in source
+    assert 'parent.categories = ["Bone Imaging.HR-pQCT"]' in source
 
     assert "self.modeTabs = qt.QTabWidget()" in widget_setup
     assert 'self.modeTabs.addTab(single_tab, "Single Scan")' in widget_setup

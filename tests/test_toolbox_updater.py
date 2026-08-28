@@ -94,8 +94,10 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
+        "HRpQCTTools/BoneMicroarchitecture/BoneMicroarchitecture.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "IOTools/ScancoIO/ScancoIO.py": 'parent.categories = ["Bone Imaging.I/O"]',
         "CTTools/SpineSegmentationCT/SpineSegmentationCT.py": 'parent.categories = ["Bone Imaging.CT"]',
+        "Setup/BoneImagingToolboxSetup/BoneImagingToolboxSetup.py": 'parent.categories = ["Bone Imaging.Setup"]',
     }
     for relative_path, category_line in expected.items():
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
@@ -108,10 +110,22 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
 
     manifest = json.loads((REPO_ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
     sections = {module["path"]: module["section"] for module in manifest["modules"]}
-    assert sections == {
+    expected_sections = {
         "HRpQCTTools/TimelapsedHRpQCT": "HR-pQCT",
         "HRpQCTTools/MotionScoreHRpQCT": "HR-pQCT",
         "HRpQCTTools/SegmentationHRpQCT": "HR-pQCT",
+        "HRpQCTTools/BoneMicroarchitecture": "HR-pQCT",
         "IOTools/ScancoIO": "I/O",
         "CTTools/SpineSegmentationCT": "CT",
+        "Setup/BoneImagingToolboxSetup": "Setup",
     }
+    for path, section in expected_sections.items():
+        assert sections[path] == section
+
+
+def test_local_link_helper_fallback_includes_all_builtin_modules() -> None:
+    helper = (REPO_ROOT / "scripts" / "link_local_toolbox_modules.py").read_text(encoding="utf-8")
+
+    assert '"CTTools/SpineSegmentationCT"' in helper
+    assert '"Setup/BoneImagingToolboxSetup"' in helper
+    assert '"BoneImagingToolboxSetup"' in helper

@@ -58,10 +58,10 @@ SEGMENT_ROLE_HINTS = {
 }
 
 
-class MicroarchitectureHRpQCT(ScriptedLoadableModule):
+class BoneMicroarchitecture(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "Microarchitecture"
+        parent.title = "Bone Microarchitecture"
         parent.categories = ["Bone Imaging.HR-pQCT"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
@@ -74,7 +74,7 @@ class MicroarchitectureHRpQCT(ScriptedLoadableModule):
         )
 
 
-class MicroarchitectureHRpQCTLogic(ScriptedLoadableModuleLogic):
+class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
     def core_runtime_status(self):
         try:
             version = metadata.version("bone-microarchitecture")
@@ -738,14 +738,14 @@ class MicroarchitectureHRpQCTLogic(ScriptedLoadableModuleLogic):
                 slicer.mrmlScene.RemoveNode(temporary_reference_node)
 
 
-class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
+class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
     def _tip(self, widget, text):
         widget.toolTip = str(text)
         return widget
 
     def setup(self):
         super().setup()
-        self.logic = MicroarchitectureHRpQCTLogic()
+        self.logic = BoneMicroarchitectureLogic()
         self._lastMetrics = None
         self._lastMaps = None
         self._lastTableNode = None
@@ -1313,14 +1313,14 @@ class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._log(f"{row['Parameter']}: {float(row['Mean']):.6g} {row['Units']}")
 
 
-class MicroarchitectureHRpQCTTest(ScriptedLoadableModuleTest):
+class BoneMicroarchitectureTest(ScriptedLoadableModuleTest):
     def runTest(self):
         self.setUp()
-        self.test_MicroarchitectureHRpQCT1()
+        self.test_BoneMicroarchitecture1()
 
-    def test_MicroarchitectureHRpQCT1(self):
-        self.delayDisplay("Microarchitecture HR-pQCT smoke test")
-        logic = MicroarchitectureHRpQCTLogic()
+    def test_BoneMicroarchitecture1(self):
+        self.delayDisplay("Bone Microarchitecture smoke test")
+        logic = BoneMicroarchitectureLogic()
         if not logic.is_core_available():
             self.skipTest("Microarchitecture core is not installed")
         self.assertTrue(logic.is_core_available())

@@ -35,7 +35,7 @@ ctkMacroCompilePythonScript(
 add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
 add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
 add_subdirectory(HRpQCTTools/SegmentationHRpQCT)
-add_subdirectory(HRpQCTTools/MicroarchitectureHRpQCT)
+add_subdirectory(HRpQCTTools/BoneMicroarchitecture)
 add_subdirectory(IOTools/ScancoIO)
 add_subdirectory(CTTools/SpineSegmentationCT)
 add_subdirectory(Setup/BoneImagingToolboxSetup)

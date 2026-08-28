@@ -18,7 +18,7 @@ Bone Imaging
     Timelapsed HR-pQCT
     Motion Scoring
     Segmentation and Contours
-    Microarchitecture
+    Bone Microarchitecture
   CT
     Spine Segmentation
 ```
@@ -31,7 +31,7 @@ Bone Imaging
 | Timelapsed HR-pQCT | `Bone Imaging > HR-pQCT` | Runs longitudinal HR-pQCT processing, registration, remodelling analysis, and review. | [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md) |
 | Motion Scoring | `Bone Imaging > HR-pQCT` | Runs and reviews HR-pQCT motion grading using MotionScore models. | [Motion Scoring](docs/tools/motion-scoring.md) |
 | Segmentation and Contours | `Bone Imaging > HR-pQCT` | Creates HR-pQCT full, trabecular, cortical, binary, and material labelmaps. | [Segmentation and Contours](docs/tools/segmentation-and-contours.md) |
-| Microarchitecture | `Bone Imaging > HR-pQCT` | Computes trabecular microarchitecture, BMD, and compartment measures from masks. | [Microarchitecture](docs/tools/microarchitecture.md) |
+| Bone Microarchitecture | `Bone Imaging > HR-pQCT` | Computes trabecular microarchitecture, BMD, and compartment measures from masks. | [Bone Microarchitecture](docs/tools/microarchitecture.md) |
 | Scanco I/O | `Bone Imaging > I/O` | Imports Scanco AIM, ISQ, SCV, and GOBJ images, and exports AIM images, masks, and metadata. | [Scanco I/O](docs/tools/scanco-io.md) |
 | Spine Segmentation | `Bone Imaging > CT` | Runs PyTorch spine CT segmentation and loads vertebral-level, process/body, and cortical/trabecular outputs. | [Spine Segmentation](docs/tools/spine-segmentation-ct.md) |
 
@@ -51,7 +51,7 @@ Some tools need Slicer-side dependencies in addition to this toolbox:
 - **Motion Scoring** requires the `PyTorch` extension from Slicer's Extension Manager. Install `PyTorch`, restart Slicer, then run Motion Scoring.
 - **Spine Segmentation** can run in Slicer Python with the `PyTorch` extension, or in an external arm64 conda runtime for Apple Silicon MPS acceleration. The module includes buttons to install/update either runtime and probes MPS `Conv3D` support before using the conda path.
 - **Timelapsed HR-pQCT** installs/updates the `timelapsed-hrpqct` Python runtime from inside the module.
-- **Microarchitecture** uses the lightweight `bone-microarchitecture` Python core for trabecular BV/TV, thickness, separation, cortical thickness, BMD, compartment volumes, Tb.N, and cortical porosity.
+- **Bone Microarchitecture** uses the lightweight `bone-microarchitecture` Python core for trabecular BV/TV, thickness, separation, cortical thickness, BMD, compartment volumes, Tb.N, and cortical porosity.
 - **Scanco I/O** installs/updates the lightweight `aimio-py` / `py_aimio` Scanco image reader-writer stack from inside the module.
 
 Open `Bone Imaging > Setup > Toolbox Setup` to see installed and latest PyPI versions for the main runtime packages. Update buttons appear next to missing or out-of-date packages. Package changes are only made after confirmation.
@@ -101,7 +101,7 @@ Instead of using the helper script, add the module folders in `Edit -> Applicati
 - `<repo>/HRpQCTTools/TimelapsedHRpQCT`
 - `<repo>/HRpQCTTools/MotionScoreHRpQCT`
 - `<repo>/HRpQCTTools/SegmentationHRpQCT`
-- `<repo>/HRpQCTTools/MicroarchitectureHRpQCT`
+- `<repo>/HRpQCTTools/BoneMicroarchitecture`
 - `<repo>/IOTools/ScancoIO`
 - `<repo>/CTTools/SpineSegmentationCT`
 - `<repo>/Setup/BoneImagingToolboxSetup`
@@ -113,7 +113,7 @@ Do not add only the top-level repository folder. Slicer needs each module folder
 - [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md): longitudinal HR-pQCT analysis, input naming, results layout, remodelling review, and citations.
 - [Motion Scoring](docs/tools/motion-scoring.md): PyTorch setup, model bundle setup, prediction/review workflow, and motion-grading citation.
 - [Segmentation and Contours](docs/tools/segmentation-and-contours.md): segmentation presets, Laplace-Hamming notes, mask utilities, and attribution.
-- [Microarchitecture](docs/tools/microarchitecture.md): trabecular BV/TV, Tb.Th, Tb.Sp, cortical thickness, BMD, and compartment measures from Slicer masks.
+- [Bone Microarchitecture](docs/tools/microarchitecture.md): trabecular BV/TV, Tb.Th, Tb.Sp, cortical thickness, BMD, and compartment measures from Slicer masks.
 - [Scanco I/O](docs/tools/scanco-io.md): AIM/ISQ/SCV/GOBJ import, AIM export, metadata handling, and attribution.
 - [Spine Segmentation](docs/tools/spine-segmentation-ct.md): CT input, PyTorch setup, `spine-segment` outputs, and attribution.
 
@@ -140,7 +140,7 @@ HRpQCTTools/
   TimelapsedHRpQCT/
   MotionScoreHRpQCT/
   SegmentationHRpQCT/
-  MicroarchitectureHRpQCT/
+  BoneMicroarchitecture/
 IOTools/
   ScancoIO/
 CTTools/

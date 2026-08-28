@@ -28,6 +28,16 @@ def test_setup_module_is_registered_with_extension_packaging() -> None:
     assert '"section": "Setup"' in manifest
 
 
+def test_bone_microarchitecture_module_is_registered_with_extension_packaging() -> None:
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
+
+    assert "add_subdirectory(HRpQCTTools/BoneMicroarchitecture)" in cmake
+    assert '"path": "HRpQCTTools/BoneMicroarchitecture"' in manifest
+    assert '"title": "Bone Microarchitecture"' in manifest
+    assert '"section": "HR-pQCT"' in manifest
+
+
 def test_python_unittest_scripts_define_matching_test_classes() -> None:
     for cmake_path in [*ROOT.glob("*Tools/*/CMakeLists.txt"), *ROOT.glob("Setup/*/CMakeLists.txt")]:
         cmake = cmake_path.read_text(encoding="utf-8")

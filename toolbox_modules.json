@@ -21,8 +21,8 @@
       "source": "built-in"
     },
     {
-      "path": "HRpQCTTools/MicroarchitectureHRpQCT",
-      "title": "Microarchitecture",
+      "path": "HRpQCTTools/BoneMicroarchitecture",
+      "title": "Bone Microarchitecture",
       "section": "HR-pQCT",
       "source": "built-in"
     },

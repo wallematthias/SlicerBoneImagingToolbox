@@ -1,4 +1,4 @@
-set(MODULE_NAME MicroarchitectureHRpQCT)
+set(MODULE_NAME BoneMicroarchitecture)
 
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
