@@ -46,7 +46,6 @@ The `Registered Series` tab is for longitudinal datasets where registration is u
 4. Use the `Subject` and `Site` dropdowns to show all discovered sessions or a selected subset.
 5. Review the session table.
 6. Choose the missing-mask methods if any sessions need masks generated. Preparation derives missing compartment masks when two of full, trabecular, and cortical are available; otherwise it uses the selected segmentation and contour methods.
-7. Run `Prepare registered workspace` to write the `RegisteredMicroarchitecture` folder structure, manifest, and any generated masks.
-8. Run `Run series measurements` to compute complete sessions with native image, bone segmentation, full, trabecular, and cortical mask files. Per-session results are written under `native_space/ses-*/microarchitecture`, and the combined table is written as `microarchitecture_long.csv`.
+7. Run `Run` to write the `RegisteredMicroarchitecture` folder structure, generate or derive missing masks where possible, and compute all complete sessions. Per-session results are written under `native_space/ses-*/microarchitecture`, and the combined table is written as `microarchitecture_long.csv`.
 
 If the core package is not available, install it from `Bone Imaging > Setup > Toolbox Setup` or the module's `Install / update microarchitecture core` button.

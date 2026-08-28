@@ -1200,6 +1200,11 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         browse_output.clicked.connect(self._browse_series_output_root)
         output_layout.addWidget(browse_output)
         form.addRow("Output root", output_row)
+
+        self.discoverSeriesButton = qt.QPushButton("Discover series")
+        self.discoverSeriesButton.clicked.connect(self._discover_registered_series)
+        form.addRow(self.discoverSeriesButton)
+
         self.seriesSubjectCombo.currentIndexChanged.connect(self._refresh_registered_series_table)
         self.seriesSiteCombo.currentIndexChanged.connect(self._refresh_registered_series_table)
         form.addRow("Subject", self.seriesSubjectCombo)
@@ -1245,19 +1250,13 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         settings_layout.addWidget(self.seriesThicknessBackendCombo)
         form.addRow("Thickness", settings_row)
 
-        buttons = qt.QWidget()
-        button_layout = qt.QHBoxLayout(buttons)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        self.discoverSeriesButton = qt.QPushButton("Discover series")
-        self.prepareRegisteredSeriesButton = qt.QPushButton("Prepare registered workspace")
-        self.runRegisteredSeriesButton = qt.QPushButton("Run series measurements")
-        self.discoverSeriesButton.clicked.connect(self._discover_registered_series)
-        self.prepareRegisteredSeriesButton.clicked.connect(self._prepare_registered_series)
+        self.runRegisteredSeriesButton = qt.QPushButton("Run")
         self.runRegisteredSeriesButton.clicked.connect(self._run_registered_series)
-        button_layout.addWidget(self.discoverSeriesButton)
-        button_layout.addWidget(self.prepareRegisteredSeriesButton)
-        button_layout.addWidget(self.runRegisteredSeriesButton)
-        form.addRow(buttons)
+        self._tip(
+            self.runRegisteredSeriesButton,
+            "Prepare the registered workspace, derive or generate missing masks when possible, then run measurements.",
+        )
+        form.addRow(self.runRegisteredSeriesButton)
 
         self.seriesStatusLabel = qt.QLabel()
         self.seriesStatusLabel.wordWrap = True
@@ -1497,7 +1496,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         if not self._lastRegisteredRows:
             self._discover_registered_series()
         if not self._lastRegisteredRows:
-            return
+            return None
         try:
             prepared = self._with_wait_cursor(
                 lambda: self.logic.prepare_registered_series_workspace(
@@ -1512,7 +1511,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             slicer.util.errorDisplay(f"RegisteredMicroarchitecture workspace preparation failed:\n{exc}")
             self._series_log(f"[registered] workspace preparation failed: {exc}")
-            return
+            return None
         self._allRegisteredRows = list(prepared["rows"])
         self._populate_registered_series_filters(self._allRegisteredRows)
         self._refresh_registered_series_table()
@@ -1524,11 +1523,15 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._series_log(f"[registered] wrote manifest: {prepared['manifest']}")
         for item in prepared.get("generated", []):
             self._series_log(f"[registered] {item['source']} {item['role']}: {item['path']}")
+        return prepared
 
     def _run_registered_series(self):
         if not self._lastRegisteredRows:
             self._discover_registered_series()
         if not self._lastRegisteredRows:
+            return
+        prepared = self._prepare_registered_series()
+        if prepared is None or not self._lastRegisteredRows:
             return
         try:
             outputs = self._with_wait_cursor(

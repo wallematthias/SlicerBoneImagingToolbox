@@ -236,8 +236,14 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert '"Subject filter"' not in widget_setup
     assert '"Site filter"' not in widget_setup
     assert "self.discoverSeriesButton" in widget_setup
-    assert "self.prepareRegisteredSeriesButton" in widget_setup
     assert "self.runRegisteredSeriesButton" in widget_setup
+    assert "self.prepareRegisteredSeriesButton" not in widget_setup
+    assert widget_setup.index("self.discoverSeriesButton") < widget_setup.index("form.addRow(\"Subject\"")
+    assert widget_setup.index("form.addRow(\"Subject\"") < widget_setup.index("form.addRow(\"Missing masks\"")
+    assert 'qt.QPushButton("Run")' in widget_setup
+    assert '"Run series measurements"' not in widget_setup
+    assert "self._prepare_registered_series()" in source
+    assert "if not self._lastRegisteredRows:" in source[source.index("    def _run_registered_series(self):") :]
     assert "self.seriesTable.setHorizontalHeaderLabels" in widget_setup
     assert '"Subject", "Site", "Session", "Image", "Bone seg", "Full", "Trab", "Cort", "Status"' in widget_setup
     assert "_discover_registered_series" in source
