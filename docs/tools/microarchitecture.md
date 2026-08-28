@@ -42,9 +42,10 @@ The `Registered Series` tab is for longitudinal datasets where registration is u
 
 1. Select the dataset root.
 2. Use the default output root or choose a folder. The default is `derivatives/RegisteredMicroarchitecture` under the dataset root.
-3. Optionally filter by subject or site.
-4. Run `Discover series` and review the session table.
-5. Run `Prepare registered workspace` to write the `RegisteredMicroarchitecture` folder structure and manifest, including sequential adjacent registration pairs.
-6. Run `Run series measurements` to compute complete sessions that already have native image, bone segmentation, full, trabecular, and cortical mask files. Per-session results are written under `native_space/ses-*/microarchitecture`, and the combined table is written as `microarchitecture_long.csv`.
+3. Run `Discover series`.
+4. Use the `Subject` and `Site` dropdowns to show all discovered sessions or a selected subset.
+5. Review the session table.
+6. Run `Prepare registered workspace` to write the `RegisteredMicroarchitecture` folder structure and manifest, including sequential adjacent registration pairs.
+7. Run `Run series measurements` to compute complete sessions that already have native image, bone segmentation, full, trabecular, and cortical mask files. Per-session results are written under `native_space/ses-*/microarchitecture`, and the combined table is written as `microarchitecture_long.csv`.
 
 If the core package is not available, install it from `Bone Imaging > Setup > Toolbox Setup` or the module's `Install / update microarchitecture core` button.

@@ -224,11 +224,22 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert "RegisteredMicroarchitecture" in widget_setup
     assert "self.seriesDatasetRootEdit" in widget_setup
     assert "self.seriesOutputRootEdit" in widget_setup
+    assert "self.seriesSubjectCombo" in widget_setup
+    assert "self.seriesSiteCombo" in widget_setup
+    assert "All subjects" in widget_setup
+    assert "All sites" in widget_setup
+    assert "self.seriesSubjectFilterEdit" not in widget_setup
+    assert "self.seriesSiteFilterEdit" not in widget_setup
+    assert '"Subject filter"' not in widget_setup
+    assert '"Site filter"' not in widget_setup
     assert "self.discoverSeriesButton" in widget_setup
     assert "self.prepareRegisteredSeriesButton" in widget_setup
     assert "self.runRegisteredSeriesButton" in widget_setup
     assert "self.seriesTable.setHorizontalHeaderLabels" in widget_setup
     assert '"Subject", "Site", "Session", "Image", "Bone seg", "Full", "Trab", "Cort", "Status"' in widget_setup
     assert "_discover_registered_series" in source
+    assert "_populate_registered_series_filters" in source
+    assert "_filtered_registered_rows" in source
+    assert "_refresh_registered_series_table" in source
     assert "_prepare_registered_series" in source
     assert "_run_registered_series" in source

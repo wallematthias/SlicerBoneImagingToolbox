@@ -750,6 +750,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._lastMaps = None
         self._lastTableNode = None
         self._lastRegisteredRows = []
+        self._allRegisteredRows = []
 
         self.modeTabs = qt.QTabWidget()
         self.layout.addWidget(self.modeTabs)
@@ -918,8 +919,10 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
 
         self.seriesDatasetRootEdit = qt.QLineEdit()
         self.seriesOutputRootEdit = qt.QLineEdit()
-        self.seriesSubjectFilterEdit = qt.QLineEdit()
-        self.seriesSiteFilterEdit = qt.QLineEdit()
+        self.seriesSubjectCombo = qt.QComboBox()
+        self.seriesSiteCombo = qt.QComboBox()
+        self.seriesSubjectCombo.addItem("All subjects", "")
+        self.seriesSiteCombo.addItem("All sites", "")
         self._tip(
             self.seriesDatasetRootEdit,
             "Dataset root discovered with Timelapsed HR-pQCT filename and header conventions.",
@@ -947,8 +950,10 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         browse_output.clicked.connect(self._browse_series_output_root)
         output_layout.addWidget(browse_output)
         form.addRow("Output root", output_row)
-        form.addRow("Subject filter", self.seriesSubjectFilterEdit)
-        form.addRow("Site filter", self.seriesSiteFilterEdit)
+        self.seriesSubjectCombo.currentIndexChanged.connect(self._refresh_registered_series_table)
+        self.seriesSiteCombo.currentIndexChanged.connect(self._refresh_registered_series_table)
+        form.addRow("Subject", self.seriesSubjectCombo)
+        form.addRow("Site", self.seriesSiteCombo)
 
         settings_row = qt.QWidget()
         settings_layout = qt.QHBoxLayout(settings_row)
@@ -1131,21 +1136,65 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             return
         try:
             rows = self._with_wait_cursor(
-                lambda: self.logic.discover_registered_series(
-                    dataset_root,
-                    subject_filter=self.seriesSubjectFilterEdit.text,
-                    site_filter=self.seriesSiteFilterEdit.text,
-                )
+                lambda: self.logic.discover_registered_series(dataset_root)
             )
         except Exception as exc:
             slicer.util.errorDisplay(f"Registered series discovery failed:\n{exc}")
             self._series_log(f"[registered] discovery failed: {exc}")
             return
-        self._lastRegisteredRows = list(rows)
-        self._populate_registered_series_table(rows)
+        self._allRegisteredRows = list(rows)
+        self._populate_registered_series_filters(rows)
+        self._refresh_registered_series_table()
+        rows = self._lastRegisteredRows
         ready = sum(1 for row in rows if row.get("status") == "Ready")
-        self.seriesStatusLabel.text = f"Discovered {len(rows)} session(s); {ready} ready for measurement."
-        self._series_log(f"[registered] discovered {len(rows)} session(s), {ready} ready.")
+        self.seriesStatusLabel.text = (
+            f"Discovered {len(self._allRegisteredRows)} session(s); showing {len(rows)}, {ready} ready."
+        )
+        self._series_log(
+            f"[registered] discovered {len(self._allRegisteredRows)} session(s), showing {len(rows)}, {ready} ready."
+        )
+
+    def _populate_registered_series_filters(self, rows):
+        current_subject = str(self.seriesSubjectCombo.currentData or "")
+        current_site = str(self.seriesSiteCombo.currentData or "")
+        self.seriesSubjectCombo.blockSignals(True)
+        self.seriesSiteCombo.blockSignals(True)
+        self.seriesSubjectCombo.clear()
+        self.seriesSiteCombo.clear()
+        self.seriesSubjectCombo.addItem("All subjects", "")
+        self.seriesSiteCombo.addItem("All sites", "")
+        for subject_id in sorted({str(row.get("subject_id") or "") for row in rows if row.get("subject_id")}):
+            self.seriesSubjectCombo.addItem(f"sub-{subject_id}", subject_id)
+        for site in sorted({str(row.get("site") or "") for row in rows if row.get("site")}):
+            self.seriesSiteCombo.addItem(site, site)
+        subject_index = self.seriesSubjectCombo.findData(current_subject)
+        site_index = self.seriesSiteCombo.findData(current_site)
+        self.seriesSubjectCombo.setCurrentIndex(subject_index if subject_index >= 0 else 0)
+        self.seriesSiteCombo.setCurrentIndex(site_index if site_index >= 0 else 0)
+        self.seriesSubjectCombo.blockSignals(False)
+        self.seriesSiteCombo.blockSignals(False)
+
+    def _filtered_registered_rows(self):
+        subject = str(self.seriesSubjectCombo.currentData or "")
+        site = str(self.seriesSiteCombo.currentData or "")
+        rows = []
+        for row in self._allRegisteredRows:
+            if subject and str(row.get("subject_id") or "") != subject:
+                continue
+            if site and str(row.get("site") or "") != site:
+                continue
+            rows.append(row)
+        return rows
+
+    def _refresh_registered_series_table(self):
+        self._lastRegisteredRows = self._filtered_registered_rows()
+        self._populate_registered_series_table(self._lastRegisteredRows)
+        if self._allRegisteredRows:
+            ready = sum(1 for row in self._lastRegisteredRows if row.get("status") == "Ready")
+            self.seriesStatusLabel.text = (
+                f"Showing {len(self._lastRegisteredRows)} of {len(self._allRegisteredRows)} discovered session(s); "
+                f"{ready} ready."
+            )
 
     def _populate_registered_series_table(self, rows):
         self.seriesTable.setRowCount(len(rows))
