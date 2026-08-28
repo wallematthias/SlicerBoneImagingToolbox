@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import importlib
+import json
 from importlib import metadata
 from pathlib import Path
 import sys
@@ -20,6 +22,9 @@ MICROARCHITECTURE_LOCAL_REPO = TOOLBOX_ROOT.parent / "bone-microarchitecture"
 MICROARCHITECTURE_LOCAL_SRC = MICROARCHITECTURE_LOCAL_REPO / "src"
 if MICROARCHITECTURE_LOCAL_SRC.exists() and str(MICROARCHITECTURE_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(MICROARCHITECTURE_LOCAL_SRC))
+TIMELAPSED_LOCAL_SRC = TOOLBOX_ROOT.parent / "TimelapsedHRpQCT" / "src"
+if TIMELAPSED_LOCAL_SRC.exists() and str(TIMELAPSED_LOCAL_SRC) not in sys.path:
+    sys.path.insert(0, str(TIMELAPSED_LOCAL_SRC))
 SCANCO_IO_DIR = TOOLBOX_ROOT / "IOTools" / "ScancoIO"
 if str(SCANCO_IO_DIR) not in sys.path:
     sys.path.insert(0, str(SCANCO_IO_DIR))
@@ -36,6 +41,7 @@ from slicer.ScriptedLoadableModule import (  # noqa: E402
 
 
 MODULE_VERSION = "0.1.0"
+REGISTERED_MICROARCHITECTURE_DIR_NAME = "RegisteredMicroarchitecture"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
 SEGMENT_NAME_HINTS = {
@@ -106,6 +112,217 @@ class MicroarchitectureHRpQCTLogic(ScriptedLoadableModuleLogic):
         for name in list(sys.modules):
             if name == "bone_microarchitecture" or name.startswith("bone_microarchitecture."):
                 sys.modules.pop(name, None)
+
+    def timelapsed_runtime_status(self):
+        try:
+            importlib.import_module("timelapsedhrpqct.dataset.discovery")
+            importlib.import_module("timelapsedhrpqct.config.models")
+        except Exception as exc:
+            return False, f"Timelapsed HR-pQCT discovery is not available: {exc}"
+        return True, "Timelapsed HR-pQCT discovery is available."
+
+    def registered_microarchitecture_root(self, dataset_root, output_root=""):
+        output_text = str(output_root or "").strip()
+        if output_text:
+            return Path(output_text).expanduser()
+        dataset_root = Path(str(dataset_root)).expanduser()
+        return dataset_root / "derivatives" / REGISTERED_MICROARCHITECTURE_DIR_NAME
+
+    def registered_subject_site_dir(self, output_root, subject_id, site):
+        return Path(output_root) / f"sub-{subject_id}" / f"site-{site or 'unknown'}"
+
+    def registered_session_output_dir(self, output_root, row):
+        return (
+            self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
+            / "native_space"
+            / f"ses-{row['session_id']}"
+            / "microarchitecture"
+        )
+
+    def discover_registered_series(self, dataset_root, *, subject_filter="", site_filter=""):
+        from timelapsedhrpqct.config.models import DiscoveryConfig
+        from timelapsedhrpqct.dataset.discovery import discover_raw_sessions
+
+        from timelapsedhrpqct.utils.session_ids import session_sort_key
+
+        sessions = discover_raw_sessions(
+            Path(str(dataset_root)).expanduser(),
+            DiscoveryConfig(),
+            canonicalize_sessions=True,
+        )
+        subject_filter = str(subject_filter or "").strip()
+        site_filter = str(site_filter or "").strip().lower()
+        rows = []
+        for session in sorted(
+            sessions,
+            key=lambda item: (item.subject_id, item.site or "", session_sort_key(item.session_id)),
+        ):
+            if subject_filter and session.subject_id != subject_filter:
+                continue
+            if site_filter and str(session.site or "").lower() != site_filter:
+                continue
+            masks = dict(session.raw_mask_paths or {})
+            row = {
+                "subject_id": str(session.subject_id),
+                "site": str(session.site or ""),
+                "session_id": str(session.session_id),
+                "image_path": str(session.raw_image_path),
+                "seg_path": str(session.raw_seg_path or ""),
+                "full_path": str(masks.get("full") or ""),
+                "trab_path": str(masks.get("trab") or ""),
+                "cort_path": str(masks.get("cort") or ""),
+                "stack_index": int(session.stack_index or 1),
+            }
+            missing = [
+                label
+                for label, value in (
+                    ("image", row["image_path"]),
+                    ("bone seg", row["seg_path"]),
+                    ("full", row["full_path"]),
+                    ("trab", row["trab_path"]),
+                    ("cort", row["cort_path"]),
+                )
+                if not value
+            ]
+            row["status"] = "Ready" if not missing else f"Missing {', '.join(missing)}"
+            rows.append(row)
+        return rows
+
+    def sequential_registration_pairs(self, rows):
+        try:
+            from timelapsedhrpqct.utils.session_ids import session_sort_key
+        except Exception:
+            session_sort_key = lambda value: str(value)
+
+        groups = {}
+        for row in rows:
+            groups.setdefault((row["subject_id"], row["site"], row.get("stack_index", 1)), []).append(row)
+        pairs = []
+        for (subject_id, site, stack_index), group_rows in sorted(groups.items()):
+            ordered = sorted(group_rows, key=lambda row: session_sort_key(row["session_id"]))
+            for fixed, moving in zip(ordered, ordered[1:]):
+                pairs.append(
+                    {
+                        "subject_id": subject_id,
+                        "site": site,
+                        "stack_index": stack_index,
+                        "fixed_session": fixed["session_id"],
+                        "moving_session": moving["session_id"],
+                    }
+                )
+        return pairs
+
+    def write_registered_series_manifest(self, dataset_root, output_root, rows):
+        root = self.registered_microarchitecture_root(dataset_root, output_root)
+        root.mkdir(parents=True, exist_ok=True)
+        for row in rows:
+            subject_site_dir = self.registered_subject_site_dir(root, row["subject_id"], row["site"])
+            for relative_dir in (
+                "registration/adjacent",
+                "registration/composed",
+                "common_space/masks_from_each_session",
+                "common_space/common_masks",
+                f"native_space/ses-{row['session_id']}/masks",
+                f"native_space/ses-{row['session_id']}/microarchitecture/maps",
+            ):
+                (subject_site_dir / relative_dir).mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "workflow": REGISTERED_MICROARCHITECTURE_DIR_NAME,
+            "dataset_root": str(Path(str(dataset_root)).expanduser()),
+            "output_root": str(root),
+            "registration_strategy": "sequential_adjacent_then_composed",
+            "measurement_space": "native_image_space",
+            "sessions": rows,
+            "sequential_registration_pairs": self.sequential_registration_pairs(rows),
+        }
+        manifest_path = root / "registered_microarchitecture_manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return manifest_path
+
+    def _read_registered_series_image(self, path, *, role):
+        path = Path(str(path)).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"{role} file does not exist: {path}")
+        if ".aim" in path.name.lower():
+            from ScancoIOLib import aim_io
+
+            scaling = "density" if role == "image" else "native"
+            image, _metadata = aim_io.read_image(path, scaling=scaling)
+            if role != "image":
+                image = sitk.Cast(image > 0, sitk.sitkUInt8)
+            return image
+        pixel_type = sitk.sitkFloat32 if role == "image" else sitk.sitkUInt8
+        image = sitk.ReadImage(str(path), pixel_type)
+        if role != "image":
+            image = sitk.Cast(image > 0, sitk.sitkUInt8)
+        return image
+
+    def run_registered_series_microarchitecture(
+        self,
+        dataset_root,
+        output_root,
+        rows,
+        *,
+        thickness_method="hildebrand",
+        thickness_backend="auto",
+    ):
+        from bone_microarchitecture import compute_microarchitecture
+        from bone_microarchitecture.results import SUMMARY_COLUMNS, measurement_rows, write_measurement_csv
+
+        root = self.registered_microarchitecture_root(dataset_root, output_root)
+        self.write_registered_series_manifest(dataset_root, root, rows)
+        long_rows = []
+        written = []
+        for row in rows:
+            if row.get("status") != "Ready":
+                continue
+            image = self._read_registered_series_image(row["image_path"], role="image")
+            bone_seg = self._read_registered_series_image(row["seg_path"], role="bone seg")
+            full_mask = self._read_registered_series_image(row["full_path"], role="full")
+            trab_mask = self._read_registered_series_image(row["trab_path"], role="trab")
+            cort_mask = self._read_registered_series_image(row["cort_path"], role="cort")
+            sizes = {item.GetSize() for item in (image, bone_seg, full_mask, trab_mask, cort_mask)}
+            if len(sizes) != 1:
+                raise ValueError(
+                    f"Registered series inputs for sub-{row['subject_id']} ses-{row['session_id']} "
+                    "must have matching sizes."
+                )
+
+            result = compute_microarchitecture(
+                bone_mask=sitk.GetArrayFromImage(bone_seg),
+                periosteal_mask=sitk.GetArrayFromImage(full_mask),
+                trabecular_mask=sitk.GetArrayFromImage(trab_mask),
+                cortical_mask=sitk.GetArrayFromImage(cort_mask),
+                grayscale=sitk.GetArrayFromImage(image),
+                spacing=tuple(reversed(tuple(trab_mask.GetSpacing()))),
+                thickness_method=str(thickness_method),
+                thickness_backend=str(thickness_backend),
+            )
+            session_dir = self.registered_session_output_dir(root, row)
+            maps_dir = session_dir / "maps"
+            maps_dir.mkdir(parents=True, exist_ok=True)
+            csv_path = session_dir / "measurements.csv"
+            write_measurement_csv(csv_path, result.measurements, result.maps)
+            for map_role, array in result.maps.items():
+                map_image = self._array_to_sitk_like(array, trab_mask)
+                sitk.WriteImage(map_image, str(maps_dir / f"{map_role.replace('.', '')}.nii.gz"))
+            for summary_row in measurement_rows(result.measurements, result.maps):
+                long_row = {
+                    "Subject": row["subject_id"],
+                    "Site": row["site"],
+                    "Session": row["session_id"],
+                }
+                long_row.update(summary_row)
+                long_rows.append(long_row)
+            written.append(str(csv_path))
+
+        long_path = root / "microarchitecture_long.csv"
+        with long_path.open("w", newline="", encoding="utf-8") as stream:
+            fieldnames = ["Subject", "Site", "Session", *SUMMARY_COLUMNS]
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(long_rows)
+        return {"manifest": str(root / "registered_microarchitecture_manifest.json"), "long_csv": str(long_path), "session_csvs": written}
 
     def _volume_to_sitk_uint8(self, volume_node, role, selected_segment_id=None, reference_node=None):
         return self._volume_to_sitk(
@@ -532,10 +749,17 @@ class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._lastMetrics = None
         self._lastMaps = None
         self._lastTableNode = None
+        self._lastRegisteredRows = []
+
+        self.modeTabs = qt.QTabWidget()
+        self.layout.addWidget(self.modeTabs)
+
+        single_tab = qt.QWidget()
+        single_layout = qt.QVBoxLayout(single_tab)
 
         box = ctk.ctkCollapsibleButton()
         box.text = "Bone Microarchitecture"
-        self.layout.addWidget(box)
+        single_layout.addWidget(box)
         form = qt.QFormLayout(box)
 
         self.statusLabel = qt.QLabel()
@@ -603,7 +827,7 @@ class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
         calibration = ctk.ctkCollapsibleButton()
         calibration.text = "BMD Calibration"
         calibration.collapsed = True
-        self.layout.addWidget(calibration)
+        single_layout.addWidget(calibration)
         calibration_form = qt.QFormLayout(calibration)
 
         self.muScalingSpin = self._double_spin(1, 100000, 1, 8192)
@@ -622,7 +846,7 @@ class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
         thickness_settings = ctk.ctkCollapsibleButton()
         thickness_settings.text = "Thickness Settings"
         thickness_settings.collapsed = True
-        self.layout.addWidget(thickness_settings)
+        single_layout.addWidget(thickness_settings)
         thickness_form = qt.QFormLayout(thickness_settings)
 
         self.thicknessMethodCombo = qt.QComboBox()
@@ -674,9 +898,106 @@ class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText.readOnly = True
         self.logText.minimumHeight = 120
         self.logText.placeholderText = "Microarchitecture log"
-        self.layout.addWidget(self.logText)
+        single_layout.addWidget(self.logText)
+        single_layout.addStretch(1)
+
+        series_tab = qt.QWidget()
+        series_layout = qt.QVBoxLayout(series_tab)
+        self._setup_registered_series_tab(series_layout)
+
+        self.modeTabs.addTab(single_tab, "Single Scan")
+        self.modeTabs.addTab(series_tab, "Registered Series")
         self.layout.addStretch(1)
         self._update_dependency_ui()
+
+    def _setup_registered_series_tab(self, layout):
+        box = ctk.ctkCollapsibleButton()
+        box.text = "RegisteredMicroarchitecture"
+        layout.addWidget(box)
+        form = qt.QFormLayout(box)
+
+        self.seriesDatasetRootEdit = qt.QLineEdit()
+        self.seriesOutputRootEdit = qt.QLineEdit()
+        self.seriesSubjectFilterEdit = qt.QLineEdit()
+        self.seriesSiteFilterEdit = qt.QLineEdit()
+        self._tip(
+            self.seriesDatasetRootEdit,
+            "Dataset root discovered with Timelapsed HR-pQCT filename and header conventions.",
+        )
+        self._tip(
+            self.seriesOutputRootEdit,
+            "Output folder. Defaults to derivatives/RegisteredMicroarchitecture under the dataset root.",
+        )
+        self.seriesDatasetRootEdit.textChanged.connect(self._update_registered_output_default)
+
+        dataset_row = qt.QWidget()
+        dataset_layout = qt.QHBoxLayout(dataset_row)
+        dataset_layout.setContentsMargins(0, 0, 0, 0)
+        dataset_layout.addWidget(self.seriesDatasetRootEdit, 1)
+        browse_dataset = qt.QPushButton("Browse")
+        browse_dataset.clicked.connect(self._browse_series_dataset_root)
+        dataset_layout.addWidget(browse_dataset)
+        form.addRow("Dataset root", dataset_row)
+
+        output_row = qt.QWidget()
+        output_layout = qt.QHBoxLayout(output_row)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+        output_layout.addWidget(self.seriesOutputRootEdit, 1)
+        browse_output = qt.QPushButton("Browse")
+        browse_output.clicked.connect(self._browse_series_output_root)
+        output_layout.addWidget(browse_output)
+        form.addRow("Output root", output_row)
+        form.addRow("Subject filter", self.seriesSubjectFilterEdit)
+        form.addRow("Site filter", self.seriesSiteFilterEdit)
+
+        settings_row = qt.QWidget()
+        settings_layout = qt.QHBoxLayout(settings_row)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        self.seriesThicknessMethodCombo = qt.QComboBox()
+        for label, value in [("Exact sphere fitting", "hildebrand"), ("Bounded EDT", "edt")]:
+            self.seriesThicknessMethodCombo.addItem(label, value)
+        self.seriesThicknessBackendCombo = qt.QComboBox()
+        for label, value in [("Auto", "auto"), ("CPU", "cpu"), ("Apple MPS (macOS)", "mps"), ("OpenCL GPU", "opencl")]:
+            self.seriesThicknessBackendCombo.addItem(label, value)
+        settings_layout.addWidget(qt.QLabel("Method"))
+        settings_layout.addWidget(self.seriesThicknessMethodCombo)
+        settings_layout.addWidget(qt.QLabel("Backend"))
+        settings_layout.addWidget(self.seriesThicknessBackendCombo)
+        form.addRow("Thickness", settings_row)
+
+        buttons = qt.QWidget()
+        button_layout = qt.QHBoxLayout(buttons)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        self.discoverSeriesButton = qt.QPushButton("Discover series")
+        self.prepareRegisteredSeriesButton = qt.QPushButton("Prepare registered workspace")
+        self.runRegisteredSeriesButton = qt.QPushButton("Run series measurements")
+        self.discoverSeriesButton.clicked.connect(self._discover_registered_series)
+        self.prepareRegisteredSeriesButton.clicked.connect(self._prepare_registered_series)
+        self.runRegisteredSeriesButton.clicked.connect(self._run_registered_series)
+        button_layout.addWidget(self.discoverSeriesButton)
+        button_layout.addWidget(self.prepareRegisteredSeriesButton)
+        button_layout.addWidget(self.runRegisteredSeriesButton)
+        form.addRow(buttons)
+
+        self.seriesStatusLabel = qt.QLabel()
+        self.seriesStatusLabel.wordWrap = True
+        form.addRow("Status", self.seriesStatusLabel)
+
+        self.seriesTable = qt.QTableWidget()
+        self.seriesTable.setColumnCount(9)
+        self.seriesTable.setHorizontalHeaderLabels(
+            ["Subject", "Site", "Session", "Image", "Bone seg", "Full", "Trab", "Cort", "Status"]
+        )
+        self.seriesTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        self.seriesTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
+        self.seriesTable.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.seriesTable)
+        self.seriesLogText = qt.QTextEdit()
+        self.seriesLogText.readOnly = True
+        self.seriesLogText.minimumHeight = 120
+        self.seriesLogText.placeholderText = "Registered series log"
+        layout.addWidget(self.seriesLogText)
+        layout.addStretch(1)
 
     def _labelmap_selector(self):
         selector = slicer.qMRMLNodeComboBox()
@@ -756,6 +1077,10 @@ class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText.append(str(message).rstrip())
         self.logText.ensureCursorVisible()
 
+    def _series_log(self, message):
+        self.seriesLogText.append(str(message).rstrip())
+        self.seriesLogText.ensureCursorVisible()
+
     def _with_wait_cursor(self, func):
         try:
             slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
@@ -770,6 +1095,124 @@ class MicroarchitectureHRpQCTWidget(ScriptedLoadableModuleWidget):
         available, message = self.logic.core_runtime_status()
         self.statusLabel.text = message
         self.runButton.enabled = available
+        self.runRegisteredSeriesButton.enabled = available
+
+    def _browse_series_dataset_root(self):
+        path = qt.QFileDialog.getExistingDirectory(
+            slicer.util.mainWindow(),
+            "Select dataset root",
+            self.seriesDatasetRootEdit.text,
+        )
+        if path:
+            self.seriesDatasetRootEdit.text = str(path)
+
+    def _browse_series_output_root(self):
+        path = qt.QFileDialog.getExistingDirectory(
+            slicer.util.mainWindow(),
+            "Select RegisteredMicroarchitecture output root",
+            self.seriesOutputRootEdit.text,
+        )
+        if path:
+            self.seriesOutputRootEdit.text = str(path)
+
+    def _update_registered_output_default(self):
+        dataset_root = str(self.seriesDatasetRootEdit.text or "").strip()
+        if not dataset_root:
+            return
+        current_output = str(self.seriesOutputRootEdit.text or "").strip()
+        if current_output:
+            return
+        self.seriesOutputRootEdit.text = str(self.logic.registered_microarchitecture_root(dataset_root))
+
+    def _discover_registered_series(self):
+        dataset_root = str(self.seriesDatasetRootEdit.text or "").strip()
+        if not dataset_root:
+            slicer.util.errorDisplay("Select a dataset root before discovery.")
+            return
+        try:
+            rows = self._with_wait_cursor(
+                lambda: self.logic.discover_registered_series(
+                    dataset_root,
+                    subject_filter=self.seriesSubjectFilterEdit.text,
+                    site_filter=self.seriesSiteFilterEdit.text,
+                )
+            )
+        except Exception as exc:
+            slicer.util.errorDisplay(f"Registered series discovery failed:\n{exc}")
+            self._series_log(f"[registered] discovery failed: {exc}")
+            return
+        self._lastRegisteredRows = list(rows)
+        self._populate_registered_series_table(rows)
+        ready = sum(1 for row in rows if row.get("status") == "Ready")
+        self.seriesStatusLabel.text = f"Discovered {len(rows)} session(s); {ready} ready for measurement."
+        self._series_log(f"[registered] discovered {len(rows)} session(s), {ready} ready.")
+
+    def _populate_registered_series_table(self, rows):
+        self.seriesTable.setRowCount(len(rows))
+        columns = [
+            "subject_id",
+            "site",
+            "session_id",
+            "image_path",
+            "seg_path",
+            "full_path",
+            "trab_path",
+            "cort_path",
+            "status",
+        ]
+        for row_index, row in enumerate(rows):
+            for column_index, key in enumerate(columns):
+                value = str(row.get(key) or "")
+                display_value = Path(value).name if key.endswith("_path") and value else value
+                item = qt.QTableWidgetItem(display_value)
+                item.setToolTip(value)
+                self.seriesTable.setItem(row_index, column_index, item)
+        self.seriesTable.resizeColumnsToContents()
+
+    def _prepare_registered_series(self):
+        if not self._lastRegisteredRows:
+            self._discover_registered_series()
+        if not self._lastRegisteredRows:
+            return
+        try:
+            manifest_path = self._with_wait_cursor(
+                lambda: self.logic.write_registered_series_manifest(
+                    self.seriesDatasetRootEdit.text,
+                    self.seriesOutputRootEdit.text,
+                    self._lastRegisteredRows,
+                )
+            )
+        except Exception as exc:
+            slicer.util.errorDisplay(f"RegisteredMicroarchitecture workspace preparation failed:\n{exc}")
+            self._series_log(f"[registered] workspace preparation failed: {exc}")
+            return
+        self.seriesStatusLabel.text = f"Prepared RegisteredMicroarchitecture workspace: {manifest_path}"
+        self._series_log(f"[registered] wrote manifest: {manifest_path}")
+
+    def _run_registered_series(self):
+        if not self._lastRegisteredRows:
+            self._discover_registered_series()
+        if not self._lastRegisteredRows:
+            return
+        try:
+            outputs = self._with_wait_cursor(
+                lambda: self.logic.run_registered_series_microarchitecture(
+                    self.seriesDatasetRootEdit.text,
+                    self.seriesOutputRootEdit.text,
+                    self._lastRegisteredRows,
+                    thickness_method=str(self.seriesThicknessMethodCombo.currentData),
+                    thickness_backend=str(self.seriesThicknessBackendCombo.currentData),
+                )
+            )
+        except Exception as exc:
+            slicer.util.errorDisplay(f"Registered series microarchitecture failed:\n{exc}")
+            self._series_log(f"[registered] measurements failed: {exc}")
+            return
+        self.seriesStatusLabel.text = f"Wrote registered series measurements: {outputs['long_csv']}"
+        self._series_log(f"[registered] wrote manifest: {outputs['manifest']}")
+        self._series_log(f"[registered] wrote long table: {outputs['long_csv']}")
+        for path in outputs.get("session_csvs", []):
+            self._series_log(f"[registered] wrote session table: {path}")
 
     def _install_core(self):
         try:

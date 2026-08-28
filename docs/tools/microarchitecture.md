@@ -27,11 +27,24 @@ The trabecular parameters are not independent. In particular, `Tb.N` is a local-
 
 ## Workflow
 
+### Single Scan
+
 1. Generate or load a bone segmentation plus full/trabecular/cortical masks.
 2. Open `Bone Imaging > HR-pQCT > Microarchitecture`.
 3. Select the grayscale/BMD volume if BMD should be reported.
 4. Select the segmentation node or labelmaps for the bone, full/periosteal, trabecular, and cortical masks. If using a segmentation node, choose the matching segment in the adjacent `Segment` dropdown when needed.
 5. Run `Run microarchitecture`. The Slicer table opens automatically and available maps are loaded into the scene.
 6. Use `Export measurements CSV` to save the displayed measurements.
+
+### Registered Series
+
+The `Registered Series` tab is for longitudinal datasets where registration is used to define common full, trabecular, and cortical regions, but each timepoint is measured in its native image space. Dataset discovery uses the Timelapsed HR-pQCT filename/header logic.
+
+1. Select the dataset root.
+2. Use the default output root or choose a folder. The default is `derivatives/RegisteredMicroarchitecture` under the dataset root.
+3. Optionally filter by subject or site.
+4. Run `Discover series` and review the session table.
+5. Run `Prepare registered workspace` to write the `RegisteredMicroarchitecture` folder structure and manifest, including sequential adjacent registration pairs.
+6. Run `Run series measurements` to compute complete sessions that already have native image, bone segmentation, full, trabecular, and cortical mask files. Per-session results are written under `native_space/ses-*/microarchitecture`, and the combined table is written as `microarchitecture_long.csv`.
 
 If the core package is not available, install it from `Bone Imaging > Setup > Toolbox Setup` or the module's `Install / update microarchitecture core` button.

@@ -188,3 +188,41 @@ def test_microarchitecture_module_records_measurement_provenance_attributes() ->
     assert 'SetAttribute("BoneImaging.Microarchitecture.TrabecularSegmentationID"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.PeriostealMaskID"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.MapRole", map_role)' in source
+
+
+def test_registered_series_mode_uses_timelapsed_discovery_and_derivative_layout() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'REGISTERED_MICROARCHITECTURE_DIR_NAME = "RegisteredMicroarchitecture"' in source
+    assert "TIMELAPSED_LOCAL_SRC" in source
+    assert "from timelapsedhrpqct.config.models import DiscoveryConfig" in source
+    assert "from timelapsedhrpqct.dataset.discovery import discover_raw_sessions" in source
+    assert "discover_registered_series(" in source
+    assert "canonicalize_sessions=True" in source
+    assert "registered_microarchitecture_root(" in source
+    assert 'dataset_root / "derivatives" / REGISTERED_MICROARCHITECTURE_DIR_NAME' in source
+    assert "registered_session_output_dir(" in source
+    assert '"native_space"' in source
+    assert '"microarchitecture"' in source
+    assert "sequential_registration_pairs(" in source
+    assert "write_registered_series_manifest(" in source
+
+
+def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def setup(self):", source.index("class MicroarchitectureHRpQCTWidget")) :]
+
+    assert "self.modeTabs = qt.QTabWidget()" in widget_setup
+    assert 'self.modeTabs.addTab(single_tab, "Single Scan")' in widget_setup
+    assert 'self.modeTabs.addTab(series_tab, "Registered Series")' in widget_setup
+    assert "RegisteredMicroarchitecture" in widget_setup
+    assert "self.seriesDatasetRootEdit" in widget_setup
+    assert "self.seriesOutputRootEdit" in widget_setup
+    assert "self.discoverSeriesButton" in widget_setup
+    assert "self.prepareRegisteredSeriesButton" in widget_setup
+    assert "self.runRegisteredSeriesButton" in widget_setup
+    assert "self.seriesTable.setHorizontalHeaderLabels" in widget_setup
+    assert '"Subject", "Site", "Session", "Image", "Bone seg", "Full", "Trab", "Cort", "Status"' in widget_setup
+    assert "_discover_registered_series" in source
+    assert "_prepare_registered_series" in source
+    assert "_run_registered_series" in source
