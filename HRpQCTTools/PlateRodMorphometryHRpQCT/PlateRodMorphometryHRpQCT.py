@@ -88,6 +88,13 @@ def main(job_json_path: str) -> int:
     print("[plate-rod] reading masks", flush=True)
     bone_image = sitk.ReadImage(str(job["bone_path"]), sitk.sitkUInt8)
     trab_image = sitk.ReadImage(str(job["trab_path"]), sitk.sitkUInt8)
+    common_region_path = str(job.get("common_region_path") or "")
+    if common_region_path:
+        common_image = sitk.ReadImage(common_region_path, sitk.sitkUInt8)
+        if common_image.GetSize() != bone_image.GetSize():
+            raise ValueError("Common scan region mask must match bone and trabecular mask geometry.")
+        bone_image = sitk.Cast((bone_image > 0) & (common_image > 0), sitk.sitkUInt8)
+        trab_image = sitk.Cast((trab_image > 0) & (common_image > 0), sitk.sitkUInt8)
     bone = sitk.GetArrayFromImage(bone_image) > 0
     trab = sitk.GetArrayFromImage(trab_image) > 0
     if bone.shape != trab.shape:
@@ -213,6 +220,8 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         *,
         bone_segment_id=None,
         trabecular_segment_id=None,
+        common_region_node=None,
+        common_region_segment_id=None,
         slenderness=0,
         max_iterations=200,
         min_plate_voxels=0,
@@ -220,7 +229,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         use_metal=True,
         output_prefix="",
     ):
-        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node)
+        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node, common_region_node)
         temporary_reference_node = None
         if reference_node is None and bone_segmentation_node is not None and bone_segmentation_node.IsA("vtkMRMLSegmentationNode"):
             temporary_reference_node = self._segmentation_reference_node(
@@ -244,6 +253,20 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                 selected_segment_id=trabecular_segment_id,
                 reference_node=reference_node,
             )
+            common_region_path = None
+            if common_region_node is not None:
+                from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region
+
+                common_region = self._volume_to_sitk_uint8(
+                    common_region_node,
+                    "common scan region mask",
+                    selected_segment_id=common_region_segment_id,
+                    reference_node=reference_node,
+                )
+                bone_image = clip_mask_to_region(bone_image, common_region)
+                trab_image = clip_mask_to_region(trab_image, common_region)
+                common_region_path = job_dir / "common_region.nrrd"
+                sitk.WriteImage(common_region, str(common_region_path))
             bone_path = job_dir / "bone.nrrd"
             trab_path = job_dir / "trab.nrrd"
             sitk.WriteImage(bone_image, str(bone_path))
@@ -259,6 +282,9 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                 "job_json_path": str(job_dir / "job.json"),
                 "bone_path": str(bone_path),
                 "trab_path": str(trab_path),
+                "common_region_path": str(common_region_path) if common_region_path else "",
+                "common_region_node_id": common_region_node.GetID() if common_region_node is not None else "",
+                "common_region_node_name": common_region_node.GetName() if common_region_node is not None else "",
                 "output_paths": output_paths,
                 "summary_path": str(job_dir / "summary.json"),
                 "prefix": prefix,
@@ -361,9 +387,15 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
             )
             if map_role != "Component labels":
                 set_labelmap_display_colors(node, map_role)
+            if job.get("common_region_node_id"):
+                node.SetAttribute("BoneImaging.PlateRod.CommonRegionNode", str(job.get("common_region_node_id", "")))
+                node.SetAttribute("BoneImaging.PlateRod.CommonRegionName", str(job.get("common_region_node_name", "")))
             nodes[map_role] = node
         summary = json.loads(Path(job["summary_path"]).read_text(encoding="utf-8"))
         table_node = self._create_summary_table(summary, f"{job['prefix']}_summary")
+        if job.get("common_region_node_id"):
+            table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionNode", str(job.get("common_region_node_id", "")))
+            table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionName", str(job.get("common_region_node_name", "")))
         show_full_thickness_labels_in_3d(nodes.get("Full-thickness labels"))
         return {"nodes": nodes, "table": table_node, "summary": summary}
 
@@ -382,6 +414,8 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         *,
         bone_segment_id=None,
         trabecular_segment_id=None,
+        common_region_node=None,
+        common_region_segment_id=None,
         slenderness=0,
         max_iterations=200,
         min_plate_voxels=0,
@@ -390,7 +424,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
     ):
         from plate_rod_thinning import PlateRodParameters, plate_rod_analysis
 
-        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node)
+        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node, common_region_node)
         temporary_reference_node = None
         if reference_node is None and bone_segmentation_node is not None and bone_segmentation_node.IsA("vtkMRMLSegmentationNode"):
             temporary_reference_node = self._segmentation_reference_node(
@@ -411,6 +445,17 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                 selected_segment_id=trabecular_segment_id,
                 reference_node=reference_node,
             )
+            if common_region_node is not None:
+                from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region
+
+                common_region = self._volume_to_sitk_uint8(
+                    common_region_node,
+                    "common scan region mask",
+                    selected_segment_id=common_region_segment_id,
+                    reference_node=reference_node,
+                )
+                bone_image = clip_mask_to_region(bone_image, common_region)
+                trab_image = clip_mask_to_region(trab_image, common_region)
             bone = sitk.GetArrayFromImage(bone_image) > 0
             trab = sitk.GetArrayFromImage(trab_image) > 0
             if bone.shape != trab.shape:
@@ -444,6 +489,9 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                     set_labelmap_display_colors(node, map_role)
                 nodes[map_role] = node
             table_node = self._create_summary_table(core_result.summary, f"{prefix}_summary")
+            if common_region_node is not None:
+                table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionNode", common_region_node.GetID())
+                table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionName", common_region_node.GetName())
             show_full_thickness_labels_in_3d(nodes.get("Full-thickness labels"))
             return {"nodes": nodes, "table": table_node, "summary": core_result.summary}
         finally:
@@ -665,6 +713,18 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.trabecularSegmentSelector = self._segment_combo()
         form_layout.addRow("Trabecular compartment mask", self._segmentation_input_row(self.trabecularMaskSelector, self.trabecularSegmentSelector))
 
+        self.commonRegionMaskSelector = slicer.qMRMLNodeComboBox()
+        self.commonRegionMaskSelector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"]
+        self.commonRegionMaskSelector.selectNodeUponCreation = False
+        self.commonRegionMaskSelector.addEnabled = False
+        self.commonRegionMaskSelector.removeEnabled = False
+        self.commonRegionMaskSelector.noneEnabled = True
+        self.commonRegionMaskSelector.setMRMLScene(slicer.mrmlScene)
+        self.commonRegionMaskSelector.currentNodeChanged.connect(self._refresh_common_region_segment_selector)
+
+        self.commonRegionSegmentSelector = self._segment_combo()
+        form_layout.addRow("Common scan region mask", self._segmentation_input_row(self.commonRegionMaskSelector, self.commonRegionSegmentSelector))
+
         self.slendernessSpinBox = qt.QSpinBox()
         self.slendernessSpinBox.minimum = 0
         self.slendernessSpinBox.maximum = 10
@@ -743,6 +803,9 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _refresh_trabecular_segment_selector(self, node=None):
         self._refresh_segment_selector(self.trabecularSegmentSelector, node, "trabecular compartment mask")
 
+    def _refresh_common_region_segment_selector(self, node=None):
+        self._refresh_segment_selector(self.commonRegionSegmentSelector, node, "common scan region mask")
+
     def _refresh_segment_selector(self, selector, node, role):
         selector.blockSignals(True)
         selector.clear()
@@ -817,6 +880,8 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
                     self.trabecularMaskSelector.currentNode(),
                     bone_segment_id=self._selected_segment_id(self.boneSegmentSelector),
                     trabecular_segment_id=self._selected_segment_id(self.trabecularSegmentSelector),
+                    common_region_node=self.commonRegionMaskSelector.currentNode(),
+                    common_region_segment_id=self._selected_segment_id(self.commonRegionSegmentSelector),
                     slenderness=int(self.slendernessSpinBox.value),
                     max_iterations=int(self.maxIterationsSpinBox.value),
                     min_plate_voxels=int(self.minPlateSpinBox.value),

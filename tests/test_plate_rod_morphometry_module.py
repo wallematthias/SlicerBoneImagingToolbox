@@ -89,6 +89,9 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
     assert "self.trabecularSegmentSelector = self._segment_combo()" in widget_setup
     assert 'form_layout.addRow("Trabecular compartment mask", self._segmentation_input_row(self.trabecularMaskSelector, self.trabecularSegmentSelector))' in widget_setup
     assert 'form_layout.addRow("Trabecular label", self.trabecularSegmentSelector)' not in widget_setup
+    assert "Common scan region mask" in widget_setup
+    assert "self.commonRegionMaskSelector" in widget_setup
+    assert "self.commonRegionSegmentSelector" in widget_setup
     assert "self.boneSegmentationSelector.currentNodeChanged.connect(self._refresh_bone_segment_selector)" in source
     assert "self.trabecularMaskSelector.currentNodeChanged.connect(self._refresh_trabecular_segment_selector)" in source
     assert "def _refresh_bone_segment_selector(self, node=None):" in source
@@ -129,6 +132,8 @@ def test_plate_rod_run_passes_selected_segments_to_logic() -> None:
     assert "on_finished=self._on_plate_rod_process_finished" in run_method
     assert "bone_segment_id=self._selected_segment_id(self.boneSegmentSelector)" in run_method
     assert "trabecular_segment_id=self._selected_segment_id(self.trabecularSegmentSelector)" in run_method
+    assert "common_region_node=self.commonRegionMaskSelector.currentNode()" in run_method
+    assert "common_region_segment_id=self._selected_segment_id(self.commonRegionSegmentSelector)" in run_method
     assert "use_metal=bool(self.useMetalCheckBox.checked)" in run_method
     assert "max_iterations=int(self.maxIterationsSpinBox.value)" in run_method
     assert "self._set_progress(True, \"Reading selected masks...\")" in run_method
@@ -185,6 +190,11 @@ def test_plate_rod_logic_passes_trabecular_mask_and_spacing_for_summary_metrics(
     source = MODULE_PATH.read_text(encoding="utf-8")
 
     assert "voxel_spacing_mm=tuple(float(value) for value in bone_image.GetSpacing())," in source
+    assert "common_region_node=None" in source
+    assert "common_region = self._volume_to_sitk_uint8(" in source
+    assert "bone_image = clip_mask_to_region(bone_image, common_region)" in source
+    assert "trab_image = clip_mask_to_region(trab_image, common_region)" in source
+    assert '"common_region_path": str(common_region_path) if common_region_path else ""' in source
     assert "plate_rod_analysis(trabecular_bone, analysis_mask=trab, parameters=parameters)" in source
 
 
@@ -194,6 +204,7 @@ def test_plate_rod_module_sets_display_and_provenance_attributes() -> None:
     assert 'SetAttribute("BoneImaging.PlateRod.Engine", "plate_rod_thinning")' in source
     assert 'SetAttribute("BoneImaging.PlateRod.MapRole", map_role)' in source
     assert 'SetAttribute("BoneImaging.PlateRod.Slenderness"' in source
+    assert 'SetAttribute("BoneImaging.PlateRod.CommonRegionNode"' in source
     assert "set_labelmap_display_colors" in source
     assert '"Plate", (0.0, 0.45, 1.0)' in source
     assert '"Rod", (1.0, 0.05, 0.02)' in source

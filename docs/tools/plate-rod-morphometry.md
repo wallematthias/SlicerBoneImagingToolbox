@@ -23,6 +23,7 @@ The method is an open, auditable plate/rod skeleton analysis. It should be repor
 
 - `Bone segmentation`: binary trabecular bone mask, labelmap, or segmentation node. If a segmentation node is selected, choose the exact segment in the adjacent `Segment` dropdown.
 - `Trabecular compartment mask`: analysis region used for density-normalized measurements. This may be a labelmap, scalar mask, or segmentation node with a selected segment.
+- `Common scan region mask`: optional registered scan/FOV common-region mask. When selected, both bone and trabecular masks are clipped to the common region before analysis.
 
 For typical HR-pQCT trabecular analysis, use the segmented trabecular bone as `Bone segmentation` and the trabecular compartment as `Trabecular compartment mask`. The two inputs must be in the same image geometry. Voxel spacing is read from the selected Slicer nodes.
 
@@ -56,9 +57,10 @@ When an output folder is used by the background run, the corresponding files are
 2. Use `Install / update compiled plate-rod core` if the status message says the core package is missing or outdated.
 3. Select the bone segmentation and, for segmentation nodes, its segment.
 4. Select the trabecular compartment mask and, for segmentation nodes, its segment.
-5. Keep default decomposition settings for a first pass, then adjust cleanup settings only if needed for a predefined analysis protocol.
-6. Click `Run plate/rod morphometry`.
-7. Review the summary table and inspect `Full-thickness labels` in 2D and 3D.
+5. Select a common scan-region mask when constraining longitudinal measurements to shared scan support.
+6. Keep default decomposition settings for a first pass, then adjust cleanup settings only if needed for a predefined analysis protocol.
+7. Click `Run plate/rod morphometry`.
+8. Review the summary table and inspect `Full-thickness labels` in 2D and 3D.
 
 The run is launched as a background process so Slicer remains responsive. The progress indicator and status text update while masks are exported, thinning runs, outputs are written, and the results are loaded back into the scene.
 
