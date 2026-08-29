@@ -81,6 +81,13 @@ def test_microarchitecture_module_uses_core_for_bmd_and_thickness_compartments()
     assert "sitk.GetArrayFromImage(peri_mask)" in source
     assert "sitk.GetArrayFromImage(cort_mask)" in source
     assert "Select a bone segmentation so trabecular and cortical bone measures can be intersected" in source
+    assert "common_region_node=None" in source
+    assert "common_region = self._volume_to_sitk_uint8(" in source
+    assert "from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region" in source
+    assert "bone_seg = clip_mask_to_region(bone_seg, common_region)" in source
+    assert "peri_mask = clip_mask_to_region(peri_mask, common_region)" in source
+    assert "trab_seg = clip_mask_to_region(trab_seg, common_region)" in source
+    assert "cort_mask = clip_mask_to_region(cort_mask, common_region)" in source
     assert "grayscale=None if bmd_image is None else sitk.GetArrayFromImage(bmd_image)" in source
     assert "for map_role, array in core_result.maps.items()" in source
     assert "_array_to_sitk_like(array, trab_seg)" in source
@@ -123,6 +130,8 @@ def test_microarchitecture_widget_exposes_minimal_clean_inputs_and_outputs() -> 
     assert "Full/periosteal mask" in source
     assert "Trabecular compartment mask" in source
     assert "Cortical compartment mask" in source
+    assert "Common scan region mask" in source
+    assert "self.commonRegionMaskSelector" in widget_setup
     assert "BMD measures use the full compartment regions." in source
     assert "Segment" in source
     assert "Image units" in source
@@ -156,6 +165,8 @@ def test_microarchitecture_run_always_loads_maps_and_shows_table() -> None:
     run_method = source[source.index("    def _run_microarchitecture(self):") :]
 
     assert "create_maps=True" in run_method
+    assert "common_region_node=self.commonRegionMaskSelector.currentNode()" in run_method
+    assert "common_region_segment_id=self._selected_segment_id(self.commonRegionSegmentCombo)" in run_method
     assert "thickness_method=str(self.thicknessMethodCombo.currentData)" in run_method
     assert "thickness_backend=str(self.thicknessBackendCombo.currentData)" in run_method
     assert "Apple MPS sphere fitting is experimental" in run_method
@@ -185,6 +196,7 @@ def test_microarchitecture_module_records_measurement_provenance_attributes() ->
     assert 'SetAttribute("BoneImaging.Microarchitecture.Engine", "bone_microarchitecture")' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.ThicknessMethod"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.ThicknessBackend"' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.CommonRegionNode"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.TrabecularSegmentationID"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.PeriostealMaskID"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.MapRole", map_role)' in source

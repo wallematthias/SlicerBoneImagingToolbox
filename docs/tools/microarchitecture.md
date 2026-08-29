@@ -9,6 +9,7 @@
 - `Full/periosteal mask`: binary mask defining the total analysis region, or segmentation node with a `Full mask` segment.
 - `Trabecular mask`: binary trabecular compartment labelmap, scalar mask, or segmentation node with a `Trabecular mask` segment.
 - `Cortical mask`: optional cortical compartment mask, or segmentation node with a `Cortical mask` segment.
+- `Common scan region mask`: optional registered scan/FOV common-region mask. When selected, bone, full/periosteal, trabecular, and cortical masks are intersected with this mask before measurement.
 
 The masks should be in the same image space. The module reads labelmaps directly. When a Slicer segmentation node is selected, use the adjacent `Segment` dropdown to choose the exact segment, or leave it on `Auto` for generated names such as `Full mask`, `Trabecular mask`, `Cortical mask`, and `Bone segmentation`.
 
@@ -33,8 +34,9 @@ The trabecular parameters are not independent. In particular, `Tb.N` is a local-
 2. Open `Bone Imaging > HR-pQCT > Bone Microarchitecture`.
 3. Select the grayscale/BMD volume if BMD should be reported.
 4. Select the segmentation node or labelmaps for the bone, full/periosteal, trabecular, and cortical masks. If using a segmentation node, choose the matching segment in the adjacent `Segment` dropdown when needed.
-5. Run `Run microarchitecture`. The Slicer table opens automatically and available maps are loaded into the scene.
-6. Use `Export measurements CSV` to save the displayed measurements.
+5. Select a common scan-region mask when measuring a registered longitudinal common region in native image space.
+6. Run `Run microarchitecture`. The Slicer table opens automatically and available maps are loaded into the scene.
+7. Use `Export measurements CSV` to save the displayed measurements.
 
 ### Registered Series
 

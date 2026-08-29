@@ -1198,6 +1198,8 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         periosteal_segment_id=None,
         bone_segment_id=None,
         cortical_segment_id=None,
+        common_region_node=None,
+        common_region_segment_id=None,
         image_units="bmd",
         prefer_aimio_grayscale=True,
         mu_scaling=8192,
@@ -1225,6 +1227,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             periosteal_mask_node,
             trabecular_segmentation_node,
             cortical_mask_node,
+            common_region_node,
         )
         if (
             reference_node is None
@@ -1286,6 +1289,24 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 if image is not None and image.GetSize() != trab_seg.GetSize():
                     raise ValueError(f"{name}, trabecular segmentation, and periosteal mask sizes must match.")
 
+            common_region = None
+            if common_region_node is not None:
+                from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region
+
+                common_region = self._volume_to_sitk_uint8(
+                    common_region_node,
+                    "common scan region mask",
+                    selected_segment_id=common_region_segment_id,
+                    reference_node=reference_node,
+                )
+                if common_region.GetSize() != trab_seg.GetSize():
+                    raise ValueError("Common scan region mask size must match the selected masks.")
+                bone_seg = clip_mask_to_region(bone_seg, common_region)
+                peri_mask = clip_mask_to_region(peri_mask, common_region)
+                trab_seg = clip_mask_to_region(trab_seg, common_region)
+                if cort_mask is not None:
+                    cort_mask = clip_mask_to_region(cort_mask, common_region)
+
             provenance_metadata = {}
             bmd_image = None
             if grayscale_node is not None:
@@ -1327,6 +1348,9 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             )
             table_node.SetAttribute("BoneImaging.Microarchitecture.ThicknessMethod", str(core_result.metadata.get("thickness_method", thickness_method)))
             table_node.SetAttribute("BoneImaging.Microarchitecture.ThicknessBackend", str(core_result.metadata.get("thickness_backend", thickness_backend)))
+            if common_region_node is not None:
+                table_node.SetAttribute("BoneImaging.Microarchitecture.CommonRegionNode", common_region_node.GetID())
+                table_node.SetAttribute("BoneImaging.Microarchitecture.CommonRegionName", common_region_node.GetName())
             for key, value in provenance_metadata.items():
                 table_node.SetAttribute(f"BoneImaging.Microarchitecture.{key}", str(value))
 
@@ -1431,6 +1455,12 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             "Cortical compartment mask",
             "cortical mask",
             "Optional cortical compartment mask. Cortical bone measures use this region intersected with the bone segmentation. BMD measures use the full compartment regions.",
+        )
+        self.commonRegionMaskSelector, self.commonRegionSegmentCombo = self._mask_selector_row(
+            form,
+            "Common scan region mask",
+            "common scan region mask",
+            "Optional registered scan/FOV common-region mask used to constrain all selected analysis masks.",
         )
 
         self.imageUnitsCombo = qt.QComboBox()
@@ -2056,6 +2086,8 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
                     periosteal_segment_id=self._selected_segment_id(self.periostealMaskSegmentCombo),
                     bone_segment_id=self._selected_segment_id(self.boneSegmentationSegmentCombo),
                     cortical_segment_id=self._selected_segment_id(self.corticalMaskSegmentCombo),
+                    common_region_node=self.commonRegionMaskSelector.currentNode(),
+                    common_region_segment_id=self._selected_segment_id(self.commonRegionSegmentCombo),
                     image_units=self.imageUnitsCombo.currentData,
                     prefer_aimio_grayscale=True,
                     mu_scaling=self.muScalingSpin.value,
