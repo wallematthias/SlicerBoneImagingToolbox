@@ -344,7 +344,8 @@ def test_registered_series_common_region_is_scan_fov_not_compartment_intersectio
 
     assert '"scan_region_common"' in common_logic
     assert '"scan_region_native_common"' in common_logic
-    assert "_registered_scan_region(" in common_logic
+    assert "build_common_scan_region(" in common_logic
+    assert "CommonRegionSession(" in common_logic
     assert '"native_common_scan_region_path"' in common_logic
     assert "for role in (\"full\", \"trab\", \"cort\"):" not in common_logic
     assert "common_by_role" not in common_logic

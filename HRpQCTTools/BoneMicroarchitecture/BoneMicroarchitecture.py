@@ -651,6 +651,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         )
 
     def _build_registered_common_regions(self, output_root, rows, *, progress_callback=None):
+        from SlicerBoneImagingToolboxLib.common_region import CommonRegionSession, build_common_scan_region
         from timelapsedhrpqct.utils.session_ids import session_sort_key
         from timelapsedhrpqct.processing.transform_chain import (
             PairwiseTransform,
@@ -731,7 +732,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                     }
                 )
 
-            common_scan_region = None
+            common_region_sessions = []
             for row in ordered:
                 self._registered_progress(
                     progress_callback,
@@ -739,12 +740,21 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 )
                 transform = transforms[row["session_id"]]
                 image = self._read_registered_series_image(row["image_path"], role="image")
-                scan_region = self._registered_scan_region(image)
-                scan_region_common = self._resample_registered_mask(scan_region, baseline_image, transform)
-                if common_scan_region is None:
-                    common_scan_region = sitk.Cast(scan_region_common > 0, sitk.sitkUInt8)
-                else:
-                    common_scan_region = sitk.Cast((common_scan_region > 0) & (scan_region_common > 0), sitk.sitkUInt8)
+                common_region_sessions.append(
+                    CommonRegionSession(
+                        subject_id=row["subject_id"],
+                        site=row["site"],
+                        session_id=row["session_id"],
+                        stack_index=int(row.get("stack_index", 1)),
+                        image=image,
+                        transform_to_reference=transform,
+                    )
+                )
+            common_region = build_common_scan_region(
+                common_region_sessions,
+                reference_session_id=baseline["session_id"],
+            )
+            common_scan_region = common_region.common_mask
 
             self._registered_progress(progress_callback, "[registered] writing scan-region common-space mask")
             common_path = self._registered_common_mask_path(output_root, baseline, "scan-region")
@@ -764,10 +774,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                     progress_callback,
                     f"[registered] returning common scan region to native space for sub-{row['subject_id']} ses-{row['session_id']}",
                 )
-                image = self._read_registered_series_image(row["image_path"], role="image")
-                transform = transforms[row["session_id"]]
-                inverse = transform.GetInverse()
-                native_common = self._resample_registered_mask(common_scan_region, image, inverse)
+                native_common = common_region.native_masks[row["session_id"]]
                 path = self._registered_common_session_mask_path(output_root, row, "scan-region")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 sitk.WriteImage(native_common, str(path))
