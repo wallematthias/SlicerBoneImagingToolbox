@@ -4,7 +4,9 @@ import csv
 import importlib
 import json
 from importlib import metadata
+import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 
@@ -83,6 +85,95 @@ class BoneMicroarchitecture(ScriptedLoadableModule):
 
 
 class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
+    def __init__(self):
+        super().__init__()
+        self._proc = None
+
+    def is_registered_series_running(self):
+        return self._proc is not None
+
+    def run_registered_series_job(self, job_path, on_output=None, on_finished=None):
+        if self._proc is not None:
+            raise RuntimeError("A registered microarchitecture process is already running")
+
+        proc = qt.QProcess()
+        proc.setProcessChannelMode(qt.QProcess.MergedChannels)
+        env = qt.QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")
+        for key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
+            if env.contains(key):
+                env.remove(key)
+            env.insert(key, "")
+        proc.setProcessEnvironment(env)
+
+        def _read_output():
+            raw = proc.readAll()
+            if isinstance(raw, (bytes, bytearray)):
+                data = bytes(raw)
+            else:
+                try:
+                    data = raw.data()
+                    if isinstance(data, str):
+                        data = data.encode("utf-8", errors="replace")
+                    else:
+                        data = bytes(data)
+                except Exception:
+                    data = str(raw).encode("utf-8", errors="replace")
+            text = data.decode("utf-8", errors="replace")
+            if on_output and text:
+                filtered_lines = []
+                for line in text.splitlines(keepends=True):
+                    if "MRMLIDImageIO" in line:
+                        continue
+                    if "ImageIO factory did not return an ImageIOBase" in line:
+                        continue
+                    filtered_lines.append(line)
+                filtered = "".join(filtered_lines)
+                if filtered:
+                    on_output(filtered)
+
+        def _finished(*signal_args):
+            self._proc = None
+            if len(signal_args) >= 2:
+                exit_code = int(signal_args[0])
+                exit_status = signal_args[1]
+            elif len(signal_args) == 1:
+                exit_code = int(signal_args[0])
+                exit_status = 0
+            else:
+                exit_code = int(proc.exitCode())
+                exit_status = proc.exitStatus()
+            if on_finished:
+                on_finished(exit_code, exit_status)
+
+        proc.readyRead.connect(_read_output)
+        proc.finished.connect(_finished)
+
+        executable_dir = Path(sys.executable).resolve().parent if sys.executable else None
+        sibling_python_slicer = executable_dir / "PythonSlicer" if executable_dir else None
+        python_exe = (
+            shutil.which("PythonSlicer")
+            or (str(sibling_python_slicer) if sibling_python_slicer and sibling_python_slicer.exists() else "")
+            or sys.executable
+            or shutil.which("python3")
+        )
+        if not python_exe:
+            raise RuntimeError("Could not find Python executable in Slicer environment")
+
+        script_path = Path(__file__).resolve()
+        args = [str(script_path), "--registered-series-job", str(job_path)]
+        if on_output:
+            on_output(f"[registered-process] launching: {python_exe} {' '.join(args)}\n")
+        proc.start(python_exe, args)
+        if not proc.waitForStarted(3000):
+            raise RuntimeError("Failed to start registered microarchitecture process")
+        self._proc = proc
+        if on_output:
+            try:
+                on_output(f"[registered-process] started (pid={int(proc.processId())})\n")
+            except Exception:
+                on_output("[registered-process] started\n")
+
     def core_runtime_status(self):
         try:
             version = metadata.version("bone-microarchitecture")
@@ -271,12 +362,18 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         segmentation_method="seg_gauss",
         periosteal_contour_method="standard",
         endosteal_contour_method="standard",
+        progress_callback=None,
     ):
         root = self.registered_microarchitecture_root(dataset_root, output_root)
         self.write_registered_series_manifest(dataset_root, root, rows)
         prepared_rows = []
         generated = []
+        self._registered_progress(progress_callback, f"[registered] preparing {len(rows)} session(s)")
         for row in rows:
+            self._registered_progress(
+                progress_callback,
+                f"[registered] preparing sub-{row['subject_id']} ses-{row['session_id']}",
+            )
             prepared = dict(row)
             generated.extend(
                 self._complete_registered_series_masks(
@@ -291,9 +388,13 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             prepared["status"] = "Ready" if not missing else f"Missing {', '.join(missing)}"
             prepared_rows.append(prepared)
         self._mark_incomplete_registered_groups(prepared_rows)
-        generated.extend(self._build_registered_common_regions(root, prepared_rows))
+        generated.extend(self._build_registered_common_regions(root, prepared_rows, progress_callback=progress_callback))
         manifest_path = self.write_registered_series_manifest(dataset_root, root, prepared_rows)
         return {"manifest": str(manifest_path), "rows": prepared_rows, "generated": generated}
+
+    def _registered_progress(self, progress_callback, message):
+        if progress_callback is not None:
+            progress_callback(str(message))
 
     def _registered_row_missing(self, row):
         return [
@@ -549,7 +650,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             settings=RegistrationSettings(),
         )
 
-    def _build_registered_common_regions(self, output_root, rows):
+    def _build_registered_common_regions(self, output_root, rows, *, progress_callback=None):
         from timelapsedhrpqct.utils.session_ids import session_sort_key
         from timelapsedhrpqct.processing.transform_chain import (
             PairwiseTransform,
@@ -567,12 +668,23 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 continue
             ordered = sorted(group_rows, key=lambda row: session_sort_key(row["session_id"]))
             baseline = ordered[0]
+            self._registered_progress(
+                progress_callback,
+                f"[registered] building common region for sub-{baseline['subject_id']} "
+                f"site-{baseline['site']} stack-{int(baseline.get('stack_index', 1)):02d} "
+                f"from {len(ordered)} timepoint(s)",
+            )
             baseline_image = self._read_registered_series_image(baseline["image_path"], role="image")
             pairwise = []
             previous = baseline
             previous_image = baseline_image
             previous_full = self._read_registered_series_image(previous["full_path"], role="full")
             for row in ordered[1:]:
+                self._registered_progress(
+                    progress_callback,
+                    f"[registered] registering sub-{row['subject_id']} ses-{row['session_id']} "
+                    f"to ses-{previous['session_id']}",
+                )
                 image = self._read_registered_series_image(row["image_path"], role="image")
                 full = self._read_registered_series_image(row["full_path"], role="full")
                 result = self._register_to_baseline(
@@ -621,6 +733,10 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
 
             common_by_role = {}
             for row in ordered:
+                self._registered_progress(
+                    progress_callback,
+                    f"[registered] resampling masks for sub-{row['subject_id']} ses-{row['session_id']} into common space",
+                )
                 transform = transforms[row["session_id"]]
                 for role in ("full", "trab", "cort"):
                     mask = self._read_registered_series_image(row[f"{role}_path"], role=role)
@@ -631,12 +747,17 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                         common_by_role[role] = sitk.Cast((common_by_role[role] > 0) & (mask_common > 0), sitk.sitkUInt8)
 
             for role, common_mask in common_by_role.items():
+                self._registered_progress(progress_callback, f"[registered] writing {role} common-space mask")
                 common_path = self._registered_common_mask_path(output_root, baseline, role)
                 common_path.parent.mkdir(parents=True, exist_ok=True)
                 sitk.WriteImage(common_mask, str(common_path))
                 generated.append({"session": baseline["session_id"], "role": f"{role}_common", "path": str(common_path), "source": "common_space"})
 
             for row in ordered:
+                self._registered_progress(
+                    progress_callback,
+                    f"[registered] returning common masks to native space for sub-{row['subject_id']} ses-{row['session_id']}",
+                )
                 image = self._read_registered_series_image(row["image_path"], role="image")
                 transform = transforms[row["session_id"]]
                 inverse = transform.GetInverse()
@@ -1547,6 +1668,19 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self.seriesLogText.append(str(message).rstrip())
         self.seriesLogText.ensureCursorVisible()
 
+    def _set_registered_series_running(self, running):
+        self.runRegisteredSeriesButton.enabled = not running and self.logic.is_core_available()
+        self.discoverSeriesButton.enabled = not running
+        self.seriesDatasetRootEdit.enabled = not running
+        self.seriesOutputRootEdit.enabled = not running
+        self.seriesSubjectCombo.enabled = not running
+        self.seriesSiteCombo.enabled = not running
+        self.seriesSegmentationMethodCombo.enabled = not running
+        self.seriesPeriostealContourCombo.enabled = not running
+        self.seriesEndostealContourCombo.enabled = not running
+        self.seriesThicknessMethodCombo.enabled = not running
+        self.seriesThicknessBackendCombo.enabled = not running
+
     def _with_wait_cursor(self, func):
         try:
             slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
@@ -1712,34 +1846,84 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             self._series_log(f"[registered] {item['source']} {item['role']}: {item['path']}")
         return prepared
 
+    def _write_registered_series_job(self):
+        dataset_root = str(self.seriesDatasetRootEdit.text or "").strip()
+        if not dataset_root:
+            raise ValueError("Select a dataset root before running registered microarchitecture.")
+        output_root = str(self.seriesOutputRootEdit.text or "").strip()
+        root = self.logic.registered_microarchitecture_root(dataset_root, output_root)
+        job_dir = root / "slicer_run_configs"
+        job_dir.mkdir(parents=True, exist_ok=True)
+        fd, job_path = tempfile.mkstemp(prefix="registered_microarchitecture_", suffix=".json", dir=str(job_dir))
+        os.close(fd)
+        result_path = Path(job_path).with_suffix(".result.json")
+        job = {
+            "dataset_root": dataset_root,
+            "output_root": output_root,
+            "rows": self._lastRegisteredRows,
+            "segmentation_method": str(self.seriesSegmentationMethodCombo.currentData),
+            "periosteal_contour_method": str(self.seriesPeriostealContourCombo.currentData),
+            "endosteal_contour_method": str(self.seriesEndostealContourCombo.currentData),
+            "thickness_method": str(self.seriesThicknessMethodCombo.currentData),
+            "thickness_backend": str(self.seriesThicknessBackendCombo.currentData),
+            "result_path": str(result_path),
+        }
+        Path(job_path).write_text(json.dumps(job, indent=2), encoding="utf-8")
+        return Path(job_path), result_path
+
     def _run_registered_series(self):
         if not self._lastRegisteredRows:
             self._discover_registered_series()
         if not self._lastRegisteredRows:
             return
-        prepared = self._prepare_registered_series()
-        if prepared is None or not self._lastRegisteredRows:
-            return
         try:
-            outputs = self._with_wait_cursor(
-                lambda: self.logic.run_registered_series_microarchitecture(
-                    self.seriesDatasetRootEdit.text,
-                    self.seriesOutputRootEdit.text,
-                    self._lastRegisteredRows,
-                    thickness_method=str(self.seriesThicknessMethodCombo.currentData),
-                    thickness_backend=str(self.seriesThicknessBackendCombo.currentData),
-                )
+            job_path, result_path = self._write_registered_series_job()
+            self._registeredSeriesResultPath = result_path
+            self._set_registered_series_running(True)
+            self.seriesStatusLabel.text = "Registered microarchitecture is running in the background."
+            self.logic.run_registered_series_job(
+                job_path,
+                on_output=self._series_log,
+                on_finished=self._on_registered_series_finished,
             )
         except Exception as exc:
+            self._set_registered_series_running(False)
             slicer.util.errorDisplay(f"Registered series microarchitecture failed:\n{exc}")
             self._series_log(f"[registered] measurements failed: {exc}")
             return
+
+    def _on_registered_series_finished(self, exit_code, exit_status):
+        self._set_registered_series_running(False)
+        self._series_log(f"[registered-process] finished with exit code {exit_code}")
+        result_path = Path(str(getattr(self, "_registeredSeriesResultPath", "") or ""))
+        result = {}
+        if result_path.exists():
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self._series_log(f"[registered] could not read worker result: {exc}")
+        if int(exit_code) != 0 or result.get("error"):
+            message = result.get("error") or "Registered microarchitecture worker failed."
+            self.seriesStatusLabel.text = "Registered microarchitecture failed."
+            slicer.util.errorDisplay(f"Registered series microarchitecture failed:\n{message}")
+            return
+
+        prepared = result.get("prepared", {})
+        outputs = result.get("outputs", {})
+        if prepared.get("rows"):
+            self._allRegisteredRows = list(prepared["rows"])
+            self._populate_registered_series_filters(self._allRegisteredRows)
+            self._refresh_registered_series_table()
         measured_count = len(outputs.get("session_csvs", []))
         skipped_count = len(outputs.get("skipped_rows", []))
         self.seriesStatusLabel.text = (
             f"Wrote registered series measurements for {measured_count} session(s); "
             f"skipped {skipped_count}. Output: {outputs['long_csv']}"
         )
+        if prepared.get("manifest"):
+            self._series_log(f"[registered] wrote manifest: {prepared['manifest']}")
+        for item in prepared.get("generated", []):
+            self._series_log(f"[registered] {item['source']} {item['role']}: {item['path']}")
         self._series_log(f"[registered] wrote manifest: {outputs['manifest']}")
         self._series_log(f"[registered] wrote long table: {outputs['long_csv']}")
         for path in outputs.get("session_csvs", []):
@@ -1848,6 +2032,65 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             self._log(f"{row['Parameter']}: {float(row['Mean']):.6g} {row['Units']}")
 
 
+def _write_registered_series_worker_result(path, payload):
+    Path(str(path)).parent.mkdir(parents=True, exist_ok=True)
+    Path(str(path)).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _run_registered_series_worker(job_path):
+    job_path = Path(str(job_path)).expanduser()
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    result_path = Path(str(job["result_path"])).expanduser()
+    logic = BoneMicroarchitectureLogic()
+    def print_progress(message):
+        print(message, flush=True)
+
+    try:
+        print(f"[registered] worker job: {job_path}", flush=True)
+        print("[registered] preparing workspace, masks, registration, and common regions ...", flush=True)
+        prepared = logic.prepare_registered_series_workspace(
+            job["dataset_root"],
+            job["output_root"],
+            job["rows"],
+            segmentation_method=job["segmentation_method"],
+            periosteal_contour_method=job["periosteal_contour_method"],
+            endosteal_contour_method=job["endosteal_contour_method"],
+            progress_callback=print_progress,
+        )
+        print(f"[registered] wrote manifest: {prepared['manifest']}", flush=True)
+        for item in prepared.get("generated", []):
+            print(f"[registered] {item['source']} {item['role']}: {item['path']}", flush=True)
+        print("[registered] running native-space common-region measurements ...", flush=True)
+        outputs = logic.run_registered_series_microarchitecture(
+            job["dataset_root"],
+            job["output_root"],
+            prepared["rows"],
+            thickness_method=job["thickness_method"],
+            thickness_backend=job["thickness_backend"],
+        )
+        measured_count = len(outputs.get("session_csvs", []))
+        skipped_count = len(outputs.get("skipped_rows", []))
+        print(f"[registered] measured {measured_count} session(s), skipped {skipped_count}.", flush=True)
+        print(f"[registered] wrote long table: {outputs['long_csv']}", flush=True)
+        for path in outputs.get("session_csvs", []):
+            print(f"[registered] wrote session table: {path}", flush=True)
+        for row in outputs.get("skipped_rows", []):
+            print(f"[registered] skipped sub-{row['subject_id']} ses-{row['session_id']}: {row['status']}", flush=True)
+        _write_registered_series_worker_result(result_path, {"prepared": prepared, "outputs": outputs})
+        return 0
+    except Exception as exc:
+        print(f"[registered] failed: {exc}", flush=True)
+        _write_registered_series_worker_result(result_path, {"error": str(exc)})
+        return 1
+
+
+def _main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) == 2 and argv[0] == "--registered-series-job":
+        return _run_registered_series_worker(argv[1])
+    return 0
+
+
 class BoneMicroarchitectureTest(ScriptedLoadableModuleTest):
     def runTest(self):
         self.setUp()
@@ -1859,3 +2102,7 @@ class BoneMicroarchitectureTest(ScriptedLoadableModuleTest):
         if not logic.is_core_available():
             self.skipTest("Microarchitecture core is not installed")
         self.assertTrue(logic.is_core_available())
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

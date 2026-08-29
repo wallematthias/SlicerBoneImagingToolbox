@@ -242,7 +242,7 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert widget_setup.index("form.addRow(\"Subject\"") < widget_setup.index("form.addRow(\"Missing masks\"")
     assert 'qt.QPushButton("Run")' in widget_setup
     assert '"Run series measurements"' not in widget_setup
-    assert "self._prepare_registered_series()" in source
+    assert "def _prepare_registered_series(self):" in source
     assert "if not self._lastRegisteredRows:" in source[source.index("    def _run_registered_series(self):") :]
     assert "self.seriesTable.setHorizontalHeaderLabels" in widget_setup
     assert '"Subject", "Site", "Session", "Image", "Bone seg", "Full", "Trab", "Cort", "Status"' in widget_setup
@@ -290,6 +290,28 @@ def test_registered_series_run_reports_measured_and_skipped_sessions() -> None:
     assert "skipped_count = len(outputs.get(\"skipped_rows\", []))" in run_widget
     assert "skipped_count" in run_widget
     assert "[registered] skipped" in run_widget
+
+
+def test_registered_series_run_uses_background_qprocess_with_streamed_updates() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    logic_source = source[source.index("class BoneMicroarchitectureLogic") :]
+    run_start = source.index("    def _run_registered_series(self):")
+    run_end = source.index("    def _on_registered_series_finished", run_start)
+    run_widget = source[run_start:run_end]
+
+    assert "qt.QProcess()" in logic_source
+    assert 'env.insert("PYTHONUNBUFFERED", "1")' in logic_source
+    assert "proc.readyRead.connect(_read_output)" in logic_source
+    assert "proc.finished.connect(_finished)" in logic_source
+    assert "def run_registered_series_job(" in logic_source
+    assert "_write_registered_series_job(" in source
+    assert "_on_registered_series_finished" in source
+    assert "self.logic.run_registered_series_job(" in run_widget
+    assert "self._set_registered_series_running(True)" in run_widget
+    assert "self._with_wait_cursor(" not in run_widget
+    assert "--registered-series-job" in source
+    assert "progress_callback=print_progress" in source
+    assert "_registered_progress(" in source
 
 
 def test_registered_series_preparation_builds_common_regions_before_measurement() -> None:
