@@ -56,7 +56,7 @@ def test_plate_rod_core_install_uses_pypi_binary_wheel_and_verifies_compiled_bac
         '"--upgrade --force-reinstall --prefer-binary "'
     ) in source
     assert (
-        '"--only-binary :all: --no-deps plate-rod-thinning>=0.1.3"'
+        '"--only-binary :all: --no-deps plate-rod-thinning>=0.1.4"'
     ) in source
     assert "_remove_local_core_repo_from_sys_path()" in source
     assert "Imported package path:" in source
