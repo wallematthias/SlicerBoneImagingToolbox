@@ -197,8 +197,11 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         self._fallback_default_config_path = path
         return Path(path)
 
-    def discover_derivative_prerequisites(self, derivatives_root):
-        manifests = discover_manifests(derivatives_root)
+    def discover_derivative_prerequisites(self, dataset_root):
+        dataset_root = Path(dataset_root).expanduser().resolve()
+        if dataset_root.name == "derivatives":
+            dataset_root = dataset_root.parent
+        manifests = discover_manifests(dataset_root)
         available_records = []
         for manifest in manifests:
             available_records.extend(manifest.records)

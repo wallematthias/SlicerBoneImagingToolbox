@@ -1,4 +1,5 @@
 from pathlib import Path
+import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,3 +64,39 @@ def test_registered_common_region_batch_delegates_to_timelapsed_cli() -> None:
 
     assert '"-m", "timelapsedhrpqct.cli"' in source
     assert '"common-region", "run"' in source
+
+
+def test_registered_common_region_builds_one_cli_command_per_selected_group() -> None:
+    spec = importlib.util.spec_from_file_location("registered_common_region_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    logic = module.RegisteredCommonRegionLogic()
+
+    commands = logic.batch_cli_commands(
+        {
+            "dataset_root": "/tmp/dataset",
+            "rows": [
+                {"subject_id": "S1", "site": "tibia"},
+                {"subject_id": "S1", "site": "tibia"},
+                {"subject_id": "S2", "site": "radius"},
+            ],
+        }
+    )
+
+    assert commands == [
+        ["-m", "timelapsedhrpqct.cli", "common-region", "run", str(Path("/tmp/dataset").resolve()), "--subject", "S1", "--site", "tibia"],
+        ["-m", "timelapsedhrpqct.cli", "common-region", "run", str(Path("/tmp/dataset").resolve()), "--subject", "S2", "--site", "radius"],
+    ]
+
+
+def test_registered_common_region_reports_custom_root_constraint() -> None:
+    spec = importlib.util.spec_from_file_location("registered_common_region_notice_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    logic = module.RegisteredCommonRegionLogic()
+
+    notice = logic.batch_output_root_notice(
+        {"dataset_root": "/tmp/dataset", "derivatives_root": "/tmp/custom/CommonRegion"}
+    )
+
+    assert "custom derivatives root is not supported" in notice

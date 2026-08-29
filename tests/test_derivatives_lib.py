@@ -9,6 +9,7 @@ from SlicerBoneImagingToolboxLib.derivatives import (
     write_manifest,
 )
 from bone_imaging_derivatives import DerivativeManifest as SharedDerivativeManifest
+from bone_imaging_derivatives import DerivativeRecord as SharedDerivativeRecord
 from bone_imaging_derivatives import write_manifest as write_shared_manifest
 
 
@@ -138,3 +139,18 @@ def test_discovery_keeps_shared_contract_manifests_when_legacy_manifests_exist(t
     discovered = discover_manifests(tmp_path / "derivatives")
 
     assert {manifest.workflow for manifest in discovered} == {"Legacy", "Registration"}
+
+
+def test_shared_contract_conversion_preserves_null_stack_index(tmp_path: Path) -> None:
+    record = SharedDerivativeRecord(
+        "Registration", "transform_to_reference", "S1", "tibia", "2", None,
+        "reference", tmp_path / "transform.tfm", "generated",
+    )
+    write_shared_manifest(
+        SharedDerivativeManifest.create("Registration", tmp_path, {"name": "test", "version": "1"}, records=(record,)),
+        tmp_path / "derivatives" / "Registration" / "manifest.json",
+    )
+
+    discovered = discover_manifests(tmp_path)
+
+    assert discovered[0].records[0].stack_index is None

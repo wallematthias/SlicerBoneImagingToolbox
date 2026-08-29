@@ -102,6 +102,15 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             progress=progress,
         )
 
+    def run_folder_batch(self, dataset_root, *, use_common_region=True, force=False, progress=None):
+        """Slicer folder-mode action boundary for package batch execution."""
+        return self.run_batch_workflow(
+            dataset_root,
+            use_common_region=use_common_region,
+            force=force,
+            progress=progress,
+        )
+
     def run_registered_series_job(self, job_path, on_output=None, on_finished=None):
         if self._proc is not None:
             raise RuntimeError("A registered microarchitecture process is already running")

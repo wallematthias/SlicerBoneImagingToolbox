@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -216,6 +217,19 @@ def test_plate_rod_batch_delegates_to_package_batch_api() -> None:
 
     assert "from plate_rod_thinning.batch import run_plate_rod_batch" in source
     assert "run_plate_rod_batch(" in source
+
+
+def test_plate_rod_folder_batch_action_executes_package_api(monkeypatch, tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("plate_rod_batch_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    received = {}
+    monkeypatch.setattr(module, "run_plate_rod_batch", lambda root, **kwargs: received.update(root=root, **kwargs) or "done")
+
+    result = module.PlateRodMorphometryHRpQCTLogic().run_folder_batch(tmp_path, use_common_region=False, force=True)
+
+    assert result == "done"
+    assert received == {"root": tmp_path, "use_common_region": False, "force": True, "progress": None}
 
 
 def test_plate_rod_module_builds_3d_surface_preview_for_full_thickness_labels() -> None:

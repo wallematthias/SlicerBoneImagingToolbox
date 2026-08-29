@@ -186,7 +186,20 @@ class RegisteredCommonRegionLogic(ScriptedLoadableModuleLogic):
             if on_output:
                 on_output(bytes(proc.readAllStandardError()).decode("utf-8", errors="replace"))
 
+        commands = self.batch_cli_commands(job)
+        if not commands:
+            raise ValueError("Select at least one discovered subject/site group before running common-region batch mode")
+        command_index = 0
+
+        def _start_command(index):
+            proc.start(python_exe, commands[index])
+
         def _finished(exit_code, exit_status):
+            nonlocal command_index
+            if exit_code == 0 and command_index + 1 < len(commands):
+                command_index += 1
+                _start_command(command_index)
+                return
             self._proc = None
             if on_finished:
                 on_finished(exit_code, exit_status)
@@ -194,12 +207,31 @@ class RegisteredCommonRegionLogic(ScriptedLoadableModuleLogic):
         proc.readyReadStandardOutput.connect(_read_stdout)
         proc.readyReadStandardError.connect(_read_stderr)
         proc.finished.connect(_finished)
-        job_path = Path(job["job_json_path"])
         python_exe = slicer.app.applicationFilePath()
         # Folder mode is owned by Timelapsed; Slicer only launches the CLI and
         # streams its progress. Scene-node adaptation remains in this module.
-        proc.start(python_exe, ["-m", "timelapsedhrpqct.cli", "common-region", "run", str(job["dataset_root"])])
+        notice = self.batch_output_root_notice(job)
+        if notice and on_output:
+            on_output(notice + "\n")
+        _start_command(command_index)
         return proc
+
+    @staticmethod
+    def batch_cli_commands(job):
+        dataset_root = str(Path(job["dataset_root"]).expanduser().resolve())
+        groups = sorted({(str(row["subject_id"]), str(row["site"])) for row in job.get("rows", [])})
+        return [
+            ["-m", "timelapsedhrpqct.cli", "common-region", "run", dataset_root, "--subject", subject_id, "--site", site]
+            for subject_id, site in groups
+        ]
+
+    @staticmethod
+    def batch_output_root_notice(job):
+        default_root = Path(job["dataset_root"]).expanduser().resolve() / "derivatives" / "CommonRegion"
+        selected_root = Path(job.get("derivatives_root") or default_root).expanduser().resolve()
+        if selected_root != default_root:
+            return "[common-region] custom derivatives root is not supported by the Timelapsed CLI; writing to the dataset default."
+        return ""
 
     def _write_job(self, job, root):
         job_dir = Path(root) / "slicer_run_configs"

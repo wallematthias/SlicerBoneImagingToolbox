@@ -15,7 +15,7 @@ class DerivativeRecord:
     subject_id: str
     site: str
     session_id: str
-    stack_index: int
+    stack_index: int | None
     space: str
     path: str
     source: str
@@ -94,7 +94,7 @@ def discover_manifests(root: str | Path) -> list[DerivativeManifest]:
                     DerivativeRecord(
                         record.derivative, record.role, record.subject_id,
                         record.site, str(record.session_id or ""),
-                        int(record.stack_index or 1), record.space,
+                        record.stack_index, record.space,
                         str(record.path), record.source, dict(record.metadata),
                     )
                     for record in manifest.records

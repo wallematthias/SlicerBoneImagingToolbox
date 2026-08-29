@@ -158,6 +158,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
         super().__init__()
         self._proc = None
+        self._lastCoreInstallMessage = ""
 
     def run_batch_workflow(self, dataset_root, *, use_common_region=True, force=False, progress=None):
         """Run folder mode through the package batch API, not Slicer logic."""
@@ -167,7 +168,15 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
             force=bool(force),
             progress=progress,
         )
-        self._lastCoreInstallMessage = ""
+
+    def run_folder_batch(self, dataset_root, *, use_common_region=True, force=False, progress=None):
+        """Slicer folder-mode action boundary for package batch execution."""
+        return self.run_batch_workflow(
+            dataset_root,
+            use_common_region=use_common_region,
+            force=force,
+            progress=progress,
+        )
 
     def core_runtime_status(self):
         try:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -388,6 +389,19 @@ def test_microarchitecture_batch_delegates_to_package_batch_api() -> None:
 
     assert "from bone_microarchitecture.batch import run_microarchitecture_batch" in source
     assert "run_microarchitecture_batch(" in source
+
+
+def test_microarchitecture_folder_batch_action_executes_package_api(monkeypatch, tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("microarchitecture_batch_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    received = {}
+    monkeypatch.setattr(module, "run_microarchitecture_batch", lambda root, **kwargs: received.update(root=root, **kwargs) or ["done"])
+
+    result = module.BoneMicroarchitectureLogic().run_folder_batch(tmp_path, use_common_region=False, force=True)
+
+    assert result == ["done"]
+    assert received == {"root": tmp_path, "use_common_region": False, "force": True, "progress": None}
 
 
 def test_registered_series_does_not_build_partial_common_regions_for_incomplete_groups() -> None:
