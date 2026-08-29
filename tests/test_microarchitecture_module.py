@@ -312,6 +312,8 @@ def test_registered_series_run_uses_background_qprocess_with_streamed_updates() 
     assert "--registered-series-job" in source
     assert "progress_callback=print_progress" in source
     assert "_registered_progress(" in source
+    assert "progress_callback=None" in source
+    assert "[registered] measuring sub-" in source
 
 
 def test_registered_series_preparation_builds_common_regions_before_measurement() -> None:

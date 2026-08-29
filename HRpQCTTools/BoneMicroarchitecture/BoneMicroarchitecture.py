@@ -801,6 +801,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         *,
         thickness_method="hildebrand",
         thickness_backend="auto",
+        progress_callback=None,
     ):
         from bone_microarchitecture import compute_microarchitecture
         from bone_microarchitecture.results import SUMMARY_COLUMNS, measurement_rows, write_measurement_csv
@@ -812,6 +813,11 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         skipped_rows = []
         for row in rows:
             if row.get("status") != "Ready":
+                self._registered_progress(
+                    progress_callback,
+                    f"[registered] skipping sub-{row.get('subject_id', '')} "
+                    f"ses-{row.get('session_id', '')}: {row.get('status', 'Not ready')}",
+                )
                 skipped_rows.append(
                     {
                         "subject_id": row.get("subject_id", ""),
@@ -821,6 +827,10 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                     }
                 )
                 continue
+            self._registered_progress(
+                progress_callback,
+                f"[registered] measuring sub-{row['subject_id']} ses-{row['session_id']}",
+            )
             image = self._read_registered_series_image(row["image_path"], role="image")
             bone_seg = self._read_registered_series_image(row["seg_path"], role="bone seg")
             full_mask = self._read_registered_series_image(row["full_path"], role="full")
@@ -860,6 +870,10 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 long_row.update(summary_row)
                 long_rows.append(long_row)
             written.append(str(csv_path))
+            self._registered_progress(
+                progress_callback,
+                f"[registered] finished measuring sub-{row['subject_id']} ses-{row['session_id']}",
+            )
 
         if not written:
             skipped = len(rows)
@@ -2067,6 +2081,7 @@ def _run_registered_series_worker(job_path):
             prepared["rows"],
             thickness_method=job["thickness_method"],
             thickness_backend=job["thickness_backend"],
+            progress_callback=print_progress,
         )
         measured_count = len(outputs.get("session_csvs", []))
         skipped_count = len(outputs.get("skipped_rows", []))
