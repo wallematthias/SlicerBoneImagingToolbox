@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from bone_imaging_derivatives import read_manifest as read_shared_manifest
+
 
 @dataclass(frozen=True)
 class DerivativeRecord:
@@ -76,7 +78,30 @@ def discover_manifests(root: str | Path) -> list[DerivativeManifest]:
         return []
     manifests = []
     for path in sorted(base.rglob("manifest.json")):
-        manifests.append(read_manifest(path))
+        # Discover each file independently: a dataset may contain both
+        # schema-v1 package manifests and pre-contract Slicer manifests.
+        try:
+            manifest = read_shared_manifest(path)
+        except (OSError, ValueError):
+            manifests.append(read_manifest(path))
+            continue
+        manifests.append(
+            DerivativeManifest(
+                workflow=manifest.derivative_family,
+                version=str(manifest.schema_version),
+                dataset_root=str(manifest.dataset_root),
+                records=[
+                    DerivativeRecord(
+                        record.derivative, record.role, record.subject_id,
+                        record.site, str(record.session_id or ""),
+                        int(record.stack_index or 1), record.space,
+                        str(record.path), record.source, dict(record.metadata),
+                    )
+                    for record in manifest.records
+                ],
+                metadata={"shared_contract": True},
+            )
+        )
     return manifests
 
 

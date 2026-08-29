@@ -383,6 +383,13 @@ def test_registered_series_common_regions_use_sequential_composed_transforms() -
     assert "moving_image=image" in source
 
 
+def test_microarchitecture_batch_delegates_to_package_batch_api() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "from bone_microarchitecture.batch import run_microarchitecture_batch" in source
+    assert "run_microarchitecture_batch(" in source
+
+
 def test_registered_series_does_not_build_partial_common_regions_for_incomplete_groups() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     prepare_logic = source[source.index("    def prepare_registered_series_workspace(") :]

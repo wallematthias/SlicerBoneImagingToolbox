@@ -41,6 +41,7 @@ from SlicerBoneImagingToolboxLib.segmentation_methods import (  # noqa: E402
     PERIOSTEAL_CONTOUR_METHODS,
 )
 from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog  # noqa: E402
+from bone_microarchitecture.batch import run_microarchitecture_batch  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModule,
@@ -91,6 +92,15 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
 
     def is_registered_series_running(self):
         return self._proc is not None
+
+    def run_batch_workflow(self, dataset_root, *, use_common_region=True, force=False, progress=None):
+        """Run folder mode through the package batch API, not Slicer logic."""
+        return run_microarchitecture_batch(
+            dataset_root,
+            use_common_region=bool(use_common_region),
+            force=bool(force),
+            progress=progress,
+        )
 
     def run_registered_series_job(self, job_path, on_output=None, on_finished=None):
         if self._proc is not None:

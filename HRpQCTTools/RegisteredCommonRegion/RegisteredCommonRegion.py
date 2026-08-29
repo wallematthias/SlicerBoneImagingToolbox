@@ -196,7 +196,9 @@ class RegisteredCommonRegionLogic(ScriptedLoadableModuleLogic):
         proc.finished.connect(_finished)
         job_path = Path(job["job_json_path"])
         python_exe = slicer.app.applicationFilePath()
-        proc.start(python_exe, [str(Path(__file__).resolve()), "--registered-common-region-job", str(job_path)])
+        # Folder mode is owned by Timelapsed; Slicer only launches the CLI and
+        # streams its progress. Scene-node adaptation remains in this module.
+        proc.start(python_exe, ["-m", "timelapsedhrpqct.cli", "common-region", "run", str(job["dataset_root"])])
         return proc
 
     def _write_job(self, job, root):

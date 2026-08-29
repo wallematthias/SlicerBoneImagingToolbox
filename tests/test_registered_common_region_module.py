@@ -56,3 +56,10 @@ def test_registered_common_region_batch_runs_in_background_qprocess():
     assert "--registered-common-region-job" in source
     assert "build_common_scan_region" in source
     assert "write_manifest" in source
+
+
+def test_registered_common_region_batch_delegates_to_timelapsed_cli() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert '"-m", "timelapsedhrpqct.cli"' in source
+    assert '"common-region", "run"' in source

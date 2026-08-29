@@ -211,6 +211,13 @@ def test_plate_rod_module_sets_display_and_provenance_attributes() -> None:
     assert '"Junction", (0.9, 0.1, 0.25)' in source
 
 
+def test_plate_rod_batch_delegates_to_package_batch_api() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "from plate_rod_thinning.batch import run_plate_rod_batch" in source
+    assert "run_plate_rod_batch(" in source
+
+
 def test_plate_rod_module_builds_3d_surface_preview_for_full_thickness_labels() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 

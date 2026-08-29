@@ -35,6 +35,13 @@ class PackageStatusRow:
 
 DEFAULT_RUNTIME_PACKAGES = (
     PackageSpec(
+        display_name="Bone Imaging Derivative Contract",
+        package_name="bone-imaging-derivatives",
+        import_name="bone_imaging_derivatives",
+        minimum_version="0.1.0",
+        notes="Shared derivative manifests, discovery, and prerequisite planning.",
+    ),
+    PackageSpec(
         display_name="Timelapsed HR-pQCT",
         package_name="timelapsed-hrpqct",
         import_name="timelapsedhrpqct",
@@ -265,15 +272,44 @@ def _active_repositories_root(toolbox_root: Path) -> Path:
     return toolbox_root.parent
 
 
+_LOCAL_WORKTREE_NAMES = {
+    "timelapsed-hrpqct": ("derivative-contract",),
+    "bone-microarchitecture": ("derivative-batch",),
+    "plate-rod-thinning": ("derivative-batch",),
+}
+_LOCAL_REPOSITORY_NAMES = {
+    "timelapsed-hrpqct": "TimelapsedHRpQCT",
+}
+
+
+def resolve_local_editable_repo(toolbox_root: Path, package_name: str) -> Path | None:
+    """Find a package checkout in active-repository or named-worktree layouts."""
+    active_root = _active_repositories_root(Path(toolbox_root))
+    repo_name = _LOCAL_REPOSITORY_NAMES.get(package_name, package_name)
+    repository = active_root / repo_name
+    direct = repository / "pyproject.toml"
+    if direct.exists():
+        return repository
+    for worktree_name in _LOCAL_WORKTREE_NAMES.get(package_name, ()):
+        candidate = repository / ".worktrees" / worktree_name
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    return None
+
+
 def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
-    if spec.package_name == "bone-microarchitecture":
+    if spec.package_name in {
+        "bone-imaging-derivatives", "timelapsed-hrpqct", "bone-microarchitecture", "plate-rod-thinning",
+    }:
         upgrade = ["--upgrade"] if installed else []
-        dependency_command = " ".join([*upgrade, "--prefer-binary", *spec.constraints])
         toolbox_root = Path(__file__).resolve().parents[1]
-        local_repo = _active_repositories_root(toolbox_root) / "bone-microarchitecture"
-        if (local_repo / "pyproject.toml").exists():
+        local_repo = resolve_local_editable_repo(toolbox_root, spec.package_name)
+        if local_repo is not None:
             package_command = " ".join([*upgrade, "--no-deps", "-e", str(local_repo)])
         else:
             package_command = install_command(spec, installed=installed)
+        if spec.package_name == "bone-imaging-derivatives":
+            return (package_command,)
+        dependency_command = " ".join([*upgrade, "--prefer-binary", *spec.constraints])
         return (dependency_command, package_command)
     return (install_command(spec, installed=installed),)

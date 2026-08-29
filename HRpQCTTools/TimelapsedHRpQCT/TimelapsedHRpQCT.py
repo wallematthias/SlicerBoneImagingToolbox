@@ -74,8 +74,8 @@ if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PI
         else str(_PIPELINE_LOCAL_SRC) + os.pathsep + _existing_pythonpath
     )
 
-from SlicerBoneImagingToolboxLib.derivatives import discover_manifests  # noqa: E402
-from SlicerBoneImagingToolboxLib.workflow_planning import resolve_workflow_plan  # noqa: E402
+from bone_imaging_derivatives import discover_manifests  # noqa: E402
+from bone_imaging_derivatives import resolve_workflow_plan  # noqa: E402
 
 _reporting = importlib.import_module("TimelapsedHRpQCTLib.Reporting")
 if not hasattr(_reporting, "COHORT_DEFAULT_EXPORT_FIELDS"):
@@ -203,13 +203,21 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         for manifest in manifests:
             available_records.extend(manifest.records)
         available = {record.derivative for record in available_records}
-        plan = resolve_workflow_plan("Timelapsed", available_records=available_records, available_inputs={"masks": True})
+        first = available_records[0] if available_records else None
+        plan = resolve_workflow_plan(
+            "Timelapsed",
+            manifests=manifests,
+            subject_id=first.subject_id if first else "unknown",
+            site=first.site if first else "unknown",
+            sessions=sorted({str(record.session_id) for record in available_records if record.session_id}),
+            generate_missing=True,
+        )
         return {
             "registration_available": "Registration" in available,
             "common_region_available": "CommonRegion" in available,
-            "planned_steps": [step.workflow for step in plan.steps],
+            "planned_steps": list(plan.steps),
             "blocked": bool(plan.blocked),
-            "missing_roles": list(plan.missing_roles),
+            "missing_roles": [requirement.derivative for requirement in plan.missing],
         }
 
     def create_override_config(self, settings_dict, results_root=None):

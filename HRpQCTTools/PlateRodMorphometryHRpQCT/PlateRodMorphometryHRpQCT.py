@@ -31,6 +31,7 @@ def _remove_local_core_repo_from_sys_path():
     sys.path[:] = [path for path in sys.path if str(path) != local_repo]
 
 from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install  # noqa: E402
+from plate_rod_thinning.batch import run_plate_rod_batch  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModule,
@@ -157,6 +158,15 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
         super().__init__()
         self._proc = None
+
+    def run_batch_workflow(self, dataset_root, *, use_common_region=True, force=False, progress=None):
+        """Run folder mode through the package batch API, not Slicer logic."""
+        return run_plate_rod_batch(
+            Path(dataset_root),
+            use_common_region=bool(use_common_region),
+            force=bool(force),
+            progress=progress,
+        )
         self._lastCoreInstallMessage = ""
 
     def core_runtime_status(self):

@@ -13,6 +13,7 @@ from SlicerBoneImagingToolboxLib.package_status import (
     install_command,
     install_commands,
     package_status_row,
+    resolve_local_editable_repo,
 )
 from SlicerBoneImagingToolboxLib.slicer_pip import clean_pip_environment
 
@@ -208,3 +209,28 @@ def test_clean_pip_environment_removes_stale_compiler_overrides() -> None:
     assert "PYTHONPATH" not in env
     assert env["PATH"] == "/usr/bin"
     assert env["PYTHONUNBUFFERED"] == "1"
+
+
+def test_default_runtime_packages_include_shared_derivative_contract() -> None:
+    package_names = {spec.package_name for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    assert "bone-imaging-derivatives" in package_names
+
+
+def test_shared_derivative_contract_install_uses_local_worktree_when_available() -> None:
+    spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "bone-imaging-derivatives")
+
+    commands = install_commands(spec, installed=False)
+
+    assert len(commands) == 1
+    assert "-e" in commands[0]
+    assert "bone-imaging-derivatives" in commands[0]
+
+
+def test_local_editable_repo_resolves_active_worktree_layout(tmp_path: Path) -> None:
+    toolbox_root = tmp_path / "active" / "SlicerBoneImagingToolbox" / ".worktrees" / "derivatives-overhaul"
+    local_repo = tmp_path / "active" / "bone-microarchitecture" / ".worktrees" / "derivative-batch"
+    local_repo.mkdir(parents=True)
+    (local_repo / "pyproject.toml").write_text("[build-system]\n", encoding="utf-8")
+
+    assert resolve_local_editable_repo(toolbox_root, "bone-microarchitecture") == local_repo

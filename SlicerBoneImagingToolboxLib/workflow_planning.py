@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
+from bone_imaging_derivatives import resolve_workflow_plan as resolve_shared_workflow_plan
 from SlicerBoneImagingToolboxLib.derivatives import DerivativeRecord
 
 
@@ -39,6 +40,18 @@ class WorkflowPlan:
     steps: list[WorkflowStep] = field(default_factory=list)
     blocked: bool = False
     missing_roles: list[str] = field(default_factory=list)
+
+
+def resolve_shared_plan(*, workflow, manifests, subject_id, site, sessions, generate_missing=True):
+    """Expose the shared prerequisite planner to Slicer-facing adapters."""
+    return resolve_shared_workflow_plan(
+        workflow,
+        manifests=manifests,
+        subject_id=subject_id,
+        site=site,
+        sessions=sessions,
+        generate_missing=generate_missing,
+    )
 
 
 def _available_derivatives(records: Sequence[DerivativeRecord]) -> set[str]:

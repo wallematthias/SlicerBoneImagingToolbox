@@ -8,6 +8,8 @@ from SlicerBoneImagingToolboxLib.derivatives import (
     read_manifest,
     write_manifest,
 )
+from bone_imaging_derivatives import DerivativeManifest as SharedDerivativeManifest
+from bone_imaging_derivatives import write_manifest as write_shared_manifest
 
 
 def test_manifest_round_trip_preserves_records(tmp_path: Path) -> None:
@@ -115,3 +117,24 @@ def test_discover_manifests_finds_registered_derivative_manifests(tmp_path: Path
     discovered = discover_manifests(tmp_path / "derivatives")
 
     assert [manifest.workflow for manifest in discovered] == ["CommonRegion", "Registration"]
+
+
+def test_derivative_shim_delegates_contract_io_to_shared_package() -> None:
+    source = (Path(__file__).resolve().parents[1] / "SlicerBoneImagingToolboxLib" / "derivatives.py").read_text(encoding="utf-8")
+
+    assert "from bone_imaging_derivatives" in source
+
+
+def test_discovery_keeps_shared_contract_manifests_when_legacy_manifests_exist(tmp_path: Path) -> None:
+    write_manifest(
+        tmp_path / "derivatives" / "Legacy" / "manifest.json",
+        DerivativeManifest(workflow="Legacy", version="1", dataset_root=str(tmp_path)),
+    )
+    write_shared_manifest(
+        SharedDerivativeManifest.create("Registration", tmp_path, {"name": "test", "version": "1"}),
+        tmp_path / "derivatives" / "Registration" / "manifest.json",
+    )
+
+    discovered = discover_manifests(tmp_path / "derivatives")
+
+    assert {manifest.workflow for manifest in discovered} == {"Legacy", "Registration"}
