@@ -821,11 +821,23 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         thickness_backend="auto",
         progress_callback=None,
     ):
-        from bone_microarchitecture import compute_microarchitecture
+        from bone_microarchitecture import compute_microarchitecture, default_thickness_backend
         from bone_microarchitecture.results import SUMMARY_COLUMNS, measurement_rows, write_measurement_csv
 
         root = self.registered_microarchitecture_root(dataset_root, output_root)
         self.write_registered_series_manifest(dataset_root, root, rows)
+        requested_thickness_backend = str(thickness_backend or "auto").strip().lower()
+        resolved_thickness_backend = (
+            default_thickness_backend()
+            if requested_thickness_backend == "auto"
+            else requested_thickness_backend
+        )
+        requested_thickness_method = str(thickness_method or "hildebrand").strip().lower()
+        self._registered_progress(
+            progress_callback,
+            f"[registered] thickness: {requested_thickness_method} "
+            f"backend: {requested_thickness_backend} -> {resolved_thickness_backend}",
+        )
         long_rows = []
         written = []
         skipped_rows = []
@@ -881,8 +893,8 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 cortical_mask=sitk.GetArrayFromImage(cort_mask),
                 grayscale=sitk.GetArrayFromImage(image),
                 spacing=tuple(reversed(tuple(trab_mask.GetSpacing()))),
-                thickness_method=str(thickness_method),
-                thickness_backend=str(thickness_backend),
+                thickness_method=requested_thickness_method,
+                thickness_backend=resolved_thickness_backend,
             )
             session_dir = self.registered_session_output_dir(root, row)
             maps_dir = session_dir / "maps"

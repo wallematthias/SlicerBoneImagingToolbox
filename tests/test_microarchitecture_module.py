@@ -313,6 +313,9 @@ def test_registered_series_run_uses_background_qprocess_with_streamed_updates() 
     assert "progress_callback=print_progress" in source
     assert "_registered_progress(" in source
     assert "progress_callback=None" in source
+    assert "default_thickness_backend()" in source
+    assert "[registered] thickness:" in source
+    assert "thickness_backend=resolved_thickness_backend" in source
     assert "[registered] measuring sub-" in source
 
 
