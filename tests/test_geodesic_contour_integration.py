@@ -12,8 +12,8 @@ def test_segmentation_module_exposes_geodesic_method_for_local_testing():
     assert "hrpqct-geodesic-contour" in source
     assert "install_or_update_geodesic_contour" in source
     assert "install_or_update_contouring_dependencies" in source
-    assert "Install / Update contouring dependencies" in source
-    assert "self.installButton.clicked.connect(self._install_contouring_dependencies)" in source
+    assert "Install / Update contouring dependencies" not in source
+    assert "self.installButton.clicked.connect(self._install_contouring_dependencies)" not in source
     assert "pip_install(\"edt>=2.4\")" in source
     assert "--no-deps -e" in source
     assert "importlib.invalidate_caches()" in source
@@ -37,14 +37,16 @@ def test_segmentation_module_splits_segmentation_and_contour_choices():
     assert "form.addRow(\"Bone segmentation\", self.segmentationMethodCombo)" in source
     assert "form.addRow(\"Periosteal (outer) contour\", self.periostealContourCombo)" in source
     assert "form.addRow(\"Endosteal (inner) contour\", self.endostealContourCombo)" in source
-    assert "SEGMENTATION_METHODS = {\"seg_gauss\", \"adaptive\", \"laplace_hamming\", \"none\"}" in source
-    assert "PERIOSTEAL_CONTOUR_METHODS = {\"standard\", \"geodesic_fracture\", \"none\"}" in source
-    assert "ENDOSTEAL_CONTOUR_METHODS = {\"standard\", \"none\"}" in source
+    assert "SEGMENTATION_METHODS = set(BONE_SEGMENTATION_METHODS)" in source
+    assert "PERIOSTEAL_CONTOUR_METHOD_IDS = set(PERIOSTEAL_CONTOUR_METHODS)" in source
+    assert "ENDOSTEAL_CONTOUR_METHOD_IDS = set(ENDOSTEAL_CONTOUR_METHODS)" in source
     assert "segmentation_method=segmentation_method" in source
     assert "periosteal_contour_method=periosteal_method" in source
     assert "endosteal_contour_method=endosteal_method" in source
-    assert "generated.metadata[\"periosteal_contour_method\"] = periosteal_contour_method" in source
-    assert "generated.metadata[\"endosteal_contour_method\"] = endosteal_contour_method" in source
+    assert "generated.metadata[\"periosteal_contour_method\"] = requested_periosteal_contour_method" in source
+    assert "generated.metadata[\"endosteal_contour_method\"] = requested_endosteal_contour_method" in source
+    assert "generated.metadata[\"internal_periosteal_contour_method\"] = periosteal_contour_method" in source
+    assert "generated.metadata[\"internal_endosteal_contour_method\"] = endosteal_contour_method" in source
     assert "from dataclasses import asdict" in source
     assert "outer_options = asdict(contour_params.outer)" in source
     assert "inner_options = asdict(contour_params.inner)" in source
@@ -87,6 +89,9 @@ def test_segmentation_module_defaults_to_segmentation_node_only():
     assert "label_text = \"\"" in source
     assert "returnNode=True" not in source
     assert "slicer.util.updateSegmentBinaryLabelmapFromArray(" in source
+    assert "segment.SetName(str(segment_name))" in source
+    assert 'segment.SetTag("HRpQCT.Role", str(role))' in source
+    assert "self._finalize_segment(segmentation_node, segment_id, segment_name, role)" in source
     assert "_remove_empty_duplicate_segmentation_nodes(segmentation_node)" in source
     assert "node.IsA(\"vtkMRMLSegmentationNode\")" in source
     assert "node.GetSegmentation().GetNumberOfSegments() == 0" in source
@@ -150,7 +155,7 @@ def test_generated_masks_keep_aim_metadata_for_export():
 def test_segmentation_installer_keeps_slicer_numpy_constraints():
     source = MODULE.read_text()
 
-    assert 'CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<2.0", "scikit-image>=0.24,<0.26", "tifffile<2026")' in source
+    assert 'CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<3.0", "scikit-image>=0.24,<0.26", "tifffile<2026")' in source
     assert 'slicer.util.pip_uninstall("pyjpegls")' in source
     assert '" ".join(["timelapsed-hrpqct", *CORE_PIP_CONSTRAINTS])' in source
 
@@ -158,7 +163,7 @@ def test_segmentation_installer_keeps_slicer_numpy_constraints():
 def test_laplace_hamming_shows_busy_progress_dialog():
     source = MODULE.read_text()
 
-    assert "elif segmentation_method == \"laplace_hamming\":" in source
+    assert 'elif segmentation_method == "laplace_hamming":' in source
     assert "Running Laplace-Hamming bone segmentation..." in source
     assert "Laplace-Hamming Segmentation" in source
     assert "def _create_busy_progress_dialog" in source
@@ -214,7 +219,8 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     assert "profile_initial_translation = profile_multistack_cfg.get(\"initial_translation_voxels\")" in source
     assert "\"initial_translation_voxels\": initial_translation_voxels" in source
     assert "\"masks\": masks_override" in source
-    assert "timelapsed-hrpqct and contour dependency installation finished" in source
+    assert "Install / Update timelapsed-hrpqct" not in source
+    assert "self.installBtn.clicked.connect(self._on_install_pipeline)" not in source
 
 
 def test_timelapsed_pipeline_writes_sparse_override_config_for_profiles():

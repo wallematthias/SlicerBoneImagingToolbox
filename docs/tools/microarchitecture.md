@@ -38,14 +38,46 @@ The trabecular parameters are not independent. In particular, `Tb.N` is a local-
 
 ### Registered Series
 
-The `Registered Series` tab is for longitudinal datasets where registration is used to define common full, trabecular, and cortical regions, but each timepoint is measured in its native image space. Dataset discovery uses the Timelapsed HR-pQCT filename/header logic.
+The `Registered Series` tab is for longitudinal HR-pQCT datasets where registration defines a common analysis region, but each session is measured in its own native image space. This is useful when you want paired or repeated microarchitecture measurements over the same anatomical region without turning the workflow into a remodelling-image analysis. Dataset discovery reuses the Timelapsed HR-pQCT filename and AIM-header logic.
+
+Use this tab when the dataset is already organized as subject, site, and session scans, or when filenames contain enough information for Timelapsed-style discovery. The workflow prepares a separate `RegisteredMicroarchitecture` workspace and leaves the original dataset untouched.
 
 1. Select the dataset root.
 2. Use the default output root or choose a folder. The default is `RegisteredMicroarchitecture` under the dataset root.
 3. Run `Discover series`.
-4. Use the `Subject` and `Site` dropdowns to show all discovered sessions or a selected subset.
-5. Review the session table.
+4. Use the `Subject` and `Site` dropdowns to review all discovered sessions or a selected subset.
+5. Check the session table for missing image, bone segmentation, full, trabecular, or cortical masks.
 6. Choose the missing-mask methods if any sessions need masks generated. Preparation derives missing compartment masks when two of full, trabecular, and cortical are available; otherwise it uses the selected segmentation and contour methods.
-7. Run `Run` to write the `RegisteredMicroarchitecture` folder structure, generate or derive missing masks where possible, and compute all complete sessions. Per-session results are written under `native_space/ses-*/microarchitecture`, and the combined table is written as `microarchitecture_long.csv`.
+7. Run `Run`. The module prepares the workspace, builds common regions, measures complete sessions in native space, and writes a combined long table.
+
+The generated output root has this layout:
+
+```text
+RegisteredMicroarchitecture/
+  registered_microarchitecture_manifest.json
+  microarchitecture_long.csv
+  sub-<subject>/
+    site-<site>/
+      registration/
+        adjacent/
+        composed/
+      common_space/
+        masks_from_each_session/
+        common_masks/
+      native_space/
+        ses-<session>/
+          masks/
+          microarchitecture/
+            measurements.csv
+            maps/
+```
+
+The manifest records the discovered sessions, registration-pair plan, output root, and measurement-space convention. Each session receives its own `measurements.csv` and scalar maps under `native_space/ses-<session>/microarchitecture/`. The cohort-level `microarchitecture_long.csv` stacks those session measurements with `Subject`, `Site`, and `Session` columns for downstream statistics.
+
+The progress log reports preparation, registration/common-region steps, measured sessions, skipped sessions, and the final long-table path. Skipped sessions usually mean one or more required masks could not be found or generated.
 
 If the core package is not available, install it from `Bone Imaging > Setup > Toolbox Setup` or the module's `Install / update microarchitecture core` button.
+
+## Attribution
+
+For registered-series discovery and common-region setup, cite the relevant Timelapsed HR-pQCT and multistack registration papers listed in the main README citation table when those parts of the workflow are used. Also cite study-specific microarchitecture definitions required by your analysis protocol or target journal.

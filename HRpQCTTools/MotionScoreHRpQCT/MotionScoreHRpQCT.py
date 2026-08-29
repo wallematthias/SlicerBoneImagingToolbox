@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -18,6 +19,7 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 from pathlib import Path
 
+import numpy as np
 import ctk
 import qt
 import slicer
@@ -44,11 +46,16 @@ DEFAULT_MODEL_CATALOG_URL = (
 )
 LICENSE_HTTP_USER_AGENT = "MotionScoreSlicer/0.1 (+3D-Slicer; Python urllib)"
 CORE_PYPI_PACKAGE = "motionscorehrpqct"
-CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<2.0", "scikit-image>=0.24,<0.26", "tifffile<2026")
+CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<3.0", "scikit-image>=0.24,<0.26", "tifffile<2026")
 PROFILE_PLOT_LEFT_FRACTION = 0.11
 PROFILE_PLOT_RIGHT_FRACTION = 0.89
 TRAINING_PLOT_WIDTH = 760
 TRAINING_PLOT_HEIGHT = 280
+PRELOAD_AFTER_LOAD_DELAY_MS = 250
+DEFAULT_CACHE_AHEAD_COUNT = 5
+MAX_CACHE_AHEAD_COUNT = 20
+CACHE_WARM_IDLE_DELAY_MS = 2000
+CACHE_WARM_CONTINUE_DELAY_MS = 500
 
 
 def read_tsv(path):
@@ -186,6 +193,18 @@ class _ProfileWheelEventFilter(qt.QObject):
         return bool(owner._handle_profile_wheel_event(obj, event))
 
 
+class _GradingShortcutEventFilter(qt.QObject):
+    def __init__(self, owner_widget):
+        super().__init__()
+        self._owner_widget = owner_widget
+
+    def eventFilter(self, obj, event):
+        owner = self._owner_widget
+        if owner is None:
+            return False
+        return bool(owner._handle_grading_shortcut_event(obj, event))
+
+
 class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     RUN_SCOPE_ALL = "All scans"
     RUN_MODE_AI = "AI Assisted"
@@ -216,7 +235,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._all_scan_ids = []
         self._audit_rows = []
         self._auto_loading_scan = False
-        self._grading_shortcuts = []
+        self._grading_shortcut_filter = _GradingShortcutEventFilter(self)
         self._selected_manual_grade = None
         self._grade_history = []
         self._model_profiles = []
@@ -232,6 +251,16 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._preload_future_scan_id = ""
         self._preload_timer = None
         self._preload_cache = {}
+        self._cache_warm_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motionscore-cache-warm")
+        self._cache_warm_future = None
+        self._cache_warm_scan_id = ""
+        self._cache_warm_timer = None
+        self._active_load_future = None
+        self._active_load_scan_id = ""
+        self._active_load_raw_path = ""
+        self._active_load_request_token = 0
+        self._load_request_token = 0
+        self._active_load_timer = None
 
     def setup(self):
         super().setup()
@@ -484,9 +513,26 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.autoLoadCheck = qt.QCheckBox("Auto-load selected scan")
         self.autoLoadCheck.setChecked(True)
         self.autoLoadCheck.setToolTip("Automatically load/reload the selected scan to reduce clicks.")
-        self.preloadNextScanCheck = qt.QCheckBox("Preload next scan")
-        self.preloadNextScanCheck.setChecked(bool(int(self._settings().value("MotionScore/PreloadNextScan", 1) or 1)))
-        self.preloadNextScanCheck.setToolTip("Read the next AIM in the background so grading can advance more smoothly.")
+        cache_ahead_count = int(
+            self._settings().value("MotionScore/CacheAheadCount", DEFAULT_CACHE_AHEAD_COUNT)
+            or DEFAULT_CACHE_AHEAD_COUNT
+        )
+        cache_ahead_count = max(0, min(MAX_CACHE_AHEAD_COUNT, cache_ahead_count))
+        self.cacheAheadSlider = qt.QSlider(qt.Qt.Horizontal)
+        self.cacheAheadSlider.minimum = 0
+        self.cacheAheadSlider.maximum = 20
+        self.cacheAheadSlider.value = cache_ahead_count
+        self.cacheAheadSpin = qt.QSpinBox()
+        self.cacheAheadSpin.minimum = 0
+        self.cacheAheadSpin.maximum = 20
+        self.cacheAheadSpin.value = cache_ahead_count
+        self.cacheAheadSpin.setToolTip(
+            "Number of upcoming scans to keep in the local temp cache. Set to 0 to disable scan buffering."
+        )
+        self.cacheAheadSlider.setToolTip(self.cacheAheadSpin.toolTip)
+        cacheAheadRow = qt.QHBoxLayout()
+        cacheAheadRow.addWidget(self.cacheAheadSlider)
+        cacheAheadRow.addWidget(self.cacheAheadSpin)
 
         reviewActionRow = qt.QHBoxLayout()
         self.backButton = qt.QPushButton("Back")
@@ -531,7 +577,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         additionalForm.addRow("Fast: Every N-th Slice", self.sliceStepSpin)
         additionalForm.addRow("Run Scope", self.runScopeCombo)
         additionalForm.addRow("Auto Load", self.autoLoadCheck)
-        additionalForm.addRow("Review Buffer", self.preloadNextScanCheck)
+        additionalForm.addRow("Cache Ahead", cacheAheadRow)
         additionalLayout.addLayout(additionalForm)
 
         additionalRunButtons = qt.QHBoxLayout()
@@ -703,7 +749,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.datasetPathEdit.currentPathChanged.connect(self.onDatasetPathChanged)
         self.trainingModeCheck.toggled.connect(self.onTrainingModeToggled)
         self.forcePredictCheck.toggled.connect(self._persist_runtime_settings)
-        self.preloadNextScanCheck.toggled.connect(self._on_preload_setting_changed)
+        self.cacheAheadSlider.valueChanged.connect(self.cacheAheadSpin.setValue)
+        self.cacheAheadSpin.valueChanged.connect(self.cacheAheadSlider.setValue)
+        self.cacheAheadSpin.valueChanged.connect(self._on_preload_setting_changed)
         self.reviewerEdit.editingFinished.connect(self._persist_reviewer_setting)
         self.deviceCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.runModeCombo.currentTextChanged.connect(self._persist_runtime_settings)
@@ -724,11 +772,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.retrainEpochsHeadSpin.valueChanged.connect(self._persist_runtime_settings)
         self.retrainEpochsFineSpin.valueChanged.connect(self._persist_runtime_settings)
 
-        self._install_grading_shortcuts()
-
         self.layout.addStretch(1)
         self._update_setup_status()
         self._refresh_model_profiles()
+        qt.QTimer.singleShot(0, self._install_grading_shortcut_filter)
         qt.QTimer.singleShot(0, self._install_slice_observer)
         qt.QTimer.singleShot(0, self._install_profile_wheel_filter)
 
@@ -784,8 +831,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._settings().setValue("MotionScore/SliceStep", int(self.sliceStepSpin.value))
         force_attr = self.forcePredictCheck.checked
         self._settings().setValue("MotionScore/ReprocessExisting", 1 if bool(force_attr() if callable(force_attr) else force_attr) else 0)
-        preload_attr = self.preloadNextScanCheck.checked
-        self._settings().setValue("MotionScore/PreloadNextScan", 1 if bool(preload_attr() if callable(preload_attr) else preload_attr) else 0)
+        self._settings().setValue("MotionScore/CacheAheadCount", self._cache_ahead_count())
         self._settings().setValue("MotionScore/RetrainModelId", self.retrainModelIdEdit.text.strip())
         self._settings().setValue("MotionScore/RetrainDisplayName", self.retrainDisplayNameEdit.text.strip())
         self._settings().setValue("MotionScore/RetrainBaseModel", self._selected_retrain_base_model_id())
@@ -805,24 +851,54 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._settings().setValue("MotionScore/RetrainEpochsHead", int(self.retrainEpochsHeadSpin.value))
         self._settings().setValue("MotionScore/RetrainEpochsFine", int(self.retrainEpochsFineSpin.value))
 
-    def _install_grading_shortcuts(self):
-        parent_widget = self.parent if isinstance(self.parent, qt.QWidget) else slicer.util.mainWindow()
-        if parent_widget is None:
+    def _install_grading_shortcut_filter(self):
+        app = getattr(slicer, "app", None)
+        if app is None:
             return
-        self._grading_shortcuts = []
-        for grade in range(1, 6):
-            shortcut = qt.QShortcut(qt.QKeySequence(f"Ctrl+{grade}"), parent_widget)
-            shortcut.setContext(qt.Qt.WidgetWithChildrenShortcut)
-            shortcut.activated.connect(lambda g=grade: self.onQuickSelectGrade(g))
-            self._grading_shortcuts.append(shortcut)
+        try:
+            app.installEventFilter(self._grading_shortcut_filter)
+        except Exception as exc:
+            self._log(f"[review] could not install grading shortcut filter: {exc}\n")
+
+    def _handle_grading_shortcut_event(self, obj, event):
+        try:
+            if event.type() != qt.QEvent.KeyPress:
+                return False
+            try:
+                if event.isAutoRepeat():
+                    return True
+            except Exception:
+                pass
+            modifiers = event.modifiers()
+            if not (modifiers & qt.Qt.ControlModifier or modifiers & qt.Qt.MetaModifier):
+                return False
+            key = event.key()
+            if qt.Qt.Key_1 <= key <= qt.Qt.Key_5:
+                grade = int(key - qt.Qt.Key_0)
+                self.onQuickSelectGrade(grade)
+                event.accept()
+                return True
+        except Exception as exc:
+            self._log(f"[review] grading shortcut failed: {exc}\n")
+        return False
 
     def _auto_load_enabled(self):
         checked_attr = self.autoLoadCheck.checked
         return bool(checked_attr() if callable(checked_attr) else checked_attr)
 
+    def _cache_ahead_count(self):
+        try:
+            value_attr = self.cacheAheadSpin.value
+            value = int(value_attr() if callable(value_attr) else value_attr)
+        except Exception:
+            try:
+                value = int(self._settings().value("MotionScore/CacheAheadCount", DEFAULT_CACHE_AHEAD_COUNT) or DEFAULT_CACHE_AHEAD_COUNT)
+            except Exception:
+                value = DEFAULT_CACHE_AHEAD_COUNT
+        return max(0, min(MAX_CACHE_AHEAD_COUNT, value))
+
     def _preload_enabled(self):
-        checked_attr = self.preloadNextScanCheck.checked
-        return bool(checked_attr() if callable(checked_attr) else checked_attr)
+        return self._cache_ahead_count() > 0
 
     def _set_selected_manual_grade(self, grade, suggested=False):
         normalized = None
@@ -1500,7 +1576,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.scanCombo.enabled = review_enabled
         self.clearReviewerCombo.enabled = enabled
         self.autoLoadCheck.enabled = review_enabled
-        self.preloadNextScanCheck.enabled = review_enabled
+        self.cacheAheadSlider.enabled = review_enabled
+        self.cacheAheadSpin.enabled = review_enabled
         self.prepareRetrainButton.enabled = enabled
         self.trainHeadButton.enabled = enabled
         self.trainFullButton.enabled = enabled
@@ -1775,7 +1852,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.agreementMatrixTable.setRowCount(0)
             self.agreementMatrixTable.setColumnCount(0)
             self._clear_profile_plot()
-            self._set_run_scope_items(self._discover_scan_ids_for_dataset())
+            self._set_run_scope_items([])
             self._update_review_queue_label()
             if not quiet:
                 self._log(f"[review] index not found: {index_path}\n")
@@ -1882,8 +1959,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         derivatives = self._derivatives_root()
         index_exists = bool(derivatives is not None and (derivatives / "index.tsv").exists())
-        discovered = self._discover_scan_ids_for_dataset()
-        discovered_count = len(discovered)
         processed_count = len(self._index_rows)
         review_count = len(self._review_rows)
         pending_count = len(self._pending_scan_ids())
@@ -1896,22 +1971,16 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
             progress = "Dataset loaded; core not installed"
         elif not index_exists:
-            if discovered_count > 0:
-                text = (
-                    f"Dataset loaded: {discovered_count} raw scan(s) discovered; 0 processed yet. "
-                    "Click Predict to create MotionScore outputs, or Grade Manually to start manual review."
-                )
-                progress = f"Dataset loaded: {discovered_count} discovered, 0 processed"
-            else:
-                text = (
-                    "Dataset loaded: 0 raw scans discovered and 0 processed scans found. "
-                    "Check the Dataset Root and AIM filename/layout."
-                )
-                progress = "Dataset loaded: 0 discovered, 0 processed"
+            text = (
+                "Dataset loaded: no MotionScore index found yet. "
+                "Click Predict / Resume to discover raw scans and create MotionScore outputs, "
+                "or Grade Manually to initialize manual review."
+            )
+            progress = "Dataset loaded: no MotionScore index"
         else:
             text = (
-                f"Dataset loaded: {discovered_count} raw scan(s) discovered; "
-                f"{processed_count} processed; {review_count} in review; "
+                f"Dataset loaded: {processed_count} processed scan(s) indexed; "
+                f"{review_count} in review; "
                 f"{pending_count} pending; {reviewed_count} reviewed."
             )
             progress = f"Dataset loaded: {processed_count} processed, {pending_count} pending"
@@ -2052,13 +2121,26 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if self.logic.is_running():
             return
         self._clear_preload_cache()
+        clear_selected_load = getattr(self, "_clear_selected_scan_load", None)
+        if clear_selected_load:
+            clear_selected_load()
         self._grade_history = []
         self.backButton.enabled = False
+        self._all_scan_ids = []
+        self._index_rows = {}
+        self._review_rows = {}
+        self._audit_rows = []
+        self._model_index_rows = {}
+        self._model_review_rows = {}
+        self._model_audit_rows = {}
+        self.scanCombo.clear()
+        self._set_run_scope_items([])
+        self.autoLabel.text = "Auto grade: - | confidence: -"
+        self.agreementLabel.text = "Agreement: overlap=0 | match=- | exact=-"
+        self.trainingRevealLabel.text = "Last training reveal: -"
         self._refresh_model_profiles()
-        if self._review_rows:
-            self._set_run_scope_items(self._pending_scan_ids())
-        else:
-            self._set_run_scope_items(self._discover_scan_ids_for_dataset())
+        self.datasetSummaryLabel.text = "Dataset path changed. Click Load Dataset to discover scans."
+        self.progressLabel.setText("Dataset path changed; load dataset when ready")
         self._update_review_queue_label()
 
     def onScanSelectionChanged(self, scan_id):
@@ -2453,6 +2535,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not scan_id:
             slicer.util.errorDisplay("No pending scan selected")
             return
+        request_token = self._next_load_request_token()
 
         index_row = self._index_rows.get(scan_id)
         if index_row is None:
@@ -2488,37 +2571,23 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._log(f"[preload] cached load failed for {scan_id}: {exc}\n")
 
         if loaded_node is None:
-            try:
-                loaded_node = slicer.util.loadVolume(raw_path)
-            except Exception as exc:
-                primary_error = exc
-                self._log(f"[load] native volume load failed for {raw_path}: {exc}\n")
-
-        if loaded_node is None or loaded_node is False:
-            try:
-                loaded_node = self._load_aim_with_core(raw_path)
-                self._log(f"[load] AIM fallback load succeeded: {raw_path}\n")
-            except Exception as fallback_exc:
-                if primary_error is not None:
-                    slicer.util.errorDisplay(
-                        "Could not load selected scan.\n"
-                        f"Path: {raw_path}\n"
-                        f"Native Slicer load error: {primary_error}\n"
-                        f"AIM fallback load error: {fallback_exc}"
-                    )
-                else:
-                    slicer.util.errorDisplay(
-                        "Could not load selected scan.\n"
-                        f"Path: {raw_path}\n"
-                        f"AIM fallback load error: {fallback_exc}"
-                    )
+            queue_selected_load = getattr(self, "_queue_selected_scan_load", None)
+            if queue_selected_load is None:
+                slicer.util.errorDisplay(
+                    "MotionScore async loader is not available after module reload. "
+                    "Please restart Slicer."
+                )
                 return
+            queue_selected_load(scan_id, raw_path, request_token)
+            if primary_error is not None:
+                self._log(f"[load] memory preload failed before async fallback for {scan_id}: {primary_error}\n")
+            return
 
         self._log(f"[load] loaded volume: {raw_path}\n")
         self._loaded_scan_id = scan_id
         self._loaded_volume_node = loaded_node
         self._render_profile_plot(scan_id)
-        self._schedule_preload_next_scan(scan_id)
+        self._schedule_preload_next_scan_after_load(scan_id)
 
     def _remove_loaded_scan_volume(self):
         node = self._loaded_volume_node
@@ -2707,7 +2776,168 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             "origin": tuple(getattr(aim, "origin", ()) or ()),
         }
 
+    def _disk_cache_dir(self, raw_path=None):
+        dataset = str(Path(raw_path).parent if raw_path else self.datasetPathEdit.currentPath or "").strip()
+        if not dataset:
+            dataset = "no-dataset"
+        dataset_hash = hashlib.sha256(dataset.encode("utf-8", errors="replace")).hexdigest()[:16]
+        path = Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "MotionScoreCache" / dataset_hash
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _disk_cache_entry_paths(self, scan_id, raw_path=None):
+        cache_key = hashlib.sha256(str(scan_id or "").encode("utf-8", errors="replace")).hexdigest()
+        cache_dir = self._disk_cache_dir(raw_path)
+        return cache_dir / f"{cache_key}.npy", cache_dir / f"{cache_key}.json"
+
+    def _raw_file_signature(self, raw_path):
+        raw = Path(raw_path)
+        stat = raw.stat()
+        return {
+            "raw_path": str(raw),
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        }
+
+    def _payload_metadata(self, payload):
+        return {
+            "scan_id": str(payload.get("scan_id", "")),
+            "raw_path": str(payload.get("raw_path", "")),
+            "node_name": str(payload.get("node_name", "")),
+            "spacing": list(payload.get("spacing", ()) or ()),
+            "origin": list(payload.get("origin", ()) or ()),
+            "raw_signature": payload.get("raw_signature", {}),
+        }
+
+    def _load_payload_from_disk_cache(self, scan_id, raw_path):
+        array_path, metadata_path = self._disk_cache_entry_paths(scan_id, raw_path)
+        if not array_path.exists() or not metadata_path.exists():
+            return {}
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata.get("scan_id") != scan_id:
+                return {}
+            if metadata.get("raw_signature") != self._raw_file_signature(raw_path):
+                return {}
+            volume_kji = np.load(array_path, allow_pickle=False)
+            return {
+                "scan_id": scan_id,
+                "raw_path": str(raw_path),
+                "node_name": metadata.get("node_name") or Path(raw_path).stem,
+                "volume_kji": volume_kji,
+                "spacing": tuple(metadata.get("spacing", ()) or ()),
+                "origin": tuple(metadata.get("origin", ()) or ()),
+                "raw_signature": metadata.get("raw_signature", {}),
+            }
+        except Exception as exc:
+            self._log(f"[preload] cache read failed for {scan_id}: {exc}\n")
+            return {}
+
+    def _write_payload_to_disk_cache(self, payload):
+        scan_id = str(payload.get("scan_id", ""))
+        if not scan_id:
+            return
+        try:
+            array_path, metadata_path = self._disk_cache_entry_paths(scan_id, payload.get("raw_path", ""))
+            np.save(array_path, payload["volume_kji"], allow_pickle=False)
+            metadata_path.write_text(json.dumps(self._payload_metadata(payload), indent=2), encoding="utf-8")
+        except Exception as exc:
+            self._log(f"[preload] cache write failed for {scan_id}: {exc}\n")
+
+    def _prune_disk_cache_window(self, scan_entries):
+        if not scan_entries:
+            return
+        raw_path = scan_entries[0][1]
+        keep = set()
+        for scan_id, raw_path in scan_entries:
+            array_path, metadata_path = self._disk_cache_entry_paths(scan_id, raw_path)
+            keep.add(array_path.name)
+            keep.add(metadata_path.name)
+        try:
+            for path in self._disk_cache_dir(raw_path).iterdir():
+                if path.name not in keep and path.suffix in {".npy", ".json"}:
+                    path.unlink()
+        except Exception as exc:
+            self._log(f"[preload] cache prune failed: {exc}\n")
+
+    def _read_or_cache_aim_for_preload(self, scan_id, raw_path):
+        payload = self._load_payload_from_disk_cache(scan_id, raw_path)
+        if payload:
+            return payload
+        payload = self._read_aim_for_preload(scan_id, raw_path)
+        payload["raw_signature"] = self._raw_file_signature(raw_path)
+        self._write_payload_to_disk_cache(payload)
+        return payload
+
+    def _load_cached_payload_for_preload(self, scan_id, raw_path):
+        return self._load_payload_from_disk_cache(scan_id, raw_path)
+
+    def _disk_cache_payload_exists(self, scan_id, raw_path):
+        array_path, metadata_path = self._disk_cache_entry_paths(scan_id, raw_path)
+        if not array_path.exists() or not metadata_path.exists():
+            return False
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            return (
+                metadata.get("scan_id") == scan_id
+                and metadata.get("raw_signature") == self._raw_file_signature(raw_path)
+            )
+        except Exception:
+            return False
+
+    def _ensure_async_cache_state(self):
+        if not hasattr(self, "_preload_future"):
+            self._preload_future = None
+        if not hasattr(self, "_preload_future_scan_id"):
+            self._preload_future_scan_id = ""
+        if not hasattr(self, "_preload_timer"):
+            self._preload_timer = None
+        if not hasattr(self, "_preload_cache"):
+            self._preload_cache = {}
+        if not hasattr(self, "_preload_executor"):
+            self._preload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motionscore-preload")
+        if not hasattr(self, "_cache_warm_executor"):
+            self._cache_warm_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motionscore-cache-warm")
+        if not hasattr(self, "_cache_warm_future"):
+            self._cache_warm_future = None
+        if not hasattr(self, "_cache_warm_scan_id"):
+            self._cache_warm_scan_id = ""
+        if not hasattr(self, "_cache_warm_timer"):
+            self._cache_warm_timer = None
+        if not hasattr(self, "_active_load_future"):
+            self._active_load_future = None
+        if not hasattr(self, "_active_load_scan_id"):
+            self._active_load_scan_id = ""
+        if not hasattr(self, "_active_load_raw_path"):
+            self._active_load_raw_path = ""
+        if not hasattr(self, "_active_load_request_token"):
+            self._active_load_request_token = 0
+        if not hasattr(self, "_load_request_token"):
+            self._load_request_token = 0
+        if not hasattr(self, "_active_load_timer"):
+            self._active_load_timer = None
+
+    def _next_load_request_token(self):
+        self._ensure_async_cache_state()
+        self._load_request_token += 1
+        return self._load_request_token
+
+    def _preload_window_scan_ids(self, current_scan_id):
+        window_size = self._cache_ahead_count()
+        if window_size <= 0:
+            return []
+        scan_ids = self._scan_ids_for_scope()
+        if not scan_ids:
+            return []
+        current = str(current_scan_id or "").strip()
+        if current in scan_ids:
+            start = scan_ids.index(current) + 1
+        else:
+            start = 0
+        return scan_ids[start : start + window_size]
+
     def _clear_preload_cache(self):
+        self._ensure_async_cache_state()
         self._preload_cache = {}
         self._preload_future_scan_id = ""
         future = self._preload_future
@@ -2719,8 +2949,38 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._preload_future = None
         if self._preload_timer is not None:
             self._preload_timer.stop()
+        self._clear_cache_warm()
+
+    def _clear_cache_warm(self):
+        self._ensure_async_cache_state()
+        future = self._cache_warm_future
+        if future is not None and not future.done():
+            try:
+                future.cancel()
+            except Exception:
+                pass
+        self._cache_warm_future = None
+        self._cache_warm_scan_id = ""
+        if self._cache_warm_timer is not None:
+            self._cache_warm_timer.stop()
+
+    def _clear_selected_scan_load(self):
+        self._ensure_async_cache_state()
+        future = self._active_load_future
+        if future is not None and not future.done():
+            try:
+                future.cancel()
+            except Exception:
+                pass
+        self._active_load_future = None
+        self._active_load_scan_id = ""
+        self._active_load_raw_path = ""
+        self._active_load_request_token = 0
+        if self._active_load_timer is not None:
+            self._active_load_timer.stop()
 
     def _preload_timer_instance(self):
+        self._ensure_async_cache_state()
         if self._preload_timer is None:
             self._preload_timer = qt.QTimer()
             self._preload_timer.setInterval(200)
@@ -2728,21 +2988,16 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         return self._preload_timer
 
     def _next_scan_id_for_preload(self, current_scan_id):
-        scan_ids = self._scan_ids_for_scope()
-        if not scan_ids:
+        window = self._preload_window_scan_ids(current_scan_id)
+        if not window:
             return ""
-        current = str(current_scan_id or "").strip()
-        if current in scan_ids:
-            idx = scan_ids.index(current)
-            if idx + 1 < len(scan_ids):
-                return scan_ids[idx + 1]
-            return ""
-        for scan_id in scan_ids:
-            if scan_id != self._loaded_scan_id:
-                return scan_id
-        return ""
+        return window[0]
 
     def _schedule_preload_next_scan(self, current_scan_id=None):
+        self._ensure_async_cache_state()
+        if self._cache_ahead_count() <= 0:
+            self._clear_preload_cache()
+            return
         if not self._preload_enabled():
             self._clear_preload_cache()
             return
@@ -2766,16 +3021,263 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception:
                 return
 
-        row = self._index_rows.get(next_scan_id, {})
-        raw_path = str(row.get("raw_image_path", "")).strip()
-        if not raw_path:
+        scan_entries = []
+        for scan_id in self._preload_window_scan_ids(current_scan_id or self._combo_text(self.scanCombo)):
+            row = self._index_rows.get(scan_id, {})
+            raw_path = str(row.get("raw_image_path", "")).strip()
+            if raw_path:
+                scan_entries.append((scan_id, raw_path))
+        if not scan_entries:
             return
+        self._prune_disk_cache_window(scan_entries)
+        next_raw_path = scan_entries[0][1]
         self._preload_future_scan_id = next_scan_id
-        self._preload_future = self._preload_executor.submit(self._read_aim_for_preload, next_scan_id, raw_path)
+        self._preload_future = self._preload_executor.submit(
+            self._load_cached_payload_for_preload,
+            next_scan_id,
+            next_raw_path,
+        )
         self._preload_timer_instance().start()
-        self._log(f"[preload] queued next scan: {next_scan_id}\n")
+        self._log(f"[preload] queued next scan: {next_scan_id} (cache window={len(scan_entries)}, hot=1)\n")
+
+    def _schedule_preload_next_scan_after_load(self, current_scan_id=None):
+        self._ensure_async_cache_state()
+        if not self._preload_enabled():
+            return
+        qt.QTimer.singleShot(
+            PRELOAD_AFTER_LOAD_DELAY_MS,
+            lambda scan_id=current_scan_id: self._schedule_preload_next_scan(scan_id),
+        )
+        self._schedule_cache_warm_after_idle(current_scan_id)
+
+    def _cache_warm_timer_instance(self):
+        self._ensure_async_cache_state()
+        if self._cache_warm_timer is None:
+            self._cache_warm_timer = qt.QTimer()
+            self._cache_warm_timer.setInterval(500)
+            self._cache_warm_timer.timeout.connect(self._poll_cache_warm_worker)
+        return self._cache_warm_timer
+
+    def _schedule_cache_warm_after_idle(self, current_scan_id=None, delay_ms=CACHE_WARM_IDLE_DELAY_MS):
+        self._ensure_async_cache_state()
+        if not self._preload_enabled():
+            return
+        qt.QTimer.singleShot(
+            int(delay_ms),
+            lambda scan_id=current_scan_id: self._start_cache_warm_if_idle(scan_id),
+        )
+
+    def _next_uncached_scan_entry(self, current_scan_id):
+        scan_entries = []
+        for scan_id in self._preload_window_scan_ids(current_scan_id):
+            row = self._index_rows.get(scan_id, {})
+            raw_path = str(row.get("raw_image_path", "")).strip()
+            if raw_path:
+                scan_entries.append((scan_id, raw_path))
+        if scan_entries:
+            self._prune_disk_cache_window(scan_entries)
+        for scan_id, raw_path in scan_entries:
+            if not self._disk_cache_payload_exists(scan_id, raw_path):
+                return scan_id, raw_path
+        return None
+
+    def _start_cache_warm_if_idle(self, current_scan_id=None):
+        self._ensure_async_cache_state()
+        if not self._preload_enabled():
+            return
+        if current_scan_id and current_scan_id != self._loaded_scan_id:
+            return
+        if self._active_load_future is not None and not self._active_load_future.done():
+            return
+        if self._preload_future is not None and not self._preload_future.done():
+            return
+        if self._cache_warm_future is not None and not self._cache_warm_future.done():
+            return
+
+        entry = self._next_uncached_scan_entry(current_scan_id or self._loaded_scan_id)
+        if entry is None:
+            return
+        scan_id, raw_path = entry
+        self._cache_warm_scan_id = scan_id
+        self._cache_warm_future = self._cache_warm_executor.submit(
+            self._warm_disk_cache_entry_external,
+            scan_id,
+            raw_path,
+        )
+        self._cache_warm_timer_instance().start()
+        self._log(f"[cache] warming local scan cache: {scan_id}\n")
+
+    def _warm_disk_cache_entry_external(self, scan_id, raw_path):
+        if self._disk_cache_payload_exists(scan_id, raw_path):
+            return True
+
+        array_path, metadata_path = self._disk_cache_entry_paths(scan_id, raw_path)
+        python_exe = (
+            shutil.which("PythonSlicer")
+            or (sys.executable if Path(sys.executable).exists() else None)
+            or shutil.which("python3")
+            or shutil.which("python")
+        )
+        if python_exe is None:
+            raise RuntimeError("Could not find Python executable for cache warmer")
+
+        script = r'''
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+from motionscore.io.aim import read_aim
+
+scan_id, raw_path, array_path, metadata_path = sys.argv[1:5]
+raw = Path(raw_path)
+stat = raw.stat()
+aim = read_aim(raw, scaling="native")
+volume_kji = aim.data.transpose(2, 1, 0).copy()
+np.save(array_path, volume_kji, allow_pickle=False)
+metadata = {
+    "scan_id": scan_id,
+    "raw_path": str(raw),
+    "node_name": raw.stem,
+    "spacing": list(getattr(aim, "spacing", ()) or ()),
+    "origin": list(getattr(aim, "origin", ()) or ()),
+    "raw_signature": {
+        "raw_path": str(raw),
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    },
+}
+Path(metadata_path).write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+'''
+        command = [python_exe, "-c", script, scan_id, str(raw_path), str(array_path), str(metadata_path)]
+        if Path("/usr/bin/nice").exists():
+            command = ["/usr/bin/nice", "-n", "10"] + command
+        completed = subprocess.run(command, capture_output=True, text=True)
+        if completed.returncode != 0:
+            stderr = (completed.stderr or completed.stdout or "").strip()
+            raise RuntimeError(stderr or f"cache warmer exited with code {completed.returncode}")
+        return self._disk_cache_payload_exists(scan_id, raw_path)
+
+    def _poll_cache_warm_worker(self):
+        self._ensure_async_cache_state()
+        future = self._cache_warm_future
+        if future is None or not future.done():
+            return
+        scan_id = self._cache_warm_scan_id
+        self._cache_warm_future = None
+        self._cache_warm_scan_id = ""
+        if self._cache_warm_timer is not None:
+            self._cache_warm_timer.stop()
+        try:
+            warmed = bool(future.result())
+        except Exception as exc:
+            self._log(f"[cache] warmer failed for {scan_id}: {exc}\n")
+            return
+        if warmed:
+            self._log(f"[cache] warmed local scan cache: {scan_id}\n")
+            self._schedule_cache_warm_after_idle(self._loaded_scan_id, CACHE_WARM_CONTINUE_DELAY_MS)
+
+    def _selected_load_timer_instance(self):
+        self._ensure_async_cache_state()
+        if self._active_load_timer is None:
+            self._active_load_timer = qt.QTimer()
+            self._active_load_timer.setInterval(100)
+            self._active_load_timer.timeout.connect(self._poll_selected_scan_load_worker)
+        return self._active_load_timer
+
+    def _queue_selected_scan_load(self, scan_id, raw_path, request_token):
+        self._ensure_async_cache_state()
+        if self._active_load_future is not None and not self._active_load_future.done():
+            if self._active_load_scan_id == scan_id:
+                self._active_load_request_token = request_token
+                return
+            self._clear_selected_scan_load()
+
+        future = None
+        if self._preload_future is not None and self._preload_future_scan_id == scan_id:
+            future = self._preload_future
+            self._preload_future = None
+            self._preload_future_scan_id = ""
+            if self._preload_timer is not None:
+                self._preload_timer.stop()
+        elif self._preload_future is not None and not self._preload_future.done():
+            try:
+                if self._preload_future.cancel():
+                    self._preload_future = None
+                    self._preload_future_scan_id = ""
+            except Exception:
+                pass
+
+        if future is None:
+            future = self._preload_executor.submit(
+                self._read_or_cache_aim_for_preload,
+                scan_id,
+                raw_path,
+            )
+
+        self._active_load_future = future
+        self._active_load_scan_id = scan_id
+        self._active_load_raw_path = raw_path
+        self._active_load_request_token = request_token
+        self.progressLabel.setText(f"Loading {scan_id}...")
+        self._selected_load_timer_instance().start()
+        self._log(f"[load] queued async scan load: {scan_id}\n")
+
+    def _poll_selected_scan_load_worker(self):
+        self._ensure_async_cache_state()
+        future = self._active_load_future
+        if future is None or not future.done():
+            return
+        scan_id = self._active_load_scan_id
+        raw_path = self._active_load_raw_path
+        request_token = self._active_load_request_token
+        self._active_load_future = None
+        self._active_load_scan_id = ""
+        self._active_load_raw_path = ""
+        self._active_load_request_token = 0
+        if self._active_load_timer is not None:
+            self._active_load_timer.stop()
+
+        try:
+            payload = future.result()
+        except Exception as exc:
+            slicer.util.errorDisplay(
+                "Could not load selected scan.\n"
+                f"Path: {raw_path}\n"
+                f"AIM load error: {exc}"
+            )
+            self.progressLabel.setText("Load failed")
+            self._log(f"[load] async scan load failed for {scan_id}: {exc}\n")
+            return
+
+        if scan_id != self._combo_text(self.scanCombo):
+            self._log(f"[load] discarded async scan load after selection changed: {scan_id}\n")
+            return
+        if request_token != self._load_request_token or payload.get("scan_id") != scan_id:
+            self._log(f"[load] discarded stale async scan load: {scan_id}\n")
+            return
+
+        try:
+            loaded_node = self._load_preloaded_aim(payload)
+        except Exception as exc:
+            slicer.util.errorDisplay(
+                "Could not display selected scan.\n"
+                f"Path: {raw_path}\n"
+                f"Display error: {exc}"
+            )
+            self.progressLabel.setText("Load failed")
+            self._log(f"[load] async scan display failed for {scan_id}: {exc}\n")
+            return
+
+        self._loaded_scan_id = scan_id
+        self._loaded_volume_node = loaded_node
+        self._render_profile_plot(scan_id)
+        self.progressLabel.setText(f"Loaded {scan_id}")
+        self._log(f"[load] loaded volume: {raw_path}\n")
+        self._schedule_preload_next_scan_after_load(scan_id)
 
     def _poll_preload_worker(self):
+        self._ensure_async_cache_state()
         future = self._preload_future
         if future is None or not future.done():
             return
@@ -2795,6 +3297,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._log(f"[preload] ready: {payload.get('scan_id', '')}\n")
 
     def _try_get_preloaded_scan(self, scan_id):
+        self._ensure_async_cache_state()
         self._poll_preload_worker()
         if self._preload_cache.get("scan_id") != scan_id:
             return {}

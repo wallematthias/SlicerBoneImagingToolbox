@@ -95,6 +95,7 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "HRpQCTTools/BoneMicroarchitecture/BoneMicroarchitecture.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
+        "HRpQCTTools/PlateRodMorphometryHRpQCT/PlateRodMorphometryHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
         "IOTools/ScancoIO/ScancoIO.py": 'parent.categories = ["Bone Imaging.I/O"]',
         "CTTools/SpineSegmentationCT/SpineSegmentationCT.py": 'parent.categories = ["Bone Imaging.CT"]',
         "Setup/BoneImagingToolboxSetup/BoneImagingToolboxSetup.py": 'parent.categories = ["Bone Imaging.Setup"]',
@@ -115,6 +116,7 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/MotionScoreHRpQCT": "HR-pQCT",
         "HRpQCTTools/SegmentationHRpQCT": "HR-pQCT",
         "HRpQCTTools/BoneMicroarchitecture": "HR-pQCT",
+        "HRpQCTTools/PlateRodMorphometryHRpQCT": "HR-pQCT",
         "IOTools/ScancoIO": "I/O",
         "CTTools/SpineSegmentationCT": "CT",
         "Setup/BoneImagingToolboxSetup": "Setup",
@@ -127,5 +129,7 @@ def test_local_link_helper_fallback_includes_all_builtin_modules() -> None:
     helper = (REPO_ROOT / "scripts" / "link_local_toolbox_modules.py").read_text(encoding="utf-8")
 
     assert '"CTTools/SpineSegmentationCT"' in helper
+    assert '"HRpQCTTools/PlateRodMorphometryHRpQCT"' in helper
     assert '"Setup/BoneImagingToolboxSetup"' in helper
+    assert '"PlateRodMorphometryHRpQCT"' in helper
     assert '"BoneImagingToolboxSetup"' in helper

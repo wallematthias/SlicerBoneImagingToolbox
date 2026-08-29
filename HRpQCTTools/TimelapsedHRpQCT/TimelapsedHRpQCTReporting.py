@@ -14,7 +14,7 @@ class TimelapsedHRpQCTReporting(ScriptedLoadableModule):
     def __init__(self, parent=None):
         try:
             super().__init__(parent)
-        except TypeError:
+        except Exception:
             pass
         if parent is not None:
             parent.hidden = True

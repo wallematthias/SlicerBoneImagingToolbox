@@ -27,6 +27,12 @@
       "source": "built-in"
     },
     {
+      "path": "HRpQCTTools/PlateRodMorphometryHRpQCT",
+      "title": "Plate/Rod Morphometry",
+      "section": "HR-pQCT",
+      "source": "built-in"
+    },
+    {
       "path": "IOTools/ScancoIO",
       "title": "Scanco I/O",
       "section": "I/O",

@@ -674,22 +674,18 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(self.runtimeBox)
         runtime_form = qt.QFormLayout(self.runtimeBox)
 
-        self.installButton = qt.QPushButton("Install Slicer Runtime")
         self.installCondaButton = qt.QPushButton("Install Conda MPS Runtime")
         self.updateToolboxButton = qt.QPushButton("Check Toolbox Updates")
-        self._tip(self.installButton, "Install or update the spine-segment Python dependency in Slicer Python.")
         self._tip(
             self.installCondaButton,
             "Create or update the arm64 conda runtime used for faster Apple Silicon inference outside Slicer Python.",
         )
         self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        self.installButton.clicked.connect(self._install_core)
         self.installCondaButton.clicked.connect(self._install_conda_runtime)
         self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
         install_row_widget = qt.QWidget()
         install_row = qt.QHBoxLayout(install_row_widget)
         install_row.setContentsMargins(0, 0, 0, 0)
-        install_row.addWidget(self.installButton)
         install_row.addWidget(self.installCondaButton)
         install_row.addWidget(self.updateToolboxButton)
         runtime_form.addRow("Install", install_row_widget)
@@ -887,7 +883,6 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
     def _set_running(self, running, text):
         self.runButton.enabled = not bool(running)
         self.stopButton.enabled = bool(running)
-        self.installButton.enabled = not bool(running)
         self.installCondaButton.enabled = not bool(running)
         self.probeRuntimeButton.enabled = not bool(running)
         self.progressLabel.text = str(text)

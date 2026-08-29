@@ -35,6 +35,7 @@ def test_package_status_row_marks_missing_package_installable() -> None:
         spec,
         installed_versions={},
         latest_versions={"timelapsed-hrpqct": "2.0.41"},
+        validation_errors={},
     )
 
     assert row.installed_version is None
@@ -55,6 +56,7 @@ def test_package_status_row_marks_update_available() -> None:
         spec,
         installed_versions={"motionscorehrpqct": "2.5.8"},
         latest_versions={"motionscorehrpqct": "2.5.9"},
+        validation_errors={},
     )
 
     assert row.installed_version == "2.5.8"
@@ -75,6 +77,7 @@ def test_package_status_row_handles_unavailable_pypi_version() -> None:
         spec,
         installed_versions={"aimio-py": "0.1.8"},
         latest_versions={},
+        validation_errors={},
     )
 
     assert row.installed_version == "0.1.8"
@@ -95,6 +98,7 @@ def test_package_status_row_marks_installed_version_below_minimum_as_update_need
         spec,
         installed_versions={"timelapsed-hrpqct": "2.0.12"},
         latest_versions={},
+        validation_errors={},
     )
 
     assert row.installed_version == "2.0.12"
@@ -136,13 +140,14 @@ def test_default_runtime_packages_include_public_tool_cores() -> None:
     assert "aimio-py" in package_names
     assert "spine-segment" in package_names
     assert "bone-microarchitecture" in package_names
+    assert "plate-rod-thinning" in package_names
     assert ("or" + "mir-xct") not in package_names
 
 
-def test_xct2_runtime_package_has_user_facing_setup_name() -> None:
+def test_timelapsed_runtime_package_has_user_facing_setup_name() -> None:
     specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
 
-    assert specs["timelapsed-hrpqct"].display_name == "XCT2 Analysis"
+    assert specs["timelapsed-hrpqct"].display_name == "Timelapsed HR-pQCT"
     assert "timelapsed-hrpqct" in specs["timelapsed-hrpqct"].notes
 
 
@@ -152,6 +157,40 @@ def test_microarchitecture_runtime_package_has_user_facing_setup_name() -> None:
     assert specs["bone-microarchitecture"].display_name == "Bone Microarchitecture"
     assert specs["bone-microarchitecture"].import_name == "bone_microarchitecture"
     assert "bone-microarchitecture" in specs
+
+
+def test_plate_rod_runtime_package_requires_compiled_backend_and_binary_reinstall() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+    spec = specs["plate-rod-thinning"]
+
+    assert spec.display_name == "Plate/Rod Morphometry"
+    assert spec.import_name == "plate_rod_thinning"
+    assert spec.required_imports == ("plate_rod_thinning._c_backend",)
+    assert install_command(spec, installed=True) == (
+        "--upgrade --force-reinstall --prefer-binary --only-binary :all: --no-deps "
+        "plate-rod-thinning>=0.1.3"
+    )
+
+
+def test_package_status_marks_invalid_runtime_import_as_update_needed() -> None:
+    spec = PackageSpec(
+        display_name="Plate/Rod Morphometry",
+        package_name="plate-rod-thinning",
+        import_name="plate_rod_thinning",
+        minimum_version="0.1.2",
+        required_imports=("plate_rod_thinning._c_backend",),
+    )
+
+    row = package_status_row(
+        spec,
+        installed_versions={"plate-rod-thinning": "0.1.0"},
+        latest_versions={"plate-rod-thinning": "0.1.0"},
+        validation_errors={"plate-rod-thinning": "Required runtime module is unavailable."},
+    )
+
+    assert row.status == "update_available"
+    assert row.action == "update"
+    assert row.detail == "Required runtime module is unavailable."
 
 
 def test_clean_pip_environment_removes_stale_compiler_overrides() -> None:

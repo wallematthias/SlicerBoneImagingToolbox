@@ -23,6 +23,13 @@ if _GEODESIC_CONTOUR_LOCAL_SRC.exists() and str(_GEODESIC_CONTOUR_LOCAL_SRC) not
     sys.path.insert(0, str(_GEODESIC_CONTOUR_LOCAL_SRC))
 
 from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
+from SlicerBoneImagingToolboxLib.segmentation_methods import (
+    BONE_SEGMENTATION_METHODS,
+    ENDOSTEAL_CONTOUR_METHODS,
+    PERIOSTEAL_CONTOUR_METHODS,
+    method_supports_site,
+    selected_parameter_groups,
+)
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -36,7 +43,7 @@ MODULE_VERSION = "0.2.0"
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
-CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<2.0", "scikit-image>=0.24,<0.26", "tifffile<2026")
+CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<3.0", "scikit-image>=0.24,<0.26", "tifffile<2026")
 
 SITE_PRESETS = {
     "radius": {
@@ -140,9 +147,9 @@ METHOD_PRESETS = {
     },
 }
 
-SEGMENTATION_METHODS = {"seg_gauss", "adaptive", "laplace_hamming", "none"}
-PERIOSTEAL_CONTOUR_METHODS = {"standard", "geodesic_fracture", "none"}
-ENDOSTEAL_CONTOUR_METHODS = {"standard", "none"}
+SEGMENTATION_METHODS = set(BONE_SEGMENTATION_METHODS)
+PERIOSTEAL_CONTOUR_METHOD_IDS = set(PERIOSTEAL_CONTOUR_METHODS)
+ENDOSTEAL_CONTOUR_METHOD_IDS = set(ENDOSTEAL_CONTOUR_METHODS)
 
 
 def _same_shape_or_raise(named_arrays):
@@ -457,7 +464,15 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         self._copy_aim_attributes(reference_node, label_node)
         return label_node
 
-    def _add_labelmap_segment(self, label_node, segmentation_node, segment_name):
+    def _finalize_segment(self, segmentation_node, segment_id, segment_name, role=None):
+        segment = segmentation_node.GetSegmentation().GetSegment(segment_id)
+        if segment is None:
+            return
+        segment.SetName(str(segment_name))
+        if role is not None and hasattr(segment, "SetTag"):
+            segment.SetTag("HRpQCT.Role", str(role))
+
+    def _add_labelmap_segment(self, label_node, segmentation_node, segment_name, role=None):
         slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
             label_node,
             segmentation_node,
@@ -465,18 +480,20 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         segmentation = segmentation_node.GetSegmentation()
         if segmentation.GetNumberOfSegments() > 0:
             segment_id = segmentation.GetNthSegmentID(segmentation.GetNumberOfSegments() - 1)
-            segmentation.GetSegment(segment_id).SetName(segment_name)
+            self._finalize_segment(segmentation_node, segment_id, segment_name, role)
 
-    def _add_sitk_segment(self, image, segmentation_node, segment_name, reference_node):
+    def _add_sitk_segment(self, image, segmentation_node, segment_name, reference_node, role=None):
         array_zyx = sitk.GetArrayFromImage(image).astype(np.uint8, copy=False)
         array_zyx = (array_zyx > 0).astype(np.uint8, copy=False)
         segment_id = segmentation_node.GetSegmentation().AddEmptySegment(segment_name)
+        self._finalize_segment(segmentation_node, segment_id, segment_name, role)
         slicer.util.updateSegmentBinaryLabelmapFromArray(
             array_zyx,
             segmentation_node,
             segment_id,
             reference_node,
         )
+        self._finalize_segment(segmentation_node, segment_id, segment_name, role)
 
     def _configure_segmentation_display(self, segmentation_node):
         display_node = segmentation_node.GetDisplayNode()
@@ -721,14 +738,18 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         segmentation_method = str(segmentation_method)
         periosteal_contour_method = str(periosteal_contour_method)
         endosteal_contour_method = str(endosteal_contour_method)
+        requested_periosteal_contour_method = periosteal_contour_method
+        requested_endosteal_contour_method = endosteal_contour_method
         if segmentation_method not in SEGMENTATION_METHODS:
             raise ValueError(f"Unsupported bone segmentation method: {segmentation_method}")
-        if periosteal_contour_method not in PERIOSTEAL_CONTOUR_METHODS:
+        if periosteal_contour_method not in PERIOSTEAL_CONTOUR_METHOD_IDS:
             raise ValueError(f"Unsupported periosteal contour method: {periosteal_contour_method}")
-        if endosteal_contour_method not in ENDOSTEAL_CONTOUR_METHODS:
+        if endosteal_contour_method not in ENDOSTEAL_CONTOUR_METHOD_IDS:
             raise ValueError(f"Unsupported endosteal contour method: {endosteal_contour_method}")
         if periosteal_contour_method == "none" and endosteal_contour_method == "standard":
             raise ValueError("Standard endosteal contour requires a periosteal contour.")
+        if not method_supports_site(PERIOSTEAL_CONTOUR_METHODS[periosteal_contour_method], site):
+            raise ValueError(f"{PERIOSTEAL_CONTOUR_METHODS[periosteal_contour_method].label} only supports knee scans.")
 
         from timelapsedhrpqct.processing.contour_generation import (
             ContourGenerationParams,
@@ -939,8 +960,10 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
 
         generated.metadata["segmentation_method"] = segmentation_method
         generated.metadata["segmentation_aligned_contour_support"] = bool(use_aligned_support)
-        generated.metadata["periosteal_contour_method"] = periosteal_contour_method
-        generated.metadata["endosteal_contour_method"] = endosteal_contour_method
+        generated.metadata["periosteal_contour_method"] = requested_periosteal_contour_method
+        generated.metadata["endosteal_contour_method"] = requested_endosteal_contour_method
+        generated.metadata["internal_periosteal_contour_method"] = periosteal_contour_method
+        generated.metadata["internal_endosteal_contour_method"] = endosteal_contour_method
         generated.metadata["periosteal_contour_generated"] = bool(periosteal_contour_generated)
         generated.metadata["compartment_split_generated"] = bool(compartment_split_generated)
         if not periosteal_contour_generated:
@@ -967,7 +990,6 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
                     "Check that the selected volume has valid AIM calibration metadata "
                     "or an original AIM source, and that LH parameters match native Scanco units."
                 )
-
         prefix = output_prefix.strip() if output_prefix else volume_node.GetName()
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
             "vtkMRMLSegmentationNode",
@@ -989,6 +1011,8 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             "periosteal_contour_generated",
             "periosteal_contour_reason",
             "endosteal_contour_method",
+            "internal_periosteal_contour_method",
+            "internal_endosteal_contour_method",
             "compartment_split_generated",
         ):
             if key in generated.metadata:
@@ -1007,7 +1031,7 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
         generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
         for role, image_out, segment_name in output_specs:
-            self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node)
+            self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node, role)
             if create_labelmaps:
                 label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
                 outputs[role] = label_node
@@ -1034,6 +1058,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addStretch(1)
         self._apply_site_preset()
         self._apply_segmentation_preset()
+        self._refresh_method_dependent_ui()
         self._update_dependency_ui()
         self._log("Ready.")
 
@@ -1044,20 +1069,18 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         generate_tab = qt.QWidget()
         generate_layout = qt.QVBoxLayout(generate_tab)
         form = qt.QFormLayout()
+        self._generateForm = form
+        self._extraInputRows = {}
         generate_layout.addLayout(form)
 
         self.pipelineStatusLabel = qt.QLabel()
-        self.installButton = qt.QPushButton("Install / Update contouring dependencies")
         self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
         self._tip(self.pipelineStatusLabel, "Shows whether the core contouring packages are available in Slicer Python.")
-        self._tip(self.installButton, "Install or update timelapsed-hrpqct and hrpqct-geodesic-contour in Slicer Python.")
         self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        self.installButton.clicked.connect(self._install_contouring_dependencies)
         self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
         installRowWidget = qt.QWidget()
         installRow = qt.QHBoxLayout(installRowWidget)
         installRow.setContentsMargins(0, 0, 0, 0)
-        installRow.addWidget(self.installButton)
         installRow.addWidget(self.updateToolboxButton)
         form.addRow("Status", self.pipelineStatusLabel)
         form.addRow(installRowWidget)
@@ -1076,18 +1099,15 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         for label, value in [("Radius", "radius"), ("Tibia", "tibia"), ("Knee", "knee")]:
             self.siteCombo.addItem(label, value)
         self.siteCombo.currentIndexChanged.connect(self._apply_site_preset)
+        self.siteCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
         self._tip(self.siteCombo, "Applies radius, tibia, or knee defaults for contour thresholds and morphology.")
         form.addRow("Site preset", self.siteCombo)
 
         self.segmentationMethodCombo = qt.QComboBox()
-        for label, value in [
-            ("Standard Gaussian (trab 320 / cort 450)", "seg_gauss"),
-            ("Laplace-Hamming", "laplace_hamming"),
-            ("Adaptive threshold", "adaptive"),
-            ("None", "none"),
-        ]:
-            self.segmentationMethodCombo.addItem(label, value)
+        for value, descriptor in BONE_SEGMENTATION_METHODS.items():
+            self.segmentationMethodCombo.addItem(descriptor.label, value)
         self.segmentationMethodCombo.currentIndexChanged.connect(self._apply_segmentation_preset)
+        self.segmentationMethodCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
         self._tip(
             self.segmentationMethodCombo,
             "Bone binarization method. Laplace-Hamming uses native Scanco attenuation values from AIM metadata/source.",
@@ -1095,21 +1115,16 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         form.addRow("Bone segmentation", self.segmentationMethodCombo)
 
         self.periostealContourCombo = qt.QComboBox()
-        for label, value in [
-            ("Standard", "standard"),
-            ("Geodesic fracture", "geodesic_fracture"),
-            ("None", "none"),
-        ]:
-            self.periostealContourCombo.addItem(label, value)
+        for value, descriptor in PERIOSTEAL_CONTOUR_METHODS.items():
+            self.periostealContourCombo.addItem(descriptor.label, value)
+        self.periostealContourCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
         self._tip(self.periostealContourCombo, "Outer contour method for the full bone mask.")
         form.addRow("Periosteal (outer) contour", self.periostealContourCombo)
 
         self.endostealContourCombo = qt.QComboBox()
-        for label, value in [
-            ("Standard", "standard"),
-            ("None", "none"),
-        ]:
-            self.endostealContourCombo.addItem(label, value)
+        for value, descriptor in ENDOSTEAL_CONTOUR_METHODS.items():
+            self.endostealContourCombo.addItem(descriptor.label, value)
+        self.endostealContourCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
         self._tip(self.endostealContourCombo, "Inner contour method used to split full mask into trabecular and cortical compartments.")
         form.addRow("Endosteal (inner) contour", self.endostealContourCombo)
 
@@ -1127,6 +1142,8 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         expert.collapsed = True
         generate_layout.addWidget(expert)
         expert_form = qt.QFormLayout(expert)
+        self._expertForm = expert_form
+        self._expertRows = {}
 
         self.trabThresholdSpin = self._double_spin(0, 5000, 1, 320.0)
         self.cortThresholdSpin = self._double_spin(0, 5000, 1, 450.0)
@@ -1135,8 +1152,11 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.cortThresholdSpin, "Cortical threshold used by Gaussian/adaptive segmentation support generation.")
         self._tip(self.gaussSigmaSpin, "Gaussian smoothing sigma applied before threshold-based segmentation.")
         expert_form.addRow("Trab threshold", self.trabThresholdSpin)
+        self._remember_expert_row("trab_threshold", self.trabThresholdSpin)
         expert_form.addRow("Cort threshold", self.cortThresholdSpin)
+        self._remember_expert_row("cort_threshold", self.cortThresholdSpin)
         expert_form.addRow("Gaussian sigma", self.gaussSigmaSpin)
+        self._remember_expert_row("gaussian_sigma", self.gaussSigmaSpin)
 
         self.adaptiveLowSpin = self._double_spin(-1000, 5000, 1, 100.0)
         self.adaptiveHighSpin = self._double_spin(-1000, 5000, 1, 300.0)
@@ -1149,8 +1169,11 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.adaptiveHighSpin, "Upper local threshold for adaptive bone segmentation.")
         self._tip(self.adaptiveBlockSpin, "Odd local window size for adaptive thresholding.")
         expert_form.addRow("Adaptive low", self.adaptiveLowSpin)
+        self._remember_expert_row("adaptive_low_threshold", self.adaptiveLowSpin)
         expert_form.addRow("Adaptive high", self.adaptiveHighSpin)
+        self._remember_expert_row("adaptive_high_threshold", self.adaptiveHighSpin)
         expert_form.addRow("Adaptive block size", self.adaptiveBlockSpin)
+        self._remember_expert_row("adaptive_block_size", self.adaptiveBlockSpin)
 
         self.lhThresholdSpin = self._double_spin(0, 100000, 1, 15564.0)
         self.lhBackendCombo = qt.QComboBox()
@@ -1159,7 +1182,25 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.lhThresholdSpin, "Laplace-Hamming threshold in native Scanco attenuation units.")
         self._tip(self.lhBackendCombo, "Execution backend for Laplace-Hamming support calculation when available.")
         expert_form.addRow("LH threshold", self.lhThresholdSpin)
+        self._remember_expert_row("laplace_hamming_threshold", self.lhThresholdSpin)
         expert_form.addRow("LH backend", self.lhBackendCombo)
+        self._remember_expert_row("laplace_hamming_backend", self.lhBackendCombo)
+
+        self.lhLowPassSpin = self._double_spin(0, 1, 2, 0.3)
+        self.lhEpsilonSpin = self._double_spin(0, 1, 2, 0.45)
+        self.lhMinSizeSpin = qt.QSpinBox()
+        self.lhMinSizeSpin.minimum = 0
+        self.lhMinSizeSpin.maximum = 1000000
+        self.lhMinSizeSpin.value = 70
+        self._tip(self.lhLowPassSpin, "Laplace-Hamming low-pass cutoff for the frequency-domain Hamming filter.")
+        self._tip(self.lhEpsilonSpin, "Laplace-Hamming edge-enhancement weight.")
+        self._tip(self.lhMinSizeSpin, "Remove Laplace-Hamming components smaller than this voxel count.")
+        expert_form.addRow("LH low-pass cutoff", self.lhLowPassSpin)
+        self._remember_expert_row("laplace_hamming_low_pass_cutoff", self.lhLowPassSpin)
+        expert_form.addRow("LH epsilon", self.lhEpsilonSpin)
+        self._remember_expert_row("laplace_hamming_epsilon", self.lhEpsilonSpin)
+        expert_form.addRow("LH min component voxels", self.lhMinSizeSpin)
+        self._remember_expert_row("laplace_hamming_min_size_voxels", self.lhMinSizeSpin)
 
         self.minSizeSpin = qt.QSpinBox()
         self.minSizeSpin.minimum = 0
@@ -1170,7 +1211,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.minSizeSpin, "Remove connected bone components smaller than this voxel count.")
         self._tip(self.keepLargestCheck, "Keep only the largest connected segmentation component.")
         expert_form.addRow("Min component voxels", self.minSizeSpin)
+        self._remember_expert_row("min_size_voxels", self.minSizeSpin)
         expert_form.addRow("Keep largest", self.keepLargestCheck)
+        self._remember_expert_row("keep_largest_component", self.keepLargestCheck)
 
         self.segmentationAlignedSupportCheck = qt.QCheckBox()
         self.segmentationAlignedSupportCheck.checked = False
@@ -1180,6 +1223,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Leave this off to keep full/trab/cort masks more stable across scans.",
         )
         expert_form.addRow("Aligned contour support", self.segmentationAlignedSupportCheck)
+        self._remember_expert_row("segmentation_aligned_contour_support", self.segmentationAlignedSupportCheck)
 
         self.geodesicBoneThresholdSpin = self._double_spin(0, 5000, 1, 250.0)
         self.geodesicFillHolesCheck = qt.QCheckBox()
@@ -1187,7 +1231,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.geodesicBoneThresholdSpin, "Threshold passed to the geodesic fracture periosteal contour.")
         self._tip(self.geodesicFillHolesCheck, "Fill holes inside the geodesic full-mask contour.")
         expert_form.addRow("Geodesic bone threshold", self.geodesicBoneThresholdSpin)
+        self._remember_expert_row("geodesic_bone_threshold", self.geodesicBoneThresholdSpin)
         expert_form.addRow("Fill geodesic holes", self.geodesicFillHolesCheck)
+        self._remember_expert_row("geodesic_fill_holes", self.geodesicFillHolesCheck)
 
         self.trabCloseSpin = qt.QSpinBox()
         self.trabCloseSpin.minimum = 0
@@ -1209,10 +1255,24 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.outerOpenSpin, "Opening radius for full-mask contour cleanup.")
         self._tip(self.peelSpin, "Number of voxels peeled near the cortex for trabecular mask separation.")
         expert_form.addRow("Trab close radius", self.trabCloseSpin)
+        self._remember_expert_row("trabecular_close_radius", self.trabCloseSpin)
         expert_form.addRow("Periosteal kernel", self.outerKernelSpin)
+        self._remember_expert_row("periosteal_kernelsize", self.outerKernelSpin)
         expert_form.addRow("Endosteal kernel", self.innerKernelSpin)
+        self._remember_expert_row("endosteal_kernelsize", self.innerKernelSpin)
         expert_form.addRow("Periosteal open radius", self.outerOpenSpin)
+        self._remember_expert_row("periosteal_open_radius", self.outerOpenSpin)
         expert_form.addRow("Peel", self.peelSpin)
+        self._remember_expert_row("peel", self.peelSpin)
+
+        self.periostealThresholdSpin = self._double_spin(0, 5000, 1, 300.0)
+        self.endostealThresholdSpin = self._double_spin(0, 5000, 1, 500.0)
+        self._tip(self.periostealThresholdSpin, "Threshold used by the standard periosteal contour.")
+        self._tip(self.endostealThresholdSpin, "Threshold used by the standard endosteal contour.")
+        expert_form.addRow("Periosteal threshold", self.periostealThresholdSpin)
+        self._remember_expert_row("periosteal_threshold", self.periostealThresholdSpin)
+        expert_form.addRow("Endosteal threshold", self.endostealThresholdSpin)
+        self._remember_expert_row("endosteal_threshold", self.endostealThresholdSpin)
 
         self.createButton = qt.QPushButton("Generate Masks And Segmentation")
         self.createButton.clicked.connect(self._create_segmentation)
@@ -1384,6 +1444,80 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         spin.value = int(value)
         return spin
 
+    def _remember_expert_row(self, parameter_id, widget):
+        label = self._expertForm.labelForField(widget)
+        self._expertRows[str(parameter_id)] = (label, widget)
+
+    def _remember_extra_input_row(self, input_id, widget):
+        label = self._generateForm.labelForField(widget)
+        self._extraInputRows[str(input_id)] = (label, widget)
+
+    def _set_widget_row_visible(self, widget, visible):
+        widget.visible = bool(visible)
+        parent = widget.parent()
+        if hasattr(parent, "visible"):
+            parent.visible = bool(visible)
+
+    def _set_expert_row_visible(self, parameter_id, visible):
+        row = self._expertRows.get(str(parameter_id))
+        if not row:
+            return
+        label, widget = row
+        if label is not None:
+            label.visible = bool(visible)
+        widget.visible = bool(visible)
+
+    def _combo_count(self, combo):
+        count = combo.count
+        return int(count() if callable(count) else count)
+
+    def _combo_value_index(self, combo, value):
+        for index in range(self._combo_count(combo)):
+            if str(combo.itemData(index)) == str(value):
+                return index
+        return -1
+
+    def _refresh_site_limited_combo(self, combo, descriptors):
+        site = str(self.siteCombo.currentData)
+        selected_value = str(combo.currentData)
+        first_supported = -1
+        selected_supported = True
+        for index in range(self._combo_count(combo)):
+            method_id = str(combo.itemData(index))
+            supported = method_supports_site(descriptors[method_id], site)
+            model = combo.model()
+            item = model.item(index) if hasattr(model, "item") else None
+            if item is not None:
+                item.setEnabled(bool(supported))
+                item.setToolTip("" if supported else "This method is only available for knee scans.")
+            if supported and first_supported < 0:
+                first_supported = index
+            if method_id == selected_value:
+                selected_supported = bool(supported)
+        if not selected_supported and first_supported >= 0:
+            combo.setCurrentIndex(first_supported)
+
+    def _refresh_method_dependent_ui(self):
+        if not hasattr(self, "_expertRows"):
+            return
+        self._refresh_site_limited_combo(self.periostealContourCombo, PERIOSTEAL_CONTOUR_METHODS)
+        periosteal_method = str(self.periostealContourCombo.currentData)
+        extra_inputs = PERIOSTEAL_CONTOUR_METHODS[periosteal_method].extra_inputs
+        for input_id, (label, widget) in self._extraInputRows.items():
+            visible = input_id in extra_inputs
+            if label is not None:
+                label.visible = bool(visible)
+            widget.visible = bool(visible)
+
+        groups = selected_parameter_groups(
+            bone_method=str(self.segmentationMethodCombo.currentData),
+            periosteal_method=periosteal_method,
+            endosteal_method=str(self.endostealContourCombo.currentData),
+        )
+        visible_parameters = {parameter for parameters in groups.values() for parameter in parameters}
+        for parameter_id in self._expertRows:
+            self._set_expert_row_visible(parameter_id, parameter_id in visible_parameters)
+
     def _build_log_section(self):
         self.messageLabel = qt.QLabel()
         self.messageLabel.wordWrap = True
@@ -1395,6 +1529,8 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         preset = SITE_PRESETS[self.siteCombo.currentData]
         inner = preset["inner"]
         outer = preset["outer"]
+        self.periostealThresholdSpin.value = float(outer["periosteal_threshold"])
+        self.endostealThresholdSpin.value = float(inner["endosteal_threshold"])
         self.trabCloseSpin.value = int(inner["trabecular_close_radius"])
         self.outerKernelSpin.value = int(outer["periosteal_kernelsize"])
         self.innerKernelSpin.value = int(inner["endosteal_kernelsize"])
@@ -1406,7 +1542,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         if str(self.segmentationMethodCombo.currentData) == "none":
             return
-        preset = METHOD_PRESETS[self.segmentationMethodCombo.currentData]
+        preset = METHOD_PRESETS.get(self.segmentationMethodCombo.currentData)
+        if not preset:
+            return
         self.gaussSigmaSpin.value = float(preset["gaussian_sigma"])
         self.trabThresholdSpin.value = float(preset["trab_threshold"])
         self.cortThresholdSpin.value = float(preset["cort_threshold"])
@@ -1416,6 +1554,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.minSizeSpin.value = int(preset["min_size_voxels"])
         self.keepLargestCheck.checked = bool(preset["keep_largest_component"])
         self.lhThresholdSpin.value = float(preset["laplace_hamming_threshold"])
+        self.lhLowPassSpin.value = float(preset.get("laplace_hamming_low_pass_cutoff", 0.3))
+        self.lhEpsilonSpin.value = float(preset.get("laplace_hamming_epsilon", 0.45))
+        self.lhMinSizeSpin.value = int(preset.get("laplace_hamming_min_size_voxels", 70))
         backend = str(preset["laplace_hamming_backend"])
         count = self.lhBackendCombo.count
         if callable(count):
@@ -1441,13 +1582,18 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "keep_largest_component": bool(self.keepLargestCheck.checked),
                 "use_segmentation_aligned_contour_support": bool(self.segmentationAlignedSupportCheck.checked),
                 "laplace_hamming_threshold": float(self.lhThresholdSpin.value),
+                "laplace_hamming_low_pass_cutoff": float(self.lhLowPassSpin.value),
+                "laplace_hamming_epsilon": float(self.lhEpsilonSpin.value),
+                "laplace_hamming_min_size_voxels": int(self.lhMinSizeSpin.value),
                 "laplace_hamming_backend": str(self.lhBackendCombo.currentData),
             },
             "outer": {
+                "periosteal_threshold": float(self.periostealThresholdSpin.value),
                 "periosteal_kernelsize": int(self.outerKernelSpin.value),
                 "periosteal_open_radius": int(self.outerOpenSpin.value),
             },
             "inner": {
+                "endosteal_threshold": float(self.endostealThresholdSpin.value),
                 "endosteal_kernelsize": int(self.innerKernelSpin.value),
                 "peel": int(self.peelSpin.value),
                 "trabecular_close_radius": int(self.trabCloseSpin.value),
@@ -1592,10 +1738,15 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             warning_text = ""
             if metadata.get("segmentation_warning"):
                 warning_text = f" Warning: {metadata.get('segmentation_warning')}"
+            emitted_roles = metadata.get("emitted_roles", [])
+            emitted_text = f" Emitted={','.join(emitted_roles)}." if emitted_roles else ""
             self._log(
                 f"Created {segmentation_node.GetName()}.{label_text} "
                 f"Voxel counts: full={counts.get('full')}, trab={counts.get('trab')}, "
-                f"cort={counts.get('cort')}, seg={counts.get('seg')}.{provenance_text}{warning_text}"
+                f"cort={counts.get('cort')}, seg={counts.get('seg')}.{provenance_text} "
+                f"Periosteal={metadata.get('periosteal_contour_method')}; "
+                f"Endosteal={metadata.get('endosteal_contour_method')}; "
+                f"Compartments={metadata.get('compartment_split_generated')}.{emitted_text}{warning_text}"
             )
         except Exception as exc:
             self._error(exc)

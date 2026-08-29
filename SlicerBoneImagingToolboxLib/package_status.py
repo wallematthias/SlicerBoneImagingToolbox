@@ -19,6 +19,7 @@ class PackageSpec:
     minimum_version: str
     install_options: tuple[str, ...] = ("--prefer-binary",)
     constraints: tuple[str, ...] = ()
+    required_imports: tuple[str, ...] = ()
     notes: str = ""
 
 
@@ -34,12 +35,12 @@ class PackageStatusRow:
 
 DEFAULT_RUNTIME_PACKAGES = (
     PackageSpec(
-        display_name="XCT2 Analysis",
+        display_name="Timelapsed HR-pQCT",
         package_name="timelapsed-hrpqct",
         import_name="timelapsedhrpqct",
         minimum_version="2.0.37",
         constraints=("hrpqct-geodesic-contour>=0.1.1",),
-        notes="XCT2/longitudinal HR-pQCT runtime package: timelapsed-hrpqct.",
+        notes="Longitudinal HR-pQCT runtime package: timelapsed-hrpqct.",
     ),
     PackageSpec(
         display_name="MotionScore HR-pQCT",
@@ -61,7 +62,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Spine Segmentation",
         package_name="spine-segment",
         import_name="spine_segment",
-        minimum_version="0.1.0",
+        minimum_version="0.1.2",
         notes="CT spine segmentation package for Slicer Python runtime.",
     ),
     PackageSpec(
@@ -71,6 +72,21 @@ DEFAULT_RUNTIME_PACKAGES = (
         minimum_version="0.1.0",
         constraints=("numpy>=2.0,<3.0", "scipy>=1.18,<2.0"),
         notes="Bone microarchitecture measurements from masks and calibrated grayscale images.",
+    ),
+    PackageSpec(
+        display_name="Plate/Rod Morphometry",
+        package_name="plate-rod-thinning",
+        import_name="plate_rod_thinning",
+        minimum_version="0.1.3",
+        install_options=(
+            "--force-reinstall",
+            "--prefer-binary",
+            "--only-binary",
+            ":all:",
+            "--no-deps",
+        ),
+        required_imports=("plate_rod_thinning._c_backend",),
+        notes="Plate/rod thinning and morphometry core package with compiled backend.",
     ),
 )
 
@@ -146,6 +162,20 @@ def collect_installed_versions(specs: tuple[PackageSpec, ...] = DEFAULT_RUNTIME_
     return versions
 
 
+def collect_validation_errors(specs: tuple[PackageSpec, ...] = DEFAULT_RUNTIME_PACKAGES) -> dict[str, str]:
+    errors = {}
+    for spec in specs:
+        if not installed_package_version(spec.package_name):
+            continue
+        for import_name in spec.required_imports:
+            try:
+                __import__(import_name)
+            except Exception as exc:
+                errors[spec.package_name] = f"Required runtime module {import_name!r} is unavailable: {exc}"
+                break
+    return errors
+
+
 def collect_latest_versions(
     specs: tuple[PackageSpec, ...] = DEFAULT_RUNTIME_PACKAGES,
     *,
@@ -164,11 +194,15 @@ def package_status_row(
     *,
     installed_versions: dict[str, str],
     latest_versions: dict[str, str],
+    validation_errors: dict[str, str] | None = None,
 ) -> PackageStatusRow:
     installed = installed_versions.get(spec.package_name)
     latest = latest_versions.get(spec.package_name)
+    validation_error = (validation_errors or {}).get(spec.package_name)
     comparison = compare_versions(installed, latest)
     if installed and compare_versions(installed, spec.minimum_version) == "outdated":
+        comparison = "outdated"
+    if installed and validation_error:
         comparison = "outdated"
     status = "update_available" if comparison == "outdated" else comparison
     action = None
@@ -179,7 +213,9 @@ def package_status_row(
         detail = "Not installed in Slicer Python."
     elif status == "update_available":
         action = "update"
-        if latest:
+        if validation_error:
+            detail = validation_error
+        elif latest:
             detail = f"Newer PyPI release available: {latest}."
         else:
             detail = f"Installed version is below required minimum {spec.minimum_version}."
@@ -203,12 +239,14 @@ def package_status_rows(
     *,
     installed_versions: dict[str, str] | None = None,
     latest_versions: dict[str, str] | None = None,
+    validation_errors: dict[str, str] | None = None,
     timeout: int = 8,
 ) -> tuple[PackageStatusRow, ...]:
     installed = installed_versions if installed_versions is not None else collect_installed_versions(specs)
     latest = latest_versions if latest_versions is not None else collect_latest_versions(specs, timeout=timeout)
+    validations = validation_errors if validation_errors is not None else collect_validation_errors(specs)
     return tuple(
-        package_status_row(spec, installed_versions=installed, latest_versions=latest)
+        package_status_row(spec, installed_versions=installed, latest_versions=latest, validation_errors=validations)
         for spec in specs
     )
 

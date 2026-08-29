@@ -141,7 +141,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         return _aim_io_module().is_aimio_available()
 
     def install_or_update_core(self):
-        slicer.util.pip_install("aimio-py>=0.1.8 numpy>=1.26,<2.0")
+        slicer.util.pip_install("aimio-py>=0.1.8 numpy>=1.26,<3.0")
 
     def import_aim(
         self,
@@ -483,16 +483,12 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(collapsible)
         form = qt.QFormLayout(collapsible)
 
-        self.installButton = qt.QPushButton("Install / Update Scanco I/O")
         self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
-        self._tip(self.installButton, "Install or update the lightweight aimio-py Scanco image dependency in Slicer Python.")
         self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        self.installButton.clicked.connect(self._install_core)
         self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
         installRowWidget = qt.QWidget()
         installRow = qt.QHBoxLayout(installRowWidget)
         installRow.setContentsMargins(0, 0, 0, 0)
-        installRow.addWidget(self.installButton)
         installRow.addWidget(self.updateToolboxButton)
         form.addRow(installRowWidget)
 
