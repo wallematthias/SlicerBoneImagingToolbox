@@ -515,8 +515,17 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         self.write_registered_series_manifest(dataset_root, root, rows)
         long_rows = []
         written = []
+        skipped_rows = []
         for row in rows:
             if row.get("status") != "Ready":
+                skipped_rows.append(
+                    {
+                        "subject_id": row.get("subject_id", ""),
+                        "site": row.get("site", ""),
+                        "session_id": row.get("session_id", ""),
+                        "status": row.get("status", "Not ready"),
+                    }
+                )
                 continue
             image = self._read_registered_series_image(row["image_path"], role="image")
             bone_seg = self._read_registered_series_image(row["seg_path"], role="bone seg")
@@ -572,7 +581,12 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             writer = csv.DictWriter(stream, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(long_rows)
-        return {"manifest": str(root / "registered_microarchitecture_manifest.json"), "long_csv": str(long_path), "session_csvs": written}
+        return {
+            "manifest": str(root / "registered_microarchitecture_manifest.json"),
+            "long_csv": str(long_path),
+            "session_csvs": written,
+            "skipped_rows": skipped_rows,
+        }
 
     def _volume_to_sitk_uint8(self, volume_node, role, selected_segment_id=None, reference_node=None):
         return self._volume_to_sitk(
@@ -1547,11 +1561,20 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay(f"Registered series microarchitecture failed:\n{exc}")
             self._series_log(f"[registered] measurements failed: {exc}")
             return
-        self.seriesStatusLabel.text = f"Wrote registered series measurements: {outputs['long_csv']}"
+        measured_count = len(outputs.get("session_csvs", []))
+        skipped_count = len(outputs.get("skipped_rows", []))
+        self.seriesStatusLabel.text = (
+            f"Wrote registered series measurements for {measured_count} session(s); "
+            f"skipped {skipped_count}. Output: {outputs['long_csv']}"
+        )
         self._series_log(f"[registered] wrote manifest: {outputs['manifest']}")
         self._series_log(f"[registered] wrote long table: {outputs['long_csv']}")
         for path in outputs.get("session_csvs", []):
             self._series_log(f"[registered] wrote session table: {path}")
+        for row in outputs.get("skipped_rows", []):
+            self._series_log(
+                f"[registered] skipped sub-{row['subject_id']} ses-{row['session_id']}: {row['status']}"
+            )
 
     def _install_core(self):
         try:

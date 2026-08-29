@@ -276,3 +276,17 @@ def test_registered_series_prepare_can_generate_missing_masks() -> None:
     assert "segmentation_method=str(self.seriesSegmentationMethodCombo.currentData)" in prepare_method
     assert "periosteal_contour_method=str(self.seriesPeriostealContourCombo.currentData)" in prepare_method
     assert "endosteal_contour_method=str(self.seriesEndostealContourCombo.currentData)" in prepare_method
+
+
+def test_registered_series_run_reports_measured_and_skipped_sessions() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    run_logic = source[source.index("    def run_registered_series_microarchitecture(") :]
+    run_widget = source[source.index("    def _run_registered_series(self):") :]
+
+    assert "skipped_rows = []" in run_logic
+    assert "skipped_rows.append(" in run_logic
+    assert '"skipped_rows": skipped_rows' in run_logic
+    assert "measured_count = len(outputs.get(\"session_csvs\", []))" in run_widget
+    assert "skipped_count = len(outputs.get(\"skipped_rows\", []))" in run_widget
+    assert "skipped_count" in run_widget
+    assert "[registered] skipped" in run_widget
