@@ -247,6 +247,33 @@ def test_plate_rod_background_batch_command_carries_folder_options(tmp_path: Pat
     ]
 
 
+def test_plate_rod_background_job_launches_with_pythonslicer(monkeypatch, tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("plate_rod_batch_launch_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    started = []
+
+    class Signal:
+        def connect(self, _callback): pass
+
+    class Process:
+        MergedChannels = 1
+        def __init__(self):
+            self.readyRead = Signal()
+            self.finished = Signal()
+        def setProcessChannelMode(self, _mode): pass
+        def start(self, executable, arguments): started.append((executable, arguments))
+
+    monkeypatch.setattr(module.qt, "QProcess", Process, raising=False)
+    monkeypatch.setattr(module.slicer, "app", type("App", (), {"applicationFilePath": staticmethod(lambda: "/Applications/Slicer.app/Contents/MacOS/Slicer")})(), raising=False)
+    module.PlateRodMorphometryHRpQCTLogic().run_folder_batch_job(tmp_path, subject_id="S1", site="tibia", force=True)
+
+    assert started[0][0].endswith("Contents/bin/PythonSlicer")
+    assert started[0][1][:3] == ["-m", "plate_rod_thinning.cli", "run-batch"]
+    assert ["--subject", "S1"] == started[0][1][4:6]
+    assert "--force" in started[0][1]
+
+
 def test_plate_rod_module_builds_3d_surface_preview_for_full_thickness_labels() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 

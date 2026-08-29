@@ -30,7 +30,7 @@ def _remove_local_core_repo_from_sys_path():
     local_repo = str(PLATE_ROD_LOCAL_REPO)
     sys.path[:] = [path for path in sys.path if str(path) != local_repo]
 
-from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install  # noqa: E402
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install, slicer_python_executable  # noqa: E402
 from plate_rod_thinning.batch import run_plate_rod_batch  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
@@ -197,7 +197,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         proc.setProcessChannelMode(qt.QProcess.MergedChannels)
         proc.readyRead.connect(lambda: on_output and on_output(bytes(proc.readAll()).decode("utf-8", errors="replace")))
         proc.finished.connect(lambda code, status: on_finished and on_finished(code, status))
-        proc.start(slicer.app.applicationFilePath(), self.folder_batch_command(
+        proc.start(slicer_python_executable(slicer.app.applicationFilePath()), self.folder_batch_command(
             dataset_root, subject_id=subject_id, site=site, use_common_region=use_common_region, force=force,
         ))
         return proc

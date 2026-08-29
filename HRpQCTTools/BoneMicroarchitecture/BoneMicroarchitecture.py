@@ -34,7 +34,7 @@ SCANCO_IO_DIR = TOOLBOX_ROOT / "IOTools" / "ScancoIO"
 if str(SCANCO_IO_DIR) not in sys.path:
     sys.path.insert(0, str(SCANCO_IO_DIR))
 
-from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install  # noqa: E402
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install, slicer_python_executable  # noqa: E402
 from SlicerBoneImagingToolboxLib.segmentation_methods import (  # noqa: E402
     BONE_SEGMENTATION_METHODS,
     ENDOSTEAL_CONTOUR_METHODS,
@@ -129,7 +129,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         proc.setProcessChannelMode(qt.QProcess.MergedChannels)
         proc.readyRead.connect(lambda: on_output and on_output(bytes(proc.readAll()).decode("utf-8", errors="replace")))
         proc.finished.connect(lambda code, status: on_finished and on_finished(code, status))
-        proc.start(slicer.app.applicationFilePath(), self.folder_batch_command(
+        proc.start(slicer_python_executable(slicer.app.applicationFilePath()), self.folder_batch_command(
             dataset_root, subject_id=subject_id, site=site, use_common_region=use_common_region, force=force,
             thickness_method=thickness_method, thickness_backend=thickness_backend,
         ))

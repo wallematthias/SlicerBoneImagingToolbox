@@ -135,3 +135,36 @@ def test_registered_common_region_batch_controller_launches_selected_groups() ->
     assert process == "process"
     assert logic.prepared[2] == [{"subject_id": "S2", "site": "radius", "session_id": "1"}]
     assert logic.launched[0] == {"rows": logic.prepared[2]}
+
+
+def test_registered_common_region_batch_job_launches_with_pythonslicer(monkeypatch) -> None:
+    spec = importlib.util.spec_from_file_location("registered_common_region_launch_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    started = []
+
+    class Signal:
+        def connect(self, _callback): pass
+
+    class Process:
+        def __init__(self):
+            self.readyReadStandardOutput = Signal()
+            self.readyReadStandardError = Signal()
+            self.finished = Signal()
+        def setProcessEnvironment(self, _environment): pass
+        def start(self, executable, arguments): started.append((executable, arguments))
+
+    class Environment:
+        @staticmethod
+        def systemEnvironment(): return Environment()
+        def insert(self, _key, _value): pass
+
+    monkeypatch.setattr(module.qt, "QProcess", Process, raising=False)
+    monkeypatch.setattr(module.qt, "QProcessEnvironment", Environment, raising=False)
+    monkeypatch.setattr(module.slicer, "app", type("App", (), {"applicationFilePath": staticmethod(lambda: "/Applications/Slicer.app/Contents/MacOS/Slicer")})(), raising=False)
+    module.RegisteredCommonRegionLogic().run_batch_job(
+        {"dataset_root": "/tmp/dataset", "rows": [{"subject_id": "S1", "site": "tibia"}]}
+    )
+
+    assert started[0][0].endswith("Contents/bin/PythonSlicer")
+    assert started[0][1] == ["-m", "timelapsedhrpqct.cli", "common-region", "run", str(Path("/tmp/dataset").resolve()), "--subject", "S1", "--site", "tibia"]

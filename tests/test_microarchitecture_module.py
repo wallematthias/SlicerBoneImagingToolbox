@@ -421,6 +421,33 @@ def test_microarchitecture_background_batch_command_carries_folder_options(tmp_p
     ]
 
 
+def test_microarchitecture_background_job_launches_with_pythonslicer(monkeypatch, tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("microarchitecture_batch_launch_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    started = []
+
+    class Signal:
+        def connect(self, _callback): pass
+
+    class Process:
+        MergedChannels = 1
+        def __init__(self):
+            self.readyRead = Signal()
+            self.finished = Signal()
+        def setProcessChannelMode(self, _mode): pass
+        def start(self, executable, arguments): started.append((executable, arguments))
+
+    monkeypatch.setattr(module.qt, "QProcess", Process, raising=False)
+    monkeypatch.setattr(module.slicer, "app", type("App", (), {"applicationFilePath": staticmethod(lambda: "/Applications/Slicer.app/Contents/MacOS/Slicer")})(), raising=False)
+    module.BoneMicroarchitectureLogic().run_folder_batch_job(tmp_path, force=True, thickness_backend="opencl")
+
+    assert started[0][0].endswith("Contents/bin/PythonSlicer")
+    assert started[0][1][:3] == ["-m", "bone_microarchitecture.cli", "run-batch"]
+    assert "--force" in started[0][1]
+    assert started[0][1][-2:] == ["--thickness-backend", "opencl"]
+
+
 def test_registered_series_does_not_build_partial_common_regions_for_incomplete_groups() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     prepare_logic = source[source.index("    def prepare_registered_series_workspace(") :]

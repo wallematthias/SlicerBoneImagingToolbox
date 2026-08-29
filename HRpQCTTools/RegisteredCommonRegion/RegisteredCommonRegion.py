@@ -17,6 +17,7 @@ if TIMELAPSED_LOCAL_SRC.exists() and str(TIMELAPSED_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(TIMELAPSED_LOCAL_SRC))
 
 from SlicerBoneImagingToolboxLib.common_region import CommonRegionSession, build_common_scan_region  # noqa: E402
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_python_executable  # noqa: E402
 from SlicerBoneImagingToolboxLib.derivatives import DerivativeManifest, DerivativeRecord, write_manifest  # noqa: E402
 from SlicerBoneImagingToolboxLib.image_io import read_image, read_mask, write_mask  # noqa: E402
 from SlicerBoneImagingToolboxLib.registration import register_image_pair  # noqa: E402
@@ -207,7 +208,7 @@ class RegisteredCommonRegionLogic(ScriptedLoadableModuleLogic):
         proc.readyReadStandardOutput.connect(_read_stdout)
         proc.readyReadStandardError.connect(_read_stderr)
         proc.finished.connect(_finished)
-        python_exe = slicer.app.applicationFilePath()
+        python_exe = slicer_python_executable(slicer.app.applicationFilePath())
         # Folder mode is owned by Timelapsed; Slicer only launches the CLI and
         # streams its progress. Scene-node adaptation remains in this module.
         notice = self.batch_output_root_notice(job)
