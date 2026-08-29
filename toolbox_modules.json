@@ -21,6 +21,12 @@
       "source": "built-in"
     },
     {
+      "path": "HRpQCTTools/RegisteredCommonRegion",
+      "title": "Registered Common Region",
+      "section": "HR-pQCT",
+      "source": "built-in"
+    },
+    {
       "path": "HRpQCTTools/BoneMicroarchitecture",
       "title": "Bone Microarchitecture",
       "section": "HR-pQCT",
