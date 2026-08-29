@@ -626,28 +626,19 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         )
 
     def _resample_registered_mask(self, mask, reference, transform):
-        return sitk.Cast(
-            sitk.Resample(
-                sitk.Cast(mask > 0, sitk.sitkUInt8),
-                reference,
-                transform,
-                sitk.sitkNearestNeighbor,
-                0,
-                sitk.sitkUInt8,
-            )
-            > 0,
-            sitk.sitkUInt8,
-        )
+        from SlicerBoneImagingToolboxLib.masks import resample_mask
+
+        return resample_mask(mask, reference, transform)
 
     def _registered_scan_region(self, image):
-        scan_region = sitk.Image(image.GetSize(), sitk.sitkUInt8)
-        scan_region.CopyInformation(image)
-        return sitk.Cast(scan_region + 1, sitk.sitkUInt8)
+        from SlicerBoneImagingToolboxLib.masks import scan_region_mask
+
+        return scan_region_mask(image)
 
     def _clip_registered_mask_to_scan_region(self, mask, scan_region):
-        if scan_region is None:
-            return mask
-        return sitk.Cast((mask > 0) & (scan_region > 0), sitk.sitkUInt8)
+        from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region
+
+        return clip_mask_to_region(mask, scan_region)
 
     def _register_to_baseline(self, fixed_image, moving_image, fixed_mask, moving_mask):
         from timelapsedhrpqct.processing.registration import RegistrationSettings, register_images
@@ -805,11 +796,13 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             if role != "image":
                 image = sitk.Cast(image > 0, sitk.sitkUInt8)
             return image
-        pixel_type = sitk.sitkFloat32 if role == "image" else sitk.sitkUInt8
-        image = sitk.ReadImage(str(path), pixel_type)
-        if role != "image":
-            image = sitk.Cast(image > 0, sitk.sitkUInt8)
-        return image
+        if role == "image":
+            from SlicerBoneImagingToolboxLib.image_io import read_image
+
+            return read_image(path)
+        from SlicerBoneImagingToolboxLib.image_io import read_mask
+
+        return read_mask(path)
 
     def run_registered_series_microarchitecture(
         self,
