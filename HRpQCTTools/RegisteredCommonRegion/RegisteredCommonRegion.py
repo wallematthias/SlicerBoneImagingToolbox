@@ -292,10 +292,35 @@ class RegisteredCommonRegionLogic(ScriptedLoadableModuleLogic):
         )
 
 
+class RegisteredCommonRegionBatchController:
+    """Small UI-independent controller for the selectable folder workflow."""
+
+    def __init__(self, logic):
+        self.logic = logic
+        self.rows = []
+        self.selected_groups = set()
+
+    def discover(self, dataset_root):
+        self.rows = list(self.logic.discover_batch_series(dataset_root))
+        self.selected_groups = {(str(row["subject_id"]), str(row["site"])) for row in self.rows}
+        return self.rows
+
+    def set_selected_groups(self, groups):
+        self.selected_groups = {(str(subject_id), str(site)) for subject_id, site in groups}
+
+    def selected_rows(self):
+        return [row for row in self.rows if (str(row["subject_id"]), str(row["site"])) in self.selected_groups]
+
+    def run(self, dataset_root, derivatives_root, *, on_output=None, on_finished=None):
+        job = self.logic.prepare_batch_job(dataset_root, derivatives_root, self.selected_rows())
+        return self.logic.run_batch_job(job, on_output=on_output, on_finished=on_finished)
+
+
 class RegisteredCommonRegionWidget(ScriptedLoadableModuleWidget):
     def setup(self):
         super().setup()
         self.logic = RegisteredCommonRegionLogic()
+        self.batchController = RegisteredCommonRegionBatchController(self.logic)
         self.tabs = qt.QTabWidget()
         self.layout.addWidget(self.tabs)
         scene_tab = qt.QWidget()
@@ -335,11 +360,46 @@ class RegisteredCommonRegionWidget(ScriptedLoadableModuleWidget):
         self.runButton = qt.QPushButton("Run")
         self.statusLog = qt.QPlainTextEdit()
         self.statusLog.readOnly = True
+        self.batchGroupsList = qt.QListWidget()
+        self.batchGroupsList.setSelectionMode(qt.QAbstractItemView.MultiSelection)
+        self.discoverButton.clicked.connect(self._discover_batch_groups)
+        self.runButton.clicked.connect(self._run_batch_groups)
         layout.addRow("Dataset root", self.datasetRootEdit)
         layout.addRow("Derivatives root", self.derivativesRootEdit)
         layout.addRow(self.discoverButton)
         layout.addRow(self.runButton)
+        layout.addRow("Subject/site groups", self.batchGroupsList)
         layout.addRow(self.statusLog)
+
+    def _discover_batch_groups(self):
+        try:
+            rows = self.batchController.discover(self.datasetRootEdit.text)
+        except Exception as exc:
+            self.statusLog.appendPlainText(f"Discovery failed: {exc}")
+            return
+        self.batchGroupsList.clear()
+        for subject_id, site in sorted(self.batchController.selected_groups):
+            item = qt.QListWidgetItem(f"sub-{subject_id} / {site}")
+            item.setData(qt.Qt.UserRole, (subject_id, site))
+            item.setSelected(True)
+            self.batchGroupsList.addItem(item)
+        self.statusLog.appendPlainText(f"Discovered {len(rows)} session(s).")
+
+    def _run_batch_groups(self):
+        groups = {
+            tuple(item.data(qt.Qt.UserRole))
+            for item in self.batchGroupsList.selectedItems()
+        }
+        self.batchController.set_selected_groups(groups)
+        try:
+            self.batchController.run(
+                self.datasetRootEdit.text,
+                self.derivativesRootEdit.text,
+                on_output=self.statusLog.appendPlainText,
+                on_finished=lambda code, _status: self.statusLog.appendPlainText(f"Batch finished: {code}"),
+            )
+        except Exception as exc:
+            self.statusLog.appendPlainText(f"Batch failed to start: {exc}")
 
 
 def run_registered_common_region_job(job_path):

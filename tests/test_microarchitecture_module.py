@@ -404,6 +404,23 @@ def test_microarchitecture_folder_batch_action_executes_package_api(monkeypatch,
     assert received == {"root": tmp_path, "use_common_region": False, "force": True, "progress": None}
 
 
+def test_microarchitecture_background_batch_command_carries_folder_options(tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("microarchitecture_batch_command_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    command = module.BoneMicroarchitectureLogic.folder_batch_command(
+        tmp_path, subject_id="S1", site="tibia", use_common_region=False,
+        force=True, thickness_method="edt", thickness_backend="opencl",
+    )
+
+    assert command == [
+        "-m", "bone_microarchitecture.cli", "run-batch", str(tmp_path.resolve()),
+        "--no-common-region", "--force",
+        "--thickness-method", "edt", "--thickness-backend", "opencl",
+    ]
+
+
 def test_registered_series_does_not_build_partial_common_regions_for_incomplete_groups() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     prepare_logic = source[source.index("    def prepare_registered_series_workspace(") :]

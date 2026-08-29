@@ -232,6 +232,21 @@ def test_plate_rod_folder_batch_action_executes_package_api(monkeypatch, tmp_pat
     assert received == {"root": tmp_path, "use_common_region": False, "force": True, "progress": None}
 
 
+def test_plate_rod_background_batch_command_carries_folder_options(tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("plate_rod_batch_command_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    command = module.PlateRodMorphometryHRpQCTLogic.folder_batch_command(
+        tmp_path, subject_id="S1", site="tibia", use_common_region=False, force=True,
+    )
+
+    assert command == [
+        "-m", "plate_rod_thinning.cli", "run-batch", str(tmp_path.resolve()),
+        "--subject", "S1", "--site", "tibia", "--no-common-region", "--force",
+    ]
+
+
 def test_plate_rod_module_builds_3d_surface_preview_for_full_thickness_labels() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 

@@ -178,6 +178,30 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
             progress=progress,
         )
 
+    @staticmethod
+    def folder_batch_command(dataset_root, *, subject_id="", site="", use_common_region=True, force=False):
+        command = ["-m", "plate_rod_thinning.cli", "run-batch", str(Path(dataset_root).expanduser().resolve())]
+        if subject_id:
+            command.extend(["--subject", str(subject_id)])
+        if site:
+            command.extend(["--site", str(site)])
+        if not use_common_region:
+            command.append("--no-common-region")
+        if force:
+            command.append("--force")
+        return command
+
+    def run_folder_batch_job(self, dataset_root, *, subject_id="", site="", use_common_region=True, force=False,
+                             on_output=None, on_finished=None):
+        proc = qt.QProcess()
+        proc.setProcessChannelMode(qt.QProcess.MergedChannels)
+        proc.readyRead.connect(lambda: on_output and on_output(bytes(proc.readAll()).decode("utf-8", errors="replace")))
+        proc.finished.connect(lambda code, status: on_finished and on_finished(code, status))
+        proc.start(slicer.app.applicationFilePath(), self.folder_batch_command(
+            dataset_root, subject_id=subject_id, site=site, use_common_region=use_common_region, force=force,
+        ))
+        return proc
+
     def core_runtime_status(self):
         try:
             version = metadata.version("plate-rod-thinning")
@@ -798,7 +822,44 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
         form_layout.addRow(self.installCoreButton)
         self._refresh_core_status()
 
+        batch = ctk.ctkCollapsibleButton()
+        batch.text = "Folder Batch"
+        self.layout.addWidget(batch)
+        batch_form = qt.QFormLayout(batch)
+        self.folderDatasetRootEdit = qt.QLineEdit()
+        self.folderSubjectEdit = qt.QLineEdit()
+        self.folderSiteEdit = qt.QLineEdit()
+        self.folderUseCommonRegionCheck = qt.QCheckBox()
+        self.folderUseCommonRegionCheck.checked = True
+        self.folderForceCheck = qt.QCheckBox()
+        self.folderRunButton = qt.QPushButton("Run folder batch")
+        self.folderBatchStatus = qt.QLabel()
+        self.folderRunButton.clicked.connect(self._run_folder_batch)
+        batch_form.addRow("Dataset root", self.folderDatasetRootEdit)
+        batch_form.addRow("Subject", self.folderSubjectEdit)
+        batch_form.addRow("Site", self.folderSiteEdit)
+        batch_form.addRow("Use common region", self.folderUseCommonRegionCheck)
+        batch_form.addRow("Force recompute", self.folderForceCheck)
+        batch_form.addRow(self.folderRunButton)
+        batch_form.addRow(self.folderBatchStatus)
+
         self.layout.addStretch(1)
+
+    def _run_folder_batch(self):
+        self.folderRunButton.enabled = False
+        self.folderBatchStatus.text = "Folder batch is running in the background."
+        self.logic.run_folder_batch_job(
+            self.folderDatasetRootEdit.text,
+            subject_id=self.folderSubjectEdit.text,
+            site=self.folderSiteEdit.text,
+            use_common_region=bool(self.folderUseCommonRegionCheck.checked),
+            force=bool(self.folderForceCheck.checked),
+            on_finished=self._on_folder_batch_finished,
+        )
+
+    def _on_folder_batch_finished(self, exit_code, _exit_status):
+        self.folderRunButton.enabled = True
+        self.folderBatchStatus.text = f"Folder batch finished with exit code {int(exit_code)}."
 
     def _segmentation_input_row(self, node_selector, segment_selector):
         row = qt.QWidget()

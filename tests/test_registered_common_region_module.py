@@ -100,3 +100,38 @@ def test_registered_common_region_reports_custom_root_constraint() -> None:
     )
 
     assert "custom derivatives root is not supported" in notice
+
+
+def test_registered_common_region_batch_controller_launches_selected_groups() -> None:
+    class FakeLogic:
+        def __init__(self):
+            self.prepared = None
+            self.launched = None
+
+        def discover_batch_series(self, _root):
+            return [
+                {"subject_id": "S1", "site": "tibia", "session_id": "1"},
+                {"subject_id": "S2", "site": "radius", "session_id": "1"},
+            ]
+
+        def prepare_batch_job(self, root, derivatives_root, rows):
+            self.prepared = (root, derivatives_root, rows)
+            return {"rows": rows}
+
+        def run_batch_job(self, job, **kwargs):
+            self.launched = (job, kwargs)
+            return "process"
+
+    spec = importlib.util.spec_from_file_location("registered_common_region_controller_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    logic = FakeLogic()
+    controller = module.RegisteredCommonRegionBatchController(logic)
+    controller.discover("/tmp/dataset")
+    controller.set_selected_groups({("S2", "radius")})
+
+    process = controller.run("/tmp/dataset", "/tmp/dataset/derivatives/CommonRegion")
+
+    assert process == "process"
+    assert logic.prepared[2] == [{"subject_id": "S2", "site": "radius", "session_id": "1"}]
+    assert logic.launched[0] == {"rows": logic.prepared[2]}

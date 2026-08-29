@@ -111,6 +111,30 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             progress=progress,
         )
 
+    @staticmethod
+    def folder_batch_command(dataset_root, *, subject_id="", site="", use_common_region=True, force=False,
+                             thickness_method="hildebrand", thickness_backend="auto"):
+        del subject_id, site  # The current package batch CLI operates on all manifest cases.
+        command = ["-m", "bone_microarchitecture.cli", "run-batch", str(Path(dataset_root).expanduser().resolve())]
+        if not use_common_region:
+            command.append("--no-common-region")
+        if force:
+            command.append("--force")
+        command.extend(["--thickness-method", str(thickness_method), "--thickness-backend", str(thickness_backend)])
+        return command
+
+    def run_folder_batch_job(self, dataset_root, *, subject_id="", site="", use_common_region=True, force=False,
+                             thickness_method="hildebrand", thickness_backend="auto", on_output=None, on_finished=None):
+        proc = qt.QProcess()
+        proc.setProcessChannelMode(qt.QProcess.MergedChannels)
+        proc.readyRead.connect(lambda: on_output and on_output(bytes(proc.readAll()).decode("utf-8", errors="replace")))
+        proc.finished.connect(lambda code, status: on_finished and on_finished(code, status))
+        proc.start(slicer.app.applicationFilePath(), self.folder_batch_command(
+            dataset_root, subject_id=subject_id, site=site, use_common_region=use_common_region, force=force,
+            thickness_method=thickness_method, thickness_backend=thickness_backend,
+        ))
+        return proc
+
     def run_registered_series_job(self, job_path, on_output=None, on_finished=None):
         if self._proc is not None:
             raise RuntimeError("A registered microarchitecture process is already running")
@@ -1569,10 +1593,42 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         series_layout = qt.QVBoxLayout(series_tab)
         self._setup_registered_series_tab(series_layout)
 
+        batch_tab = qt.QWidget()
+        batch_layout = qt.QFormLayout(batch_tab)
+        self.folderDatasetRootEdit = qt.QLineEdit()
+        self.folderUseCommonRegionCheck = qt.QCheckBox()
+        self.folderUseCommonRegionCheck.checked = True
+        self.folderForceCheck = qt.QCheckBox()
+        self.folderRunButton = qt.QPushButton("Run folder batch")
+        self.folderBatchStatus = qt.QLabel()
+        self.folderRunButton.clicked.connect(self._run_folder_batch)
+        batch_layout.addRow("Dataset root", self.folderDatasetRootEdit)
+        batch_layout.addRow("Use common region", self.folderUseCommonRegionCheck)
+        batch_layout.addRow("Force recompute", self.folderForceCheck)
+        batch_layout.addRow(self.folderRunButton)
+        batch_layout.addRow(self.folderBatchStatus)
+
         self.modeTabs.addTab(single_tab, "Single Scan")
         self.modeTabs.addTab(series_tab, "Registered Series")
+        self.modeTabs.addTab(batch_tab, "Batch")
         self.layout.addStretch(1)
         self._update_dependency_ui()
+
+    def _run_folder_batch(self):
+        self.folderRunButton.enabled = False
+        self.folderBatchStatus.text = "Folder batch is running in the background."
+        self.logic.run_folder_batch_job(
+            self.folderDatasetRootEdit.text,
+            use_common_region=bool(self.folderUseCommonRegionCheck.checked),
+            force=bool(self.folderForceCheck.checked),
+            thickness_method=str(self.thicknessMethodCombo.currentData),
+            thickness_backend=str(self.thicknessBackendCombo.currentData),
+            on_finished=self._on_folder_batch_finished,
+        )
+
+    def _on_folder_batch_finished(self, exit_code, _exit_status):
+        self.folderRunButton.enabled = True
+        self.folderBatchStatus.text = f"Folder batch finished with exit code {int(exit_code)}."
 
     def _setup_registered_series_tab(self, layout):
         box = ctk.ctkCollapsibleButton()
