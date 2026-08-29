@@ -2,17 +2,21 @@
 
 ## Goal
 
-Restructure the Timelapsed HR-pQCT, bone microarchitecture, plate/rod, and Slicer toolbox ecosystem around shared derivative products so command-line workflows and Slicer workflows use the same core logic, the same folder contracts, and the same provenance model.
+Restructure every Slicer-facing bone imaging repository around shared derivative products so command-line workflows and Slicer workflows use the same core logic, the same folder contracts, and the same provenance model.
 
 ## Current Problem
 
-The current Slicer overhaul branch adds useful derivative concepts, but too much orchestration still lives in `SlicerBoneImagingToolbox`. That is backwards for long-term maintenance. Registration, longitudinal transform chaining, common scan-region generation, dataset discovery, and derivative manifest writing are package-level concerns. Slicer should expose them, launch them in background workers, and load outputs for review.
+The current Slicer overhaul branch adds useful derivative concepts, but too much orchestration still lives in `SlicerBoneImagingToolbox`. That is backwards for long-term maintenance. Core processing and derivative writing are package-level concerns. Slicer should expose them, launch them in background workers, and load outputs for review.
+
+The first version of the spec treated the derivative contract as something that could live inside `timelapsed-hrpqct`. That is too narrow. Registration and common regions are central to Timelapsed, but the derivative format has to span all repositories that touch the Slicer interface: microarchitecture, plate/rod morphometry, FEA, mechanoregulation, segmentation, void space, and future tools.
 
 The existing package boundary should be tightened:
 
+- `bone-imaging-derivatives` should own the shared manifest schema, role vocabulary, discovery helpers, dataset layout conventions, and dependency planner.
 - `timelapsed-hrpqct` should own longitudinal discovery, registration, transform chains, common scan regions, and timelapsed remodelling.
 - `bone-microarchitecture` should own microarchitecture measurements from arrays and masks.
 - `plate-rod-thinning` should own plate/rod computation from arrays and masks.
+- future analysis packages should own their own algorithms and derivative writers.
 - `SlicerBoneImagingToolbox` should own MRML node selection, scene loading, package installation, background process management, and visualization.
 
 ## Design Principles
@@ -24,15 +28,37 @@ The existing package boundary should be tightened:
 5. Common scan region means scan/FOV overlap only, not biological mask intersection.
 6. Biological masks are clipped by common scan region at analysis time.
 7. Missing prerequisites may be generated automatically if enough inputs and settings are available.
-8. Command-line and Slicer behavior must remain equivalent.
-9. New code should prefer explicit manifest records over filename inference.
-10. Existing Timelapsed outputs remain readable during migration.
+8. Every Slicer-facing package should support both a one-case API and a batch derivative-writing workflow.
+9. Command-line and Slicer behavior must remain equivalent.
+10. New code should prefer explicit manifest records over filename inference.
+11. Existing Timelapsed outputs remain readable during migration.
 
 ## Repository Ownership
 
+### `bone-imaging-derivatives`
+
+This becomes the long-term source of truth for derivative contracts shared by all Slicer-facing repositories.
+
+Responsibilities:
+
+- manifest schema
+- derivative record model
+- role vocabulary
+- derivative family names
+- dataset layout helpers
+- manifest read/write/discovery
+- record filtering
+- compatibility adapters for legacy outputs
+- workflow dependency planning
+- settings hash helpers
+- provenance fields
+- progress event schema for batch jobs
+
+This package should not import Slicer, SimpleITK, VTK, ITK, or analysis-specific packages. It should stay small and dependency-light so every package can depend on it safely.
+
 ### `timelapsed-hrpqct`
 
-This becomes the source of truth for reusable longitudinal infrastructure.
+This remains the source of truth for reusable longitudinal infrastructure.
 
 Responsibilities:
 
@@ -45,8 +71,8 @@ Responsibilities:
 - scan-region mask generation
 - common scan-region construction
 - native-space common-region export
-- derivative manifest schema and writer
-- workflow dependency planning for longitudinal jobs
+- writing `Registration`, `CommonRegion`, and `Timelapsed` derivative records through `bone-imaging-derivatives`
+- workflow prerequisite resolution through `bone-imaging-derivatives`
 - command-line entry points for registration and common region
 - Timelapsed remodelling analysis
 
@@ -62,9 +88,11 @@ Responsibilities:
 - backend selection for CPU, Metal/MPS-style local GPU code, and OpenCL where supported
 - mask intersection rules inside the measurement function
 - table/report formatting for measurement outputs
-- optional CLI for one case or a folder of already-prepared inputs
+- one-case API
+- batch derivative-writing workflow
+- optional CLI commands that write `Microarchitecture` derivatives and manifests
 
-This package should not own longitudinal registration or derivative discovery. It may accept an optional common-region mask as an input.
+This package should not own longitudinal registration or common-region generation. It may discover derivative manifests through `bone-imaging-derivatives` and accept an optional common-region mask as an input.
 
 ### `plate-rod-thinning`
 
@@ -76,8 +104,10 @@ Responsibilities:
 - optional GPU backend internals when available
 - one-case API and optional CLI
 - measurement outputs and maps
+- batch derivative-writing workflow
+- writing `PlateRodMorphometry` derivatives and manifests
 
-This package should not own registration, common-region generation, or Slicer loading.
+This package should not own registration, common-region generation, or Slicer loading. It may discover derivative manifests through `bone-imaging-derivatives`.
 
 ### `SlicerBoneImagingToolbox`
 
@@ -94,7 +124,7 @@ Responsibilities:
 - output loading into Slicer tables, volumes, labelmaps, transforms, and models
 - derivative manifest browsing and status display
 
-It should not duplicate Timelapsed registration/common-region algorithms.
+It should not duplicate package algorithms or derivative writers.
 
 ### Future Repositories
 
@@ -108,9 +138,43 @@ Future packages should consume the same derivative contract:
 
 Each package should either produce or consume manifest records with declared derivative family, role, space, and provenance.
 
+Each package that is exposed through `SlicerBoneImagingToolbox` should provide:
+
+- a package-level one-case API
+- a package-level batch workflow that writes derivatives
+- optional CLI commands for batch execution
+- manifest records written through `bone-imaging-derivatives`
+- progress events that Slicer can parse
+
+## Slicer-Facing Package Contract
+
+Every repository that appears in the Slicer toolbox should implement the same external contract, even if it remains algorithmically independent.
+
+Required layers:
+
+- **Core API:** operates on arrays, paths, or typed package objects; does not know about Slicer or derivative folders.
+- **Batch API:** discovers inputs from a dataset folder and derivative manifests; writes outputs into `derivatives/<DerivativeFamily>`; writes a manifest.
+- **CLI:** wraps the batch API when command-line or Slicer background execution is expected.
+- **Slicer adapter:** lives in `SlicerBoneImagingToolbox`; converts MRML nodes to package inputs, launches batch jobs, and loads outputs.
+
+Required behavior:
+
+- Scene mode must be available for interactive single-case use in Slicer.
+- Batch mode must be available for folder-based reproducible use in Slicer.
+- Batch mode must write derivative manifests.
+- Batch mode must reuse compatible derivative records before recomputing.
+- Batch mode must expose prerequisite status before long jobs start.
+- Long jobs launched from Slicer must run outside the UI thread.
+
+This means the Slicer interface becomes predictable across modules: select loaded nodes in `Scene`, select a dataset root in `Batch`, review prerequisite status, run, then inspect loaded outputs or written derivative folders.
+
 ## Shared Derivative Contract
 
-The derivative contract should move from `SlicerBoneImagingToolboxLib` into `timelapsedhrpqct.derivatives` or, if reuse grows beyond Timelapsed, a small standalone package later. The first implementation should stay inside `timelapsed-hrpqct` to avoid creating another package too early.
+The derivative contract should move from `SlicerBoneImagingToolboxLib` into a small standalone package named `bone-imaging-derivatives`.
+
+This package is intentionally not an algorithm package. It defines how derivative-producing packages describe their outputs and dependencies. It should be usable by command-line packages, Slicer modules, and future analysis repos without pulling in imaging or GUI dependencies.
+
+Short-term bootstrap is allowed if needed: the existing Slicer-side manifest code can remain temporarily while `bone-imaging-derivatives` is created. The target architecture is that all Slicer-facing repos depend on the same package.
 
 ### Manifest Location
 
@@ -381,17 +445,21 @@ Inputs:
 
 ## Package API Design
 
-### `timelapsedhrpqct.derivatives`
+### `bone_imaging_derivatives`
 
-New package area:
+New shared package:
 
 ```text
-src/timelapsedhrpqct/derivatives/
+src/bone_imaging_derivatives/
   __init__.py
   manifest.py
   records.py
   discovery.py
   roles.py
+  families.py
+  layout.py
+  planning.py
+  progress.py
   compatibility.py
 ```
 
@@ -423,7 +491,7 @@ class DerivativeManifest:
     created_at: str
 ```
 
-Functions:
+Manifest functions:
 
 ```python
 def read_manifest(path: Path) -> DerivativeManifest: ...
@@ -442,11 +510,61 @@ def find_records(
 ) -> list[DerivativeRecord]: ...
 ```
 
-Compatibility:
+Compatibility functions:
 
 ```python
 def discover_legacy_timelapsed_records(dataset_root: Path) -> list[DerivativeRecord]: ...
+def discover_legacy_registered_microarchitecture_records(dataset_root: Path) -> list[DerivativeRecord]: ...
 def write_compatibility_manifest(dataset_root: Path) -> Path: ...
+```
+
+Workflow planning interfaces:
+
+```python
+@dataclass(frozen=True)
+class WorkflowRequirement:
+    derivative: str
+    roles: tuple[str, ...]
+    required: bool = True
+
+
+@dataclass(frozen=True)
+class WorkflowPlan:
+    workflow: str
+    available: tuple[DerivativeRecord, ...]
+    missing: tuple[WorkflowRequirement, ...]
+    steps: tuple[str, ...]
+    blocked: bool
+
+
+def resolve_workflow_plan(
+    workflow: str,
+    *,
+    manifests: Sequence[DerivativeManifest],
+    subject_id: str,
+    site: str,
+    sessions: Sequence[str],
+    generate_missing: bool,
+) -> WorkflowPlan: ...
+```
+
+Progress event interfaces:
+
+```python
+@dataclass(frozen=True)
+class DerivativeProgressEvent:
+    family: str
+    subject_id: str | None
+    site: str | None
+    session_id: str | None
+    step: str
+    status: str
+    message: str
+    path: Path | None = None
+
+
+def format_progress_event(event: DerivativeProgressEvent) -> str: ...
+def parse_progress_event(line: str) -> DerivativeProgressEvent | None: ...
 ```
 
 ### `timelapsedhrpqct.registration`
@@ -477,7 +595,7 @@ class RegistrationInput:
 @dataclass(frozen=True)
 class RegistrationWorkflowResult:
     reference_session_id: str
-    manifests: tuple[DerivativeManifest, ...]
+    manifest: DerivativeManifest
     records: tuple[DerivativeRecord, ...]
 ```
 
@@ -490,7 +608,7 @@ def run_registration_workflow(
     output_root: Path,
     reference_session_id: str | None = None,
     settings: RegistrationSettings | None = None,
-    progress: Callable[[str], None] | None = None,
+    progress: Callable[[DerivativeProgressEvent], None] | None = None,
 ) -> RegistrationWorkflowResult: ...
 ```
 
@@ -539,7 +657,7 @@ def build_common_scan_region(
     *,
     output_root: Path,
     reference_session_id: str | None = None,
-    progress: Callable[[str], None] | None = None,
+    progress: Callable[[DerivativeProgressEvent], None] | None = None,
 ) -> CommonRegionWorkflowResult: ...
 ```
 
@@ -552,42 +670,47 @@ Semantics:
 5. Save both reference and native-space common-region masks.
 6. Write `CommonRegion/manifest.json`.
 
-### `timelapsedhrpqct.workflows.dependencies`
+### Package Batch Workflow Pattern
 
-New workflow dependency planner:
+Every Slicer-facing analysis package should expose a consistent batch workflow shape, even if the internal algorithm is different.
+
+Required result shape:
 
 ```python
 @dataclass(frozen=True)
-class WorkflowRequirement:
-    derivative: str
-    roles: tuple[str, ...]
-    required: bool = True
-
-
-@dataclass(frozen=True)
-class WorkflowPlan:
-    workflow: str
-    available: tuple[DerivativeRecord, ...]
-    missing: tuple[WorkflowRequirement, ...]
-    steps: tuple[str, ...]
-    blocked: bool
+class BatchWorkflowResult:
+    manifest: DerivativeManifest
+    records: tuple[DerivativeRecord, ...]
+    output_root: Path
 ```
 
-Functions:
+Workflow functions should follow this shape:
 
 ```python
-def resolve_workflow_plan(
-    workflow: str,
+def run_<workflow>_batch(
+    dataset_root: Path,
     *,
-    manifests: Sequence[DerivativeManifest],
-    subject_id: str,
-    site: str,
-    sessions: Sequence[str],
-    generate_missing: bool,
-) -> WorkflowPlan: ...
+    subject_id: str | None = None,
+    site: str | None = None,
+    output_root: Path | None = None,
+    manifests: Sequence[DerivativeManifest] | None = None,
+    generate_missing: bool = False,
+    force: bool = False,
+    dry_run: bool = False,
+    progress: Callable[[DerivativeProgressEvent], None] | None = None,
+) -> BatchWorkflowResult: ...
 ```
 
-Initial workflow dependencies:
+This pattern should be adopted by:
+
+- `timelapsedhrpqct.registration.run_registration_batch`
+- `timelapsedhrpqct.common_region.run_common_region_batch`
+- `timelapsedhrpqct.workflows.timelapse.run_timelapsed_batch`
+- `bone_microarchitecture.batch.run_microarchitecture_batch`
+- `plate_rod_thinning.batch.run_plate_rod_batch`
+- future FEA, mechanoregulation, segmentation, and void-space batch workflows
+
+Initial workflow dependencies should be registered in `bone-imaging-derivatives`:
 
 - `CommonRegion` requires `Registration.transform_to_reference`.
 - `Microarchitecture` may consume `CommonRegion.scan_region_native_common`.
@@ -598,9 +721,9 @@ Initial workflow dependencies:
 
 ## Command-Line Design
 
-The command-line interface should expose derivative-producing workflows directly.
+Each algorithm package should expose derivative-producing workflows directly when batch use is part of the package's public use case. Slicer should call package CLIs in background workers instead of running long package workflows on the UI thread.
 
-Existing command:
+Existing commands remain valid:
 
 ```text
 timelapse <command>
@@ -609,11 +732,16 @@ timelapse <command>
 New or revised commands:
 
 ```text
+bone-derivatives inspect <dataset_root>
+bone-derivatives validate <dataset_root>
+bone-derivatives plan <dataset_root> --workflow microarchitecture --subject SAMPLE001 --site tibia
 timelapse derivatives inspect <dataset_root>
 timelapse registration run <dataset_root> --subject SAMPLE001 --site tibia
 timelapse common-region run <dataset_root> --subject SAMPLE001 --site tibia
 timelapse prerequisites ensure <dataset_root> --workflow timelapsed --subject SAMPLE001 --site tibia
 timelapse analyse <dataset_root> --subject SAMPLE001 --site tibia --use-common-region
+bone-microarchitecture run-batch <dataset_root> --subject SAMPLE001 --site tibia --use-common-region
+plate-rod-thinning run-batch <dataset_root> --subject SAMPLE001 --site tibia --use-common-region
 ```
 
 Rules:
@@ -629,14 +757,24 @@ Rules:
 Example:
 
 ```bash
-timelapse prerequisites ensure /data/UCSF_single \
+bone-derivatives plan /data/UCSF_single \
   --workflow microarchitecture \
   --subject SAMPLE355 \
-  --site tibia \
-  --generate-missing
+  --site tibia
 ```
 
-This should discover or generate registration and common-region outputs, then stop. The analysis package can then consume those derivatives.
+This should report whether the microarchitecture run can reuse available common-region derivatives. A separate package command then runs the actual measurements.
+
+Example:
+
+```bash
+bone-microarchitecture run-batch /data/UCSF_single \
+  --subject SAMPLE355 \
+  --site tibia \
+  --use-common-region
+```
+
+This should write `derivatives/Microarchitecture/manifest.json` and measurement outputs using the same derivative contract that Slicer consumes.
 
 ## Slicer Architecture
 
@@ -657,12 +795,12 @@ SlicerBoneImagingToolboxLib/
 
 Code that should move out of Slicer into package repos:
 
-- derivative manifest model
-- derivative discovery
+- derivative manifest model into `bone-imaging-derivatives`
+- derivative discovery into `bone-imaging-derivatives`
 - registration workflow wrappers
 - common-region construction
 - non-Slicer image/mask IO
-- non-Slicer workflow dependency planning
+- non-Slicer workflow dependency planning into `bone-imaging-derivatives`
 
 Code that should remain in Slicer:
 
@@ -684,6 +822,14 @@ Each public module should have:
 - one main `Run` button
 - background process execution for long jobs
 - output loading after completion
+
+Scene mode and batch mode should be consistent across modules:
+
+- Scene mode consumes loaded MRML nodes and creates MRML outputs for inspection.
+- Batch mode consumes dataset folders and derivative manifests, launches package workflows, writes derivative folders, and updates manifests.
+- Scene mode may optionally save its outputs into the derivative layout, but batch mode must always write derivative outputs.
+- Batch mode should reuse compatible existing derivatives before recomputing them.
+- Batch mode should generate missing prerequisites only when the user enables prerequisite generation or the workflow requires it explicitly.
 
 Modules:
 
@@ -850,19 +996,24 @@ Recommended progress line format:
 
 ## Migration Plan
 
-### Phase 1: Move Contract to `timelapsed-hrpqct`
+### Phase 1: Create `bone-imaging-derivatives`
 
-Move or reimplement these from `SlicerBoneImagingToolboxLib` into `timelapsedhrpqct`:
+Move or reimplement these from `SlicerBoneImagingToolboxLib` into `bone-imaging-derivatives`:
 
 - derivative manifest model
 - manifest read/write/discovery
 - workflow dependency planning
-- common mask helpers that do not depend on Slicer
-- registration/common-region wrappers
+- derivative family names
+- role names
+- derivative layout helpers
+- legacy compatibility readers
+- progress event formatting/parsing
 
-Add tests in `TimelapsedHRpQCT`.
+Add tests in the new package. Keep dependencies minimal.
 
-### Phase 2: Add Package-Level Registration and CommonRegion Workflows
+### Phase 2: Update `timelapsed-hrpqct`
+
+Add `bone-imaging-derivatives` as a dependency.
 
 Add public API and CLI commands:
 
@@ -871,9 +1022,33 @@ Add public API and CLI commands:
 - `timelapse derivatives inspect`
 - `timelapse prerequisites ensure`
 
-Use existing registration, transform-chain, and dataset discovery internals.
+Use existing registration, transform-chain, and dataset discovery internals. Write `Registration`, `CommonRegion`, and `Timelapsed` manifests through `bone-imaging-derivatives`.
 
-### Phase 3: Refactor Slicer RegisteredCommonRegion
+### Phase 3: Update `bone-microarchitecture`
+
+Add `bone-imaging-derivatives` as an optional or required dependency depending on how small the package remains.
+
+Add a batch workflow that:
+
+- discovers grayscale images and segmentation masks
+- optionally consumes `CommonRegion.scan_region_native_common`
+- writes measurement tables and maps to `derivatives/Microarchitecture`
+- writes `Microarchitecture/manifest.json`
+
+The one-case measurement API should remain independent of dataset layout.
+
+### Phase 4: Update `plate-rod-thinning`
+
+Add a batch workflow that:
+
+- discovers trabecular or bone masks
+- optionally consumes `CommonRegion.scan_region_native_common`
+- writes maps and tables to `derivatives/PlateRodMorphometry`
+- writes `PlateRodMorphometry/manifest.json`
+
+The one-case algorithm API should remain independent of dataset layout.
+
+### Phase 5: Refactor Slicer RegisteredCommonRegion
 
 Replace Slicer-local registration/common-region services with calls to package APIs/CLI.
 
@@ -890,7 +1065,7 @@ Remove:
 - duplicate common-region math
 - duplicate registration wrappers
 
-### Phase 4: Refactor Timelapsed Slicer Module
+### Phase 6: Refactor Timelapsed Slicer Module
 
 Make Timelapsed consume/generate prerequisites through the package-level planner.
 
@@ -900,18 +1075,18 @@ Expected result:
 - existing derivative outputs are reused
 - status panel shows provenance clearly
 
-### Phase 5: Refactor Microarchitecture and Plate/Rod Batch Modes
+### Phase 7: Refactor Microarchitecture and Plate/Rod Slicer Modules
 
-Keep measurement packages focused.
+Keep measurement packages focused and move batch writing into their package workflows.
 
 Slicer batch mode should:
 
 - discover inputs from manifests
 - pass common-region masks to package functions
-- write family-specific manifests
+- call package batch workflows that write family-specific manifests
 - load tables/maps after completion
 
-### Phase 6: Future Derivative Consumers
+### Phase 8: Future Derivative Consumers
 
 Add FEA, mechanoregulation, and void-space modules against the same contract.
 
@@ -947,8 +1122,6 @@ Deprecation rule:
 
 Required tests:
 
-- manifest round-trip
-- manifest record filtering
 - legacy Timelapsed discovery adapter
 - registration workflow with mocked registration function
 - transform composition record writing
@@ -958,6 +1131,19 @@ Required tests:
 - CLI progress output
 - prerequisite planner
 
+### `bone-imaging-derivatives`
+
+Required tests:
+
+- manifest round-trip
+- manifest record filtering
+- derivative layout helpers
+- role/family validation
+- legacy Timelapsed discovery adapter
+- legacy RegisteredMicroarchitecture discovery adapter
+- workflow planner for each registered workflow family
+- progress event formatting and parsing
+
 ### `bone-microarchitecture`
 
 Required tests:
@@ -966,13 +1152,14 @@ Required tests:
 - trab/cort masks are intersected with bone segmentation
 - GPU backend selection remains independent from Slicer
 - output table schema remains stable
+- batch workflow writes `Microarchitecture/manifest.json`
 
 ### `plate-rod-thinning`
 
 Required tests:
 
 - common-region clipping before plate/rod computation
-- output map/table writing if CLI is added
+- batch workflow writes `PlateRodMorphometry/manifest.json`
 
 ### `SlicerBoneImagingToolbox`
 
@@ -989,34 +1176,40 @@ Required tests:
 ## Release Strategy
 
 1. Keep `feature/derivatives-overhaul` as the current Slicer-side foundation branch.
-2. Create a new branch in `TimelapsedHRpQCT`: `feature/derivative-contract`.
-3. Implement and release `timelapsed-hrpqct` with package-level derivative APIs and CLI commands.
-4. Update `SlicerBoneImagingToolbox` to depend on that version.
-5. Remove duplicated Slicer-local shared services after the package APIs are available.
-6. Release Slicer extension update.
-7. Then update `bone-microarchitecture` and `plate-rod-thinning` only where their package-level APIs need common-region/file-output improvements.
+2. Create a new repository/package: `bone-imaging-derivatives`.
+3. Release `bone-imaging-derivatives` with manifest, discovery, layout, planner, and progress APIs.
+4. Create a new branch in `TimelapsedHRpQCT`: `feature/derivative-contract`.
+5. Update and release `timelapsed-hrpqct` with package-level derivative APIs and CLI commands.
+6. Update and release `bone-microarchitecture` with derivative batch writing.
+7. Update and release `plate-rod-thinning` with derivative batch writing.
+8. Update `SlicerBoneImagingToolbox` to depend on the released package versions.
+9. Remove duplicated Slicer-local shared services after the package APIs are available.
+10. Release Slicer extension update.
 
 ## Acceptance Criteria
 
 The overhaul is complete when:
 
+- `bone-imaging-derivatives` is the shared contract package used by all Slicer-facing repos.
+- each Slicer-facing package has a one-case API and a batch derivative-writing workflow.
 - `timelapse common-region run` can generate registration and common-region derivatives without Slicer.
 - Slicer `Registered Common Region` calls the same package workflow.
 - Slicer `TimelapsedHRpQCT` can generate or reuse registration/common-region derivatives automatically.
 - Slicer `BoneMicroarchitecture` and `PlateRodMorphometryHRpQCT` can consume common-region derivatives from manifests.
+- Slicer `BoneMicroarchitecture` and `PlateRodMorphometryHRpQCT` batch modes call package batch workflows that write manifests.
 - Existing command-line Timelapsed workflows still run.
 - Existing legacy derivative folders can still be discovered.
 - All derivative-producing workflows write manifests.
-- No algorithmic registration/common-region logic remains duplicated in Slicer modules.
+- No algorithmic package logic remains duplicated in Slicer modules.
 
 ## Open Decisions
 
-1. Whether the manifest contract should stay inside `timelapsed-hrpqct` long term or become a tiny standalone `bone-imaging-derivatives` package.
-2. Whether `bone-microarchitecture` should gain its own CLI now or remain API-first for the next release.
+1. Whether `bone-imaging-derivatives` should be created as a public PyPI package immediately or kept as a private/local package until the schema stabilizes.
+2. Whether `bone-microarchitecture` should gain its own CLI now or expose only a package batch API for Slicer to call.
 3. Whether `RegisteredMicroarchitecture` legacy output folders should be migrated automatically or only read as compatibility inputs.
 4. Whether Slicer should use `PythonSlicer` exclusively or allow a configured external Python environment for heavier batch runs.
 5. Whether FEA and mechanoregulation should write into family-specific derivative folders immediately or first consume manifests read-only.
 
 ## Recommendation
 
-Implement the next phase in `timelapsed-hrpqct` first. The current Slicer foundation branch is useful, but it should become a temporary consumer of the derivative architecture, not the owner of it. Once `timelapsed-hrpqct` exposes registration, common-region, manifest, and prerequisite APIs, the Slicer toolbox can be simplified substantially and command-line users will get the same functionality without Slicer.
+Implement `bone-imaging-derivatives` first. The current Slicer foundation branch is useful, but it should become a temporary consumer of the derivative architecture, not the owner of it. Once the shared contract exists, update `timelapsed-hrpqct`, `bone-microarchitecture`, and `plate-rod-thinning` to write their own derivative manifests. Then simplify the Slicer toolbox into a consistent scene/batch interface over those package workflows.
