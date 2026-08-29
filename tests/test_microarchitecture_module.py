@@ -328,12 +328,31 @@ def test_registered_series_preparation_builds_common_regions_before_measurement(
     assert "common_space" in source
     assert "common_masks" in source
     assert "native_common" in source
-    assert "row[\"full_path\"] = common_paths[\"full\"]" in source
-    assert "row[\"trab_path\"] = common_paths[\"trab\"]" in source
-    assert "row[\"cort_path\"] = common_paths[\"cort\"]" in source
+    assert "row[\"native_common_scan_region_path\"]" in source
     assert "measurement_space" in source
     assert "native_image_space_common_region" in source
     assert "self.write_registered_series_manifest(dataset_root, root, rows)" in run_logic
+
+
+def test_registered_series_common_region_is_scan_fov_not_compartment_intersection() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    common_logic = source[source.index("    def _build_registered_common_regions(") :]
+    measurement_logic = source[source.index("    def run_registered_series_microarchitecture(") :]
+
+    assert '"scan_region_common"' in common_logic
+    assert '"scan_region_native_common"' in common_logic
+    assert "_registered_scan_region(" in common_logic
+    assert '"native_common_scan_region_path"' in common_logic
+    assert "for role in (\"full\", \"trab\", \"cort\"):" not in common_logic
+    assert "common_by_role" not in common_logic
+    assert "row[\"full_path\"] = common_paths[\"full\"]" not in common_logic
+    assert "row[\"trab_path\"] = common_paths[\"trab\"]" not in common_logic
+    assert "row[\"cort_path\"] = common_paths[\"cort\"]" not in common_logic
+    assert "_clip_registered_mask_to_scan_region(" in measurement_logic
+    assert "bone_seg = self._clip_registered_mask_to_scan_region(bone_seg, scan_region)" in measurement_logic
+    assert "full_mask = self._clip_registered_mask_to_scan_region(full_mask, scan_region)" in measurement_logic
+    assert "trab_mask = self._clip_registered_mask_to_scan_region(trab_mask, scan_region)" in measurement_logic
+    assert "cort_mask = self._clip_registered_mask_to_scan_region(cort_mask, scan_region)" in measurement_logic
 
 
 def test_registered_series_common_regions_use_sequential_composed_transforms() -> None:

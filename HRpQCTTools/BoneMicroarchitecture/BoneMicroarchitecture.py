@@ -639,6 +639,16 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             sitk.sitkUInt8,
         )
 
+    def _registered_scan_region(self, image):
+        scan_region = sitk.Image(image.GetSize(), sitk.sitkUInt8)
+        scan_region.CopyInformation(image)
+        return sitk.Cast(scan_region + 1, sitk.sitkUInt8)
+
+    def _clip_registered_mask_to_scan_region(self, mask, scan_region):
+        if scan_region is None:
+            return mask
+        return sitk.Cast((mask > 0) & (scan_region > 0), sitk.sitkUInt8)
+
     def _register_to_baseline(self, fixed_image, moving_image, fixed_mask, moving_mask):
         from timelapsedhrpqct.processing.registration import RegistrationSettings, register_images
 
@@ -731,47 +741,55 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                     }
                 )
 
-            common_by_role = {}
+            common_scan_region = None
             for row in ordered:
                 self._registered_progress(
                     progress_callback,
-                    f"[registered] resampling masks for sub-{row['subject_id']} ses-{row['session_id']} into common space",
+                    f"[registered] resampling scan region for sub-{row['subject_id']} ses-{row['session_id']} into common space",
                 )
                 transform = transforms[row["session_id"]]
-                for role in ("full", "trab", "cort"):
-                    mask = self._read_registered_series_image(row[f"{role}_path"], role=role)
-                    mask_common = self._resample_registered_mask(mask, baseline_image, transform)
-                    if role not in common_by_role:
-                        common_by_role[role] = sitk.Cast(mask_common > 0, sitk.sitkUInt8)
-                    else:
-                        common_by_role[role] = sitk.Cast((common_by_role[role] > 0) & (mask_common > 0), sitk.sitkUInt8)
+                image = self._read_registered_series_image(row["image_path"], role="image")
+                scan_region = self._registered_scan_region(image)
+                scan_region_common = self._resample_registered_mask(scan_region, baseline_image, transform)
+                if common_scan_region is None:
+                    common_scan_region = sitk.Cast(scan_region_common > 0, sitk.sitkUInt8)
+                else:
+                    common_scan_region = sitk.Cast((common_scan_region > 0) & (scan_region_common > 0), sitk.sitkUInt8)
 
-            for role, common_mask in common_by_role.items():
-                self._registered_progress(progress_callback, f"[registered] writing {role} common-space mask")
-                common_path = self._registered_common_mask_path(output_root, baseline, role)
-                common_path.parent.mkdir(parents=True, exist_ok=True)
-                sitk.WriteImage(common_mask, str(common_path))
-                generated.append({"session": baseline["session_id"], "role": f"{role}_common", "path": str(common_path), "source": "common_space"})
+            self._registered_progress(progress_callback, "[registered] writing scan-region common-space mask")
+            common_path = self._registered_common_mask_path(output_root, baseline, "scan-region")
+            common_path.parent.mkdir(parents=True, exist_ok=True)
+            sitk.WriteImage(common_scan_region, str(common_path))
+            generated.append(
+                {
+                    "session": baseline["session_id"],
+                    "role": "scan_region_common",
+                    "path": str(common_path),
+                    "source": "common_space",
+                }
+            )
 
             for row in ordered:
                 self._registered_progress(
                     progress_callback,
-                    f"[registered] returning common masks to native space for sub-{row['subject_id']} ses-{row['session_id']}",
+                    f"[registered] returning common scan region to native space for sub-{row['subject_id']} ses-{row['session_id']}",
                 )
                 image = self._read_registered_series_image(row["image_path"], role="image")
                 transform = transforms[row["session_id"]]
                 inverse = transform.GetInverse()
-                common_paths = {}
-                for role, common_mask in common_by_role.items():
-                    native_common = self._resample_registered_mask(common_mask, image, inverse)
-                    path = self._registered_common_session_mask_path(output_root, row, role)
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    sitk.WriteImage(native_common, str(path))
-                    common_paths[role] = str(path)
-                    generated.append({"session": row["session_id"], "role": f"{role}_native_common", "path": str(path), "source": "native_common"})
-                row["full_path"] = common_paths["full"]
-                row["trab_path"] = common_paths["trab"]
-                row["cort_path"] = common_paths["cort"]
+                native_common = self._resample_registered_mask(common_scan_region, image, inverse)
+                path = self._registered_common_session_mask_path(output_root, row, "scan-region")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                sitk.WriteImage(native_common, str(path))
+                row["native_common_scan_region_path"] = str(path)
+                generated.append(
+                    {
+                        "session": row["session_id"],
+                        "role": "scan_region_native_common",
+                        "path": str(path),
+                        "source": "native_common",
+                    }
+                )
                 row["measurement_space"] = "native_image_space_common_region"
         return generated
 
@@ -836,7 +854,20 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             full_mask = self._read_registered_series_image(row["full_path"], role="full")
             trab_mask = self._read_registered_series_image(row["trab_path"], role="trab")
             cort_mask = self._read_registered_series_image(row["cort_path"], role="cort")
-            sizes = {item.GetSize() for item in (image, bone_seg, full_mask, trab_mask, cort_mask)}
+            scan_region = None
+            if row.get("native_common_scan_region_path"):
+                scan_region = self._read_registered_series_image(
+                    row["native_common_scan_region_path"],
+                    role="scan region",
+                )
+                bone_seg = self._clip_registered_mask_to_scan_region(bone_seg, scan_region)
+                full_mask = self._clip_registered_mask_to_scan_region(full_mask, scan_region)
+                trab_mask = self._clip_registered_mask_to_scan_region(trab_mask, scan_region)
+                cort_mask = self._clip_registered_mask_to_scan_region(cort_mask, scan_region)
+            size_items = [image, bone_seg, full_mask, trab_mask, cort_mask]
+            if scan_region is not None:
+                size_items.append(scan_region)
+            sizes = {item.GetSize() for item in size_items}
             if len(sizes) != 1:
                 raise ValueError(
                     f"Registered series inputs for sub-{row['subject_id']} ses-{row['session_id']} "
