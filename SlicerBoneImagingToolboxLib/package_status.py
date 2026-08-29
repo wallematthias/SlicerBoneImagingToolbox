@@ -259,11 +259,18 @@ def install_command(spec: PackageSpec, *, installed: bool) -> str:
     return " ".join(args)
 
 
+def _active_repositories_root(toolbox_root: Path) -> Path:
+    if toolbox_root.parent.name == ".worktrees":
+        return toolbox_root.parent.parent.parent
+    return toolbox_root.parent
+
+
 def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
     if spec.package_name == "bone-microarchitecture":
         upgrade = ["--upgrade"] if installed else []
         dependency_command = " ".join([*upgrade, "--prefer-binary", *spec.constraints])
-        local_repo = Path(__file__).resolve().parents[1].parent / "bone-microarchitecture"
+        toolbox_root = Path(__file__).resolve().parents[1]
+        local_repo = _active_repositories_root(toolbox_root) / "bone-microarchitecture"
         if (local_repo / "pyproject.toml").exists():
             package_command = " ".join([*upgrade, "--no-deps", "-e", str(local_repo)])
         else:
