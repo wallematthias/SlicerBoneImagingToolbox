@@ -119,6 +119,8 @@ Do not add only the top-level repository folder. Slicer needs each module folder
 
 ## Tool Documentation
 
+Shared outputs follow the [derivative workflow contract](docs/derivatives.md).
+
 - [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md): longitudinal HR-pQCT analysis, input naming, results layout, remodelling review, and citations.
 - [Motion Scoring](docs/tools/motion-scoring.md): PyTorch setup, model bundle setup, prediction/review workflow, and motion-grading citation.
 - [Segmentation and Contours](docs/tools/segmentation-and-contours.md): segmentation presets, Laplace-Hamming notes, mask utilities, and attribution.
