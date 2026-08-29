@@ -48,7 +48,7 @@ The Slicer modules are wrappers around core Python packages where possible:
 | `aimio-py` / `py_aimio` | Scanco I/O and AIM-backed BMD calibration | https://github.com/wallematthias/aimio-py |
 | `spine-segment` | Spine Segmentation | https://github.com/wallematthias/spine-segment |
 
-Each tool guide contains its own focused workflow instructions and attribution/citation notes.
+Each tool guide contains its own focused workflow instructions and attribution/citation notes. Shared outputs follow the [derivative workflow contract](docs/derivatives.md).
 
 ## Runtime Dependencies
 
@@ -116,10 +116,7 @@ Instead of using the helper script, add the module folders in `Edit -> Applicati
 - `<repo>/Setup/BoneImagingToolboxSetup`
 
 Do not add only the top-level repository folder. Slicer needs each module folder above. The helper script also discovers any vendored scripted modules under `ExternalModules/`.
-
 ## Tool Documentation
-
-Shared outputs follow the [derivative workflow contract](docs/derivatives.md).
 
 - [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md): longitudinal HR-pQCT analysis, input naming, results layout, remodelling review, and citations.
 - [Motion Scoring](docs/tools/motion-scoring.md): PyTorch setup, model bundle setup, prediction/review workflow, and motion-grading citation.
