@@ -641,14 +641,13 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         return clip_mask_to_region(mask, scan_region)
 
     def _register_to_baseline(self, fixed_image, moving_image, fixed_mask, moving_mask):
-        from timelapsedhrpqct.processing.registration import RegistrationSettings, register_images
+        from SlicerBoneImagingToolboxLib.registration import register_image_pair
 
-        return register_images(
-            fixed_image=sitk.Cast(fixed_image, sitk.sitkFloat32),
-            moving_image=sitk.Cast(moving_image, sitk.sitkFloat32),
-            fixed_mask=sitk.Cast(fixed_mask > 0, sitk.sitkUInt8),
-            moving_mask=sitk.Cast(moving_mask > 0, sitk.sitkUInt8),
-            settings=RegistrationSettings(),
+        return register_image_pair(
+            fixed_image=fixed_image,
+            moving_image=moving_image,
+            fixed_mask=fixed_mask,
+            moving_mask=moving_mask,
         )
 
     def _build_registered_common_regions(self, output_root, rows, *, progress_callback=None):
