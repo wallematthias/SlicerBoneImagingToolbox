@@ -74,6 +74,9 @@ if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PI
         else str(_PIPELINE_LOCAL_SRC) + os.pathsep + _existing_pythonpath
     )
 
+from SlicerBoneImagingToolboxLib.derivatives import discover_manifests  # noqa: E402
+from SlicerBoneImagingToolboxLib.workflow_planning import resolve_workflow_plan  # noqa: E402
+
 _reporting = importlib.import_module("TimelapsedHRpQCTLib.Reporting")
 if not hasattr(_reporting, "COHORT_DEFAULT_EXPORT_FIELDS"):
     _reporting = importlib.reload(_reporting)
@@ -193,6 +196,21 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
             yaml.safe_dump(default_cfg, f, sort_keys=False)
         self._fallback_default_config_path = path
         return Path(path)
+
+    def discover_derivative_prerequisites(self, derivatives_root):
+        manifests = discover_manifests(derivatives_root)
+        available_records = []
+        for manifest in manifests:
+            available_records.extend(manifest.records)
+        available = {record.derivative for record in available_records}
+        plan = resolve_workflow_plan("Timelapsed", available_records=available_records, available_inputs={"masks": True})
+        return {
+            "registration_available": "Registration" in available,
+            "common_region_available": "CommonRegion" in available,
+            "planned_steps": [step.workflow for step in plan.steps],
+            "blocked": bool(plan.blocked),
+            "missing_roles": list(plan.missing_roles),
+        }
 
     def create_override_config(self, settings_dict, results_root=None):
         import yaml
@@ -541,6 +559,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.inputPath, 360)
         form.addRow(_label("Dataset root", "Folder containing raw AIM data or an existing TimelapsedHRpQCT results dataset."), self.inputPath)
         self._connect_path_changed(self.inputPath, self._on_dataset_or_results_root_changed)
+        self.derivativePrerequisitesLabel = qt.QLabel("Derivative prerequisites: Registration/CommonRegion derivatives will be discovered when available.")
+        self.derivativePrerequisitesLabel.wordWrap = True
+        self.derivativePrerequisitesLabel.toolTip = "Shows whether Registration/CommonRegion derivatives are available or need to be generated."
+        form.addRow(_label("Prerequisites", "Derivative prerequisites for dependency-aware Timelapsed analysis."), self.derivativePrerequisitesLabel)
 
         parseBtn = qt.QPushButton("Parse input")
         parseBtn.clicked.connect(self._on_parse)
