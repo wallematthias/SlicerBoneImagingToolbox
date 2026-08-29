@@ -290,3 +290,45 @@ def test_registered_series_run_reports_measured_and_skipped_sessions() -> None:
     assert "skipped_count = len(outputs.get(\"skipped_rows\", []))" in run_widget
     assert "skipped_count" in run_widget
     assert "[registered] skipped" in run_widget
+
+
+def test_registered_series_preparation_builds_common_regions_before_measurement() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    prepare_logic = source[source.index("    def prepare_registered_series_workspace(") :]
+    run_logic = source[source.index("    def run_registered_series_microarchitecture(") :]
+
+    assert "_build_registered_common_regions(" in prepare_logic
+    assert "_register_to_baseline(" in source
+    assert "_resample_registered_mask(" in source
+    assert "sitk.WriteTransform" in source
+    assert "common_space" in source
+    assert "common_masks" in source
+    assert "native_common" in source
+    assert "row[\"full_path\"] = common_paths[\"full\"]" in source
+    assert "row[\"trab_path\"] = common_paths[\"trab\"]" in source
+    assert "row[\"cort_path\"] = common_paths[\"cort\"]" in source
+    assert "measurement_space" in source
+    assert "native_image_space_common_region" in source
+    assert "self.write_registered_series_manifest(dataset_root, root, rows)" in run_logic
+
+
+def test_registered_series_common_regions_use_sequential_composed_transforms() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "PairwiseTransform" in source
+    assert "compose_sequential_to_baseline(" in source
+    assert "_registered_pairwise_transform_path(" in source
+    assert '"pairwise"' in source
+    assert '"composed"' in source
+    assert "fixed_image=previous_image" in source
+    assert "moving_image=image" in source
+
+
+def test_registered_series_does_not_build_partial_common_regions_for_incomplete_groups() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    prepare_logic = source[source.index("    def prepare_registered_series_workspace(") :]
+
+    assert "_mark_incomplete_registered_groups(" in prepare_logic
+    assert "Missing common region" in source
+    assert "group has incomplete timepoints" in source
+    assert "if any(row.get(\"status\") != \"Ready\" for row in group_rows):" in source

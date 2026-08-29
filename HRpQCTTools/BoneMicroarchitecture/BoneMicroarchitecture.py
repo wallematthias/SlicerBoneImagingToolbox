@@ -254,7 +254,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             "dataset_root": str(Path(str(dataset_root)).expanduser()),
             "output_root": str(root),
             "registration_strategy": "sequential_adjacent_then_composed",
-            "measurement_space": "native_image_space",
+            "measurement_space": "native_image_space_common_region",
             "sessions": rows,
             "sequential_registration_pairs": self.sequential_registration_pairs(rows),
         }
@@ -290,6 +290,8 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             missing = self._registered_row_missing(prepared)
             prepared["status"] = "Ready" if not missing else f"Missing {', '.join(missing)}"
             prepared_rows.append(prepared)
+        self._mark_incomplete_registered_groups(prepared_rows)
+        generated.extend(self._build_registered_common_regions(root, prepared_rows))
         manifest_path = self.write_registered_series_manifest(dataset_root, root, prepared_rows)
         return {"manifest": str(manifest_path), "rows": prepared_rows, "generated": generated}
 
@@ -480,6 +482,177 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             spacing_xyz=tuple(float(value) for value in image.GetSpacing()),
         )
         return numpy_xyz_to_sitk_binary(seg_xyz, image)
+
+    def _registered_group_key(self, row):
+        return (row["subject_id"], row["site"], row.get("stack_index", 1))
+
+    def _mark_incomplete_registered_groups(self, rows):
+        groups = {}
+        for row in rows:
+            groups.setdefault(self._registered_group_key(row), []).append(row)
+        for group_rows in groups.values():
+            if len(group_rows) < 2:
+                continue
+            if any(row.get("status") != "Ready" for row in group_rows):
+                for row in group_rows:
+                    if row.get("status") == "Ready":
+                        row["status"] = "Missing common region (group has incomplete timepoints)"
+
+    def _registered_common_mask_path(self, output_root, row, role):
+        subject_site_dir = self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
+        return subject_site_dir / "common_space" / "common_masks" / (
+            f"sub-{row['subject_id']}_site-{row['site']}_stack-{int(row.get('stack_index', 1)):02d}_mask-{role}_common.nii.gz"
+        )
+
+    def _registered_common_session_mask_path(self, output_root, row, role):
+        return self.registered_session_masks_dir(output_root, row) / (
+            f"sub-{row['subject_id']}_ses-{row['session_id']}_site-{row['site']}_mask-{role}_native_common.nii.gz"
+        )
+
+    def _registered_transform_path(self, output_root, row, baseline_row):
+        subject_site_dir = self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
+        return subject_site_dir / "registration" / "composed" / (
+            f"sub-{row['subject_id']}_site-{row['site']}_stack-{int(row.get('stack_index', 1)):02d}_"
+            f"from-ses-{row['session_id']}_to-ses-{baseline_row['session_id']}.tfm"
+        )
+
+    def _registered_pairwise_transform_path(self, output_root, moving_row, fixed_row):
+        subject_site_dir = self.registered_subject_site_dir(output_root, moving_row["subject_id"], moving_row["site"])
+        return subject_site_dir / "registration" / "pairwise" / (
+            f"sub-{moving_row['subject_id']}_site-{moving_row['site']}_"
+            f"stack-{int(moving_row.get('stack_index', 1)):02d}_"
+            f"from-ses-{moving_row['session_id']}_to-ses-{fixed_row['session_id']}.tfm"
+        )
+
+    def _resample_registered_mask(self, mask, reference, transform):
+        return sitk.Cast(
+            sitk.Resample(
+                sitk.Cast(mask > 0, sitk.sitkUInt8),
+                reference,
+                transform,
+                sitk.sitkNearestNeighbor,
+                0,
+                sitk.sitkUInt8,
+            )
+            > 0,
+            sitk.sitkUInt8,
+        )
+
+    def _register_to_baseline(self, fixed_image, moving_image, fixed_mask, moving_mask):
+        from timelapsedhrpqct.processing.registration import RegistrationSettings, register_images
+
+        return register_images(
+            fixed_image=sitk.Cast(fixed_image, sitk.sitkFloat32),
+            moving_image=sitk.Cast(moving_image, sitk.sitkFloat32),
+            fixed_mask=sitk.Cast(fixed_mask > 0, sitk.sitkUInt8),
+            moving_mask=sitk.Cast(moving_mask > 0, sitk.sitkUInt8),
+            settings=RegistrationSettings(),
+        )
+
+    def _build_registered_common_regions(self, output_root, rows):
+        from timelapsedhrpqct.utils.session_ids import session_sort_key
+        from timelapsedhrpqct.processing.transform_chain import (
+            PairwiseTransform,
+            compose_sequential_to_baseline,
+            flatten_transform,
+        )
+
+        generated = []
+        groups = {}
+        for row in rows:
+            if row.get("status") == "Ready":
+                groups.setdefault(self._registered_group_key(row), []).append(row)
+        for _group_key, group_rows in groups.items():
+            if len(group_rows) < 2:
+                continue
+            ordered = sorted(group_rows, key=lambda row: session_sort_key(row["session_id"]))
+            baseline = ordered[0]
+            baseline_image = self._read_registered_series_image(baseline["image_path"], role="image")
+            pairwise = []
+            previous = baseline
+            previous_image = baseline_image
+            previous_full = self._read_registered_series_image(previous["full_path"], role="full")
+            for row in ordered[1:]:
+                image = self._read_registered_series_image(row["image_path"], role="image")
+                full = self._read_registered_series_image(row["full_path"], role="full")
+                result = self._register_to_baseline(
+                    fixed_image=previous_image,
+                    moving_image=image,
+                    fixed_mask=previous_full,
+                    moving_mask=full,
+                )
+                pairwise_transform = flatten_transform(result.transform)
+                pairwise_path = self._registered_pairwise_transform_path(output_root, row, previous)
+                pairwise_path.parent.mkdir(parents=True, exist_ok=True)
+                sitk.WriteTransform(pairwise_transform, str(pairwise_path))
+                generated.append(
+                    {
+                        "session": row["session_id"],
+                        "role": "transform_pairwise",
+                        "path": str(pairwise_path),
+                        "source": "registration",
+                    }
+                )
+                pairwise.append(PairwiseTransform(session_id=row["session_id"], transform=pairwise_transform))
+                previous = row
+                previous_image = image
+                previous_full = full
+
+            identity = sitk.Transform(3, sitk.sitkIdentity)
+            baseline_transforms = compose_sequential_to_baseline(
+                pairwise_transforms=pairwise,
+                baseline_session_id=baseline["session_id"],
+                dimension=3,
+            )
+            transforms = {item.session_id: item.transform for item in baseline_transforms}
+            transforms[baseline["session_id"]] = transforms.get(baseline["session_id"], identity)
+            for row in ordered:
+                transform_path = self._registered_transform_path(output_root, row, baseline)
+                transform_path.parent.mkdir(parents=True, exist_ok=True)
+                sitk.WriteTransform(flatten_transform(transforms[row["session_id"]]), str(transform_path))
+                generated.append(
+                    {
+                        "session": row["session_id"],
+                        "role": "transform_composed",
+                        "path": str(transform_path),
+                        "source": "registration",
+                    }
+                )
+
+            common_by_role = {}
+            for row in ordered:
+                transform = transforms[row["session_id"]]
+                for role in ("full", "trab", "cort"):
+                    mask = self._read_registered_series_image(row[f"{role}_path"], role=role)
+                    mask_common = self._resample_registered_mask(mask, baseline_image, transform)
+                    if role not in common_by_role:
+                        common_by_role[role] = sitk.Cast(mask_common > 0, sitk.sitkUInt8)
+                    else:
+                        common_by_role[role] = sitk.Cast((common_by_role[role] > 0) & (mask_common > 0), sitk.sitkUInt8)
+
+            for role, common_mask in common_by_role.items():
+                common_path = self._registered_common_mask_path(output_root, baseline, role)
+                common_path.parent.mkdir(parents=True, exist_ok=True)
+                sitk.WriteImage(common_mask, str(common_path))
+                generated.append({"session": baseline["session_id"], "role": f"{role}_common", "path": str(common_path), "source": "common_space"})
+
+            for row in ordered:
+                image = self._read_registered_series_image(row["image_path"], role="image")
+                transform = transforms[row["session_id"]]
+                inverse = transform.GetInverse()
+                common_paths = {}
+                for role, common_mask in common_by_role.items():
+                    native_common = self._resample_registered_mask(common_mask, image, inverse)
+                    path = self._registered_common_session_mask_path(output_root, row, role)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    sitk.WriteImage(native_common, str(path))
+                    common_paths[role] = str(path)
+                    generated.append({"session": row["session_id"], "role": f"{role}_native_common", "path": str(path), "source": "native_common"})
+                row["full_path"] = common_paths["full"]
+                row["trab_path"] = common_paths["trab"]
+                row["cort_path"] = common_paths["cort"]
+                row["measurement_space"] = "native_image_space_common_region"
+        return generated
 
     def _read_registered_series_image(self, path, *, role):
         path = Path(str(path)).expanduser()
