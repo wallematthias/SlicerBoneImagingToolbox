@@ -198,7 +198,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         return self.core_runtime_status()[0]
 
     def install_or_update_core(self):
-        slicer_pip_install("--upgrade --prefer-binary numpy>=1.26,<2.0 scipy>=1.11")
+        slicer_pip_install("--upgrade --prefer-binary numpy>=2.0,<3.0 scipy>=1.18,<2.0")
         if sys.platform == "darwin":
             slicer_pip_install("--upgrade --prefer-binary pyobjc-framework-Metal>=10")
         else:

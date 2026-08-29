@@ -69,7 +69,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         package_name="bone-microarchitecture",
         import_name="bone_microarchitecture",
         minimum_version="0.1.0",
-        constraints=("numpy>=1.26,<2.0", "scipy>=1.11"),
+        constraints=("numpy>=2.0,<3.0", "scipy>=1.18,<2.0"),
         notes="Bone microarchitecture measurements from masks and calibrated grayscale images.",
     ),
 )

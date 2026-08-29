@@ -123,7 +123,7 @@ def test_microarchitecture_install_commands_use_local_logic_repo_when_available(
     specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
     commands = install_commands(specs["bone-microarchitecture"], installed=True)
 
-    assert commands[0] == "--upgrade --prefer-binary numpy>=1.26,<2.0 scipy>=1.11"
+    assert commands[0] == "--upgrade --prefer-binary numpy>=2.0,<3.0 scipy>=1.18,<2.0"
     assert commands[1].startswith("--upgrade --no-deps -e ")
     assert commands[1].endswith("/bone-microarchitecture")
 
