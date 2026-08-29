@@ -41,7 +41,6 @@ from SlicerBoneImagingToolboxLib.segmentation_methods import (  # noqa: E402
     PERIOSTEAL_CONTOUR_METHODS,
 )
 from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog  # noqa: E402
-from bone_microarchitecture.batch import run_microarchitecture_batch  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModule,
@@ -49,6 +48,12 @@ from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModuleLogic,
     ScriptedLoadableModuleTest,
 )
+
+
+def run_microarchitecture_batch(*args, **kwargs):
+    from bone_microarchitecture.batch import run_microarchitecture_batch as _run_microarchitecture_batch
+
+    return _run_microarchitecture_batch(*args, **kwargs)
 
 
 MODULE_VERSION = "0.1.0"

@@ -67,13 +67,13 @@ class RegisteredCommonRegionLogic(ScriptedLoadableModuleLogic):
         return write_manifest(path, manifest)
 
     def discover_batch_series(self, dataset_root):
-        from timelapsedhrpqct.dataset.discovery import discover_raw_sessions
+        from timelapsedhrpqct.dataset.artifacts import iter_imported_stack_records
         from timelapsedhrpqct.utils.session_ids import session_sort_key
 
-        sessions = discover_raw_sessions(Path(str(dataset_root)).expanduser().resolve())
+        sessions = iter_imported_stack_records(Path(str(dataset_root)).expanduser().resolve())
         rows = []
         for session in sessions:
-            masks = dict(getattr(session, "raw_mask_paths", {}) or {})
+            masks = dict(getattr(session, "mask_paths", {}) or {})
             rows.append(
                 {
                     "subject_id": str(session.subject_id),
@@ -81,7 +81,7 @@ class RegisteredCommonRegionLogic(ScriptedLoadableModuleLogic):
                     "session_id": str(session.session_id),
                     "stack_index": int(getattr(session, "stack_index", 1) or 1),
                     "image_path": str(session.image_path),
-                    "registration_mask_path": str(masks.get("full") or masks.get("regmask") or ""),
+                    "registration_mask_path": str(masks.get("full") or masks.get("regmask") or masks.get("periosteal") or ""),
                 }
             )
         return sorted(rows, key=lambda row: (row["subject_id"], row["site"], int(row["stack_index"]), session_sort_key(row["session_id"])))

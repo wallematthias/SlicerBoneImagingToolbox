@@ -279,6 +279,7 @@ _LOCAL_WORKTREE_NAMES = {
 }
 _LOCAL_REPOSITORY_NAMES = {
     "timelapsed-hrpqct": "TimelapsedHRpQCT",
+    "plate-rod-thinning": "bone-plate-rod-thinning",
 }
 
 
@@ -287,6 +288,11 @@ def resolve_local_editable_repo(toolbox_root: Path, package_name: str) -> Path |
     active_root = _active_repositories_root(Path(toolbox_root))
     repo_name = _LOCAL_REPOSITORY_NAMES.get(package_name, package_name)
     repository = active_root / repo_name
+    if Path(toolbox_root).parent.name == ".worktrees":
+        for worktree_name in _LOCAL_WORKTREE_NAMES.get(package_name, ()):
+            candidate = repository / ".worktrees" / worktree_name
+            if (candidate / "pyproject.toml").exists():
+                return candidate
     direct = repository / "pyproject.toml"
     if direct.exists():
         return repository
@@ -310,6 +316,9 @@ def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
             package_command = install_command(spec, installed=installed)
         if spec.package_name == "bone-imaging-derivatives":
             return (package_command,)
-        dependency_command = " ".join([*upgrade, "--prefer-binary", *spec.constraints])
-        return (dependency_command, package_command)
+        commands = []
+        if spec.constraints:
+            commands.append(" ".join([*upgrade, "--prefer-binary", *spec.constraints]))
+        commands.append(package_command)
+        return tuple(commands)
     return (install_command(spec, installed=installed),)

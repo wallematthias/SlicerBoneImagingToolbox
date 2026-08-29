@@ -31,7 +31,6 @@ def _remove_local_core_repo_from_sys_path():
     sys.path[:] = [path for path in sys.path if str(path) != local_repo]
 
 from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install, slicer_python_executable  # noqa: E402
-from plate_rod_thinning.batch import run_plate_rod_batch  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModule,
@@ -39,6 +38,12 @@ from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModuleLogic,
     ScriptedLoadableModuleTest,
 )
+
+
+def run_plate_rod_batch(*args, **kwargs):
+    from plate_rod_thinning.batch import run_plate_rod_batch as _run_plate_rod_batch
+
+    return _run_plate_rod_batch(*args, **kwargs)
 
 
 MODULE_VERSION = "0.1.3"

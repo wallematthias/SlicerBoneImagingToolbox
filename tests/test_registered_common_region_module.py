@@ -66,6 +66,13 @@ def test_registered_common_region_batch_delegates_to_timelapsed_cli() -> None:
     assert '"common-region", "run"' in source
 
 
+def test_registered_common_region_batch_discovers_imported_stack_records() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "iter_imported_stack_records" in source
+    assert "discover_raw_sessions" not in source
+
+
 def test_registered_common_region_builds_one_cli_command_per_selected_group() -> None:
     spec = importlib.util.spec_from_file_location("registered_common_region_test", MODULE_PATH)
     module = importlib.util.module_from_spec(spec)

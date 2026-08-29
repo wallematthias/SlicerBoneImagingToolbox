@@ -130,7 +130,7 @@ def test_microarchitecture_install_commands_use_local_logic_repo_when_available(
 
     assert commands[0] == "--upgrade --prefer-binary numpy>=2.0,<3.0 scipy>=1.18,<2.0"
     assert commands[1].startswith("--upgrade --no-deps -e ")
-    assert commands[1].endswith("/bone-microarchitecture")
+    assert commands[1].endswith("/bone-microarchitecture/.worktrees/derivative-batch")
 
 
 def test_default_runtime_packages_include_public_tool_cores() -> None:
@@ -171,6 +171,16 @@ def test_plate_rod_runtime_package_requires_compiled_backend_and_binary_reinstal
         "--upgrade --force-reinstall --prefer-binary --only-binary :all: --no-deps "
         "plate-rod-thinning>=0.1.3"
     )
+
+
+def test_plate_rod_install_commands_do_not_emit_empty_dependency_install() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+    commands = install_commands(specs["plate-rod-thinning"], installed=False)
+
+    assert len(commands) == 1
+    assert commands[0].startswith("--no-deps -e ")
+    assert commands[0].endswith("/bone-plate-rod-thinning/.worktrees/derivative-batch")
+    assert "--prefer-binary" not in commands[0]
 
 
 def test_package_status_marks_invalid_runtime_import_as_update_needed() -> None:
