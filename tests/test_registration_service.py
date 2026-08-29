@@ -1,10 +1,12 @@
 import sys
 import types
+from pathlib import Path
 
 import SimpleITK as sitk
 
 from SlicerBoneImagingToolboxLib.registration import (
     RegistrationSession,
+    _active_repositories_root,
     register_image_pair,
     register_sequential_series,
 )
@@ -25,6 +27,15 @@ def _session(session_id):
         image=image,
         registration_mask=mask,
     )
+
+
+def test_active_repositories_root_handles_regular_checkout():
+    assert _active_repositories_root(Path("/repos/SlicerBoneImagingToolbox")) == Path("/repos")
+
+
+def test_active_repositories_root_handles_worktree_checkout():
+    path = Path("/repos/SlicerBoneImagingToolbox/.worktrees/derivatives-overhaul")
+    assert _active_repositories_root(path) == Path("/repos")
 
 
 def test_register_image_pair_wraps_timelapsed_registration(monkeypatch):

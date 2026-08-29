@@ -11,7 +11,15 @@ from SlicerBoneImagingToolboxLib.derivatives import DerivativeRecord
 
 
 TOOLBOX_ROOT = Path(__file__).resolve().parents[1]
-TIMELAPSED_LOCAL_SRC = TOOLBOX_ROOT.parent / "TimelapsedHRpQCT" / "src"
+
+
+def _active_repositories_root(toolbox_root: Path) -> Path:
+    if toolbox_root.parent.name == ".worktrees":
+        return toolbox_root.parent.parent.parent
+    return toolbox_root.parent
+
+
+TIMELAPSED_LOCAL_SRC = _active_repositories_root(TOOLBOX_ROOT) / "TimelapsedHRpQCT" / "src"
 
 
 def ensure_timelapsed_available() -> None:
