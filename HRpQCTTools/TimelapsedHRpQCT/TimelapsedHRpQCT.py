@@ -1420,7 +1420,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneRemoveTimepointButton = qt.QPushButton("Remove timepoint")
         self.sceneMoveUpButton = qt.QPushButton("Move up")
         self.sceneMoveDownButton = qt.QPushButton("Move down")
-        self.sceneRunButton = qt.QPushButton("Run Scene Pipeline")
+        self.sceneRunButton = qt.QPushButton("Run")
+        self.sceneRunButton.setMinimumHeight(34)
+        self.sceneRunButton.setStyleSheet(
+            "QPushButton { background:#1f6feb; color:white; border:1px solid #175cc5; "
+            "border-radius:4px; padding:7px 10px; font-weight:600; } "
+            "QPushButton:hover { background:#1a5fd0; } "
+            "QPushButton:pressed { background:#154ea8; } "
+            "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
+        )
         self.sceneDiscoverButton.clicked.connect(self._on_discover_scene_timepoints)
         self.sceneAddTimepointButton.clicked.connect(self._add_scene_timepoint)
         self.sceneRemoveTimepointButton.clicked.connect(self._remove_scene_timepoint)
@@ -1433,8 +1441,20 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         actions.addWidget(self.sceneMoveUpButton)
         actions.addWidget(self.sceneMoveDownButton)
         actions.addStretch(1)
-        actions.addWidget(self.sceneRunButton)
         layout.addLayout(actions)
+        layout.addWidget(self.sceneRunButton)
+        stageRow = qt.QWidget()
+        stageLayout = qt.QHBoxLayout(stageRow)
+        stageLayout.setContentsMargins(0, 0, 0, 0)
+        stageLayout.setSpacing(8)
+        self.sceneStageLabels = {}
+        for key, title in [("dataset", "Dataset"), ("parse", "Parse"), ("masks", "Masks"), ("registration", "Registration"), ("analysis", "Analysis")]:
+            label = qt.QLabel(f"<span style='color:#888888; font-weight:700'>●</span> {title}")
+            label.toolTip = f"Scene pipeline status for {title.lower()}."
+            self.sceneStageLabels[key] = label
+            stageLayout.addWidget(label)
+        stageLayout.addStretch(1)
+        layout.addWidget(stageRow)
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
@@ -1929,6 +1949,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         }
         dot, color, label = style.get(status, style["pending"])
         self.stageLabels[stage_key].setText(f"<span style='color:{color}; font-weight:700'>{dot}</span> {label}")
+        if hasattr(self, "sceneStageLabels") and stage_key in self.sceneStageLabels:
+            title = {
+                "dataset": "Dataset",
+                "parse": "Parse",
+                "masks": "Masks",
+                "registration": "Registration",
+                "analysis": "Analysis",
+            }.get(stage_key, stage_key)
+            self.sceneStageLabels[stage_key].setText(
+                f"<span style='color:{color}; font-weight:700'>{dot}</span> {title}"
+            )
         self._update_progress_ui()
 
     def _update_progress_ui(self):

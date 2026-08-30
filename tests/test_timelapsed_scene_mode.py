@@ -28,6 +28,14 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Discover Loaded Timepoints" in source
     assert "Append to table" in source
     assert "Initial transform" in source
+    assert 'self.sceneRunButton = qt.QPushButton("Run")' in source
+    assert "self.sceneRunButton.setMinimumHeight(34)" in source
+    assert "QPushButton { background:#1f6feb; color:white;" in source
+    assert "actions.addWidget(self.sceneRunButton)" not in source
+    assert "layout.addWidget(self.sceneRunButton)" in source
+    assert "self.sceneStageLabels = {}" in source
+    assert 'for key, title in [("dataset", "Dataset"), ("parse", "Parse"), ("masks", "Masks"), ("registration", "Registration"), ("analysis", "Analysis")]' in source
+    assert "self.sceneStageLabels[stage_key].setText" in source
     assert 'qt.QGroupBox("Scene Results")' not in source
     assert "self.sceneResultsTable" not in source
     assert "_load_scene_results_table" in source
