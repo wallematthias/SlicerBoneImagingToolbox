@@ -4871,7 +4871,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 image_arr_t1=preview_inputs["image_arr_t1"],
                 seg_arr_t0=preview_inputs["seg_arr_t0"],
                 seg_arr_t1=preview_inputs["seg_arr_t1"],
-                valid_mask=preview_inputs["valid_mask"],
+                valid_mask=self._display_valid_mask_for_preview_inputs(preview_inputs),
                 threshold=float(self.analysisThreshold.value),
                 cluster_size=int(self.analysisCluster.value),
                 method=self._current_analysis_method(),
@@ -4968,9 +4968,54 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_remodelling_full_selector()
         return full_seg, None
 
+    def _selected_remodelling_source_path(self):
+        if not hasattr(self, "remodellingFullSegCombo"):
+            return ""
+        node_id = self.remodellingFullSegCombo.currentData
+        node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id is not None else None
+        if node is None:
+            return ""
+        return str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
+
+    def _set_remodelling_selector_by_source_path(self, source_path):
+        source = str(source_path or "")
+        if not source:
+            return False
+        for index in range(int(self.remodellingFullSegCombo.count)):
+            node_id = self.remodellingFullSegCombo.itemData(index)
+            node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id is not None else None
+            if node is None:
+                continue
+            if str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "") == source:
+                self.remodellingFullSegCombo.setCurrentIndex(index)
+                return True
+        return False
+
+    def _remodelling_session_sort_key(self, session_id):
+        text = str(session_id or "")
+        match = re.search(r"(\d+)$", text)
+        if match:
+            return (0, int(match.group(1)), text)
+        return (1, text)
+
+    def _remodelling_source_sort_key(self, source_path):
+        ctx = self._parse_remodelling_source_context(source_path)
+        if ctx is None:
+            return (str(source_path), "", "", "")
+        return (
+            str(ctx.get("subject_id", "")),
+            str(ctx.get("site", "")),
+            self._remodelling_session_sort_key(str(ctx.get("t0", ""))),
+            self._remodelling_session_sort_key(str(ctx.get("t1", ""))),
+            str(ctx.get("compartment", "")),
+            str(source_path),
+        )
+
     def _refresh_remodelling_full_selector(self):
+        selected_source_path = self._selected_remodelling_source_path()
         self.remodellingFullSegCombo.clear()
         scene = slicer.mrmlScene
+        entries = []
         for class_name in ("vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
             for i in range(scene.GetNumberOfNodesByClass(class_name)):
                 node = scene.GetNthNodeByClass(i, class_name)
@@ -4978,7 +5023,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     continue
                 if not str(node.GetAttribute("TimelapsedHRpQCT.RemodellingFull") or "") == "1":
                     continue
-                self.remodellingFullSegCombo.addItem(node.GetName(), node.GetID())
+                source_path = str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
+                entries.append((self._remodelling_source_sort_key(source_path), node.GetName(), node.GetID()))
+        for _sort_key, name, node_id in sorted(entries):
+            self.remodellingFullSegCombo.addItem(name, node_id)
+        if not self._set_remodelling_selector_by_source_path(selected_source_path):
+            if self.remodellingFullSegCombo.count > 0 and self.remodellingFullSegCombo.currentIndex < 0:
+                self.remodellingFullSegCombo.setCurrentIndex(0)
 
     def _on_apply_interactive_remodelling(self):
         if self.logic.is_running():
@@ -6306,21 +6357,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return rows
 
     def _scene_result_rows_from_loaded_remodelling(self):
-        if not hasattr(self, "remodellingFullSegCombo"):
-            return []
-        self._refresh_remodelling_full_selector()
         source_paths = []
-        for index in range(int(self.remodellingFullSegCombo.count)):
-            node_id = self.remodellingFullSegCombo.itemData(index)
-            node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id is not None else None
-            if node is None:
-                continue
-            source_path = str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
-            if source_path and source_path not in source_paths:
-                source_paths.append(source_path)
+        scene = slicer.mrmlScene
+        for class_name in ("vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
+            for index in range(scene.GetNumberOfNodesByClass(class_name)):
+                node = scene.GetNthNodeByClass(index, class_name)
+                if node is None:
+                    continue
+                if str(node.GetAttribute("TimelapsedHRpQCT.RemodellingFull") or "") != "1":
+                    continue
+                source_path = str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
+                if source_path and source_path not in source_paths:
+                    source_paths.append(source_path)
 
         rows = []
-        for source_path in source_paths:
+        for source_path in sorted(source_paths, key=self._remodelling_source_sort_key):
             try:
                 preview_inputs = self._get_interactive_preview_inputs(source_path)
                 ctx = preview_inputs.get("context") or {}

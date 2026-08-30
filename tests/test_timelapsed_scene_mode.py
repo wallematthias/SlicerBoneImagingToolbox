@@ -204,6 +204,38 @@ def test_scene_results_table_uses_loaded_preview_metrics() -> None:
     assert "self._refresh_scene_results_table_from_loaded_remodelling()" in apply_update
 
 
+def test_scene_results_table_refresh_does_not_change_remodelling_selection() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    result_rows = source.split("    def _scene_result_rows_from_loaded_remodelling", 1)[1].split("\n    def ", 1)[0]
+    assert "_refresh_remodelling_full_selector()" not in result_rows
+    assert "sorted(source_paths, key=self._remodelling_source_sort_key)" in result_rows
+    assert "def _selected_remodelling_source_path" in source
+    refresh_selector = source.split("    def _refresh_remodelling_full_selector", 1)[1].split("\n    def ", 1)[0]
+    assert "selected_source_path = self._selected_remodelling_source_path()" in refresh_selector
+    assert "self._set_remodelling_selector_by_source_path(selected_source_path)" in refresh_selector
+
+
+def test_pair_metrics_use_same_display_mask_as_remodelling_image() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    refresh_metrics = source.split("    def _refresh_pair_metrics_for_current_selection", 1)[1].split("\n    def ", 1)[0]
+    assert "valid_mask=self._display_valid_mask_for_preview_inputs(preview_inputs)" in refresh_metrics
+    assert 'valid_mask=preview_inputs["valid_mask"]' not in refresh_metrics
+
+
 def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
