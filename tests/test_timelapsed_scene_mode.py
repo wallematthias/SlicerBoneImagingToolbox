@@ -40,6 +40,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "currentChanged.connect(self._on_timelapsed_mode_changed)" in source
     assert "def _on_timelapsed_mode_changed" in source
     assert "self.runAnalysisBtn.visible = not scene_mode" in source
+    assert "self.statusBox = statusBox" in source
+    assert "self.statusBox.visible = not scene_mode" in source
     assert "_clear_loaded_review_nodes()" in source
     assert "_scene_processed_subject_site" in source
     assert "candidate.parent.name == \"derivatives\"" in source

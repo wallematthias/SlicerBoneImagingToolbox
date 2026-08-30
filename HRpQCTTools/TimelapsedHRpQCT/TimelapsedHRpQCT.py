@@ -1251,6 +1251,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         statusBox = ctk.ctkCollapsibleButton()
         statusBox.text = "Pipeline Status"
+        self.statusBox = statusBox
         statusForm = qt.QFormLayout(statusBox)
         self.progressBar = qt.QProgressBar()
         self.progressBar.minimum = 0
@@ -1472,6 +1473,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.runAnalysisBtn.visible = not scene_mode
         if hasattr(self, "seriesSummaryBox"):
             self.seriesSummaryBox.visible = not scene_mode
+        if hasattr(self, "statusBox"):
+            self.statusBox.visible = not scene_mode
 
     def _resize_timelapsed_mode_tabs(self):
         if not hasattr(self, "timelapsedModeTabs"):
