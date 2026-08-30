@@ -1307,7 +1307,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.remodellingFullSegCombo, 260)
         _cap_width(self.remodellingRefreshBtn, 120)
         self.remodellingRefreshBtn.clicked.connect(self._refresh_remodelling_full_selector)
-        self.remodellingFullSegCombo.currentIndexChanged.connect(self._refresh_pair_metrics_for_current_selection)
+        self.remodellingFullSegCombo.currentIndexChanged.connect(self._on_remodelling_selection_changed)
         segRow = qt.QWidget()
         segRowLayout = qt.QHBoxLayout(segRow)
         segRowLayout.setContentsMargins(0, 0, 0, 0)
@@ -4893,6 +4893,25 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_pair_metric_labels(None, None)
             self._show(f"[preview] pair metrics unavailable: {exc}")
 
+    def _on_remodelling_selection_changed(self, *_args):
+        self._activate_remodelling_display_for_current_selection()
+        self._refresh_pair_metrics_for_current_selection()
+
+    def _activate_remodelling_display_for_current_selection(self):
+        if not hasattr(self, "remodellingFullSegCombo"):
+            return False
+        node_id = self.remodellingFullSegCombo.currentData
+        node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id is not None else None
+        if node is None:
+            return False
+        try:
+            self._style_remodelling_labelmap(node)
+            slicer.util.setSliceViewerLayers(label=node, fit=False)
+            return True
+        except Exception as exc:
+            self._show(f"[preview] could not activate selected remodelling image: {exc}")
+            return False
+
     def _get_subject_series_preview_inputs(self, subject_id, site):
         from timelapsedhrpqct.analysis import (
             adjacent_pair_key,
@@ -6388,14 +6407,30 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         table_node = slicer.mrmlScene.GetFirstNodeByName(name)
         if table_node is None:
             table_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", name)
-        table_node.RemoveAllColumns()
         headers = ["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"]
-        for col_idx, header in enumerate(headers):
-            column = vtk.vtkStringArray()
-            column.SetName(header)
-            for row in rows:
-                column.InsertNextValue(str(row[col_idx]))
-            table_node.AddColumn(column)
+        existing_headers = [
+            str(table_node.GetColumnName(col_idx))
+            for col_idx in range(int(table_node.GetNumberOfColumns()))
+        ]
+        if existing_headers == headers:
+            for col_idx, _header in enumerate(headers):
+                column = table_node.GetTable().GetColumn(col_idx)
+                column.SetNumberOfValues(len(rows))
+                for row_idx, row in enumerate(rows):
+                    column.SetValue(row_idx, str(row[col_idx]))
+        else:
+            table_node.RemoveAllColumns()
+            for col_idx, header in enumerate(headers):
+                column = vtk.vtkStringArray()
+                column.SetName(header)
+                for row in rows:
+                    column.InsertNextValue(str(row[col_idx]))
+                table_node.AddColumn(column)
+        try:
+            table_node.Modified()
+            table_node.GetTable().Modified()
+        except Exception:
+            pass
         table_node.SetUseColumnTitleAsColumnHeader(True)
         folder_item_id = self._ensure_load_folder(*self._scene_processed_subject_site(plan))
         self._place_node_in_folder(table_node, folder_item_id)
@@ -6438,6 +6473,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_remodelling_full_selector()
         if self.remodellingFullSegCombo.count > 0:
             self.remodellingFullSegCombo.setCurrentIndex(0)
+            self._activate_remodelling_display_for_current_selection()
 
     def _load_scene_run_outputs(self, plan):
         output_root = Path(plan.output_root)

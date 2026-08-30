@@ -236,6 +236,38 @@ def test_pair_metrics_use_same_display_mask_as_remodelling_image() -> None:
     assert 'valid_mask=preview_inputs["valid_mask"]' not in refresh_metrics
 
 
+def test_remodelling_selection_drives_visible_label_layer() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "currentIndexChanged.connect(self._on_remodelling_selection_changed)" in source
+    assert "def _activate_remodelling_display_for_current_selection" in source
+    assert "slicer.util.setSliceViewerLayers(label=node, fit=False)" in source
+    select_first = source.split("    def _select_first_scene_remodelling_output", 1)[1].split("\n    def ", 1)[0]
+    assert "self.remodellingFullSegCombo.setCurrentIndex(0)" in select_first
+    assert "self._activate_remodelling_display_for_current_selection()" in select_first
+
+
+def test_scene_table_updates_existing_columns_without_rebuilding() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    table_node = source.split("    def _load_scene_results_table_node", 1)[1].split("\n    def ", 1)[0]
+    assert "existing_headers == headers" in table_node
+    assert "column.SetNumberOfValues(len(rows))" in table_node
+    assert "table_node.RemoveAllColumns()" in table_node
+
+
 def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
