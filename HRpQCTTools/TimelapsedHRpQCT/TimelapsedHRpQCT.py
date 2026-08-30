@@ -1443,20 +1443,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusBox = qt.QGroupBox("Pipeline Status")
         sceneStatusBox = self.sceneStatusBox
         sceneStatusLayout = qt.QVBoxLayout(sceneStatusBox)
-        sceneStatusLayout.setContentsMargins(6, 8, 6, 6)
-        self.sceneStageTable = qt.QTableWidget()
-        self.sceneStageTable.setColumnCount(2)
-        self.sceneStageTable.setRowCount(5)
-        self.sceneStageTable.setHorizontalHeaderLabels(["Stage", "Status"])
-        self.sceneStageTable.horizontalHeader().setVisible(False)
-        self.sceneStageTable.verticalHeader().setVisible(False)
-        self.sceneStageTable.verticalHeader().setDefaultSectionSize(24)
-        self.sceneStageTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
-        self.sceneStageTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
-        self.sceneStageTable.setShowGrid(False)
-        self.sceneStageTable.setMinimumHeight(138)
-        self.sceneStageTable.setMaximumHeight(138)
+        sceneStatusLayout.setContentsMargins(8, 10, 8, 8)
+        sceneStatusLayout.setSpacing(2)
         self.sceneStageItems = {}
+        self.sceneStageRows = {}
         for key, title in [
             ("dataset", "Dataset"),
             ("parse", "Parse"),
@@ -1464,17 +1454,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ("registration", "Registration"),
             ("analysis", "Analysis"),
         ]:
-            row = len(self.sceneStageItems)
-            stage_item = qt.QTableWidgetItem(title)
-            status_item = qt.QTableWidgetItem("● Pending")
-            stage_item.setFlags(stage_item.flags() & ~qt.Qt.ItemIsEditable)
-            status_item.setFlags(status_item.flags() & ~qt.Qt.ItemIsEditable)
-            self.sceneStageTable.setItem(row, 0, stage_item)
-            self.sceneStageTable.setItem(row, 1, status_item)
-            self.sceneStageItems[key] = status_item
-        self.sceneStageTable.resizeColumnsToContents()
-        self.sceneStageTable.horizontalHeader().setStretchLastSection(True)
-        sceneStatusLayout.addWidget(self.sceneStageTable)
+            rowWidget = qt.QWidget()
+            rowWidget.setFixedHeight(22)
+            rowLayout = qt.QHBoxLayout(rowWidget)
+            rowLayout.setContentsMargins(0, 0, 0, 0)
+            rowLayout.setSpacing(8)
+            stage_label = qt.QLabel(title)
+            stage_label.setMinimumWidth(72)
+            stage_label.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed)
+            status_label = qt.QLabel("● Pending")
+            status_label.setMinimumWidth(84)
+            status_label.setSizePolicy(qt.QSizePolicy.Fixed, qt.QSizePolicy.Fixed)
+            rowLayout.addWidget(stage_label)
+            rowLayout.addWidget(status_label)
+            rowLayout.addStretch(1)
+            sceneStatusLayout.addWidget(rowWidget)
+            self.sceneStageRows[key] = rowWidget
+            self.sceneStageItems[key] = status_label
         layout.addWidget(sceneStatusBox)
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
@@ -1973,11 +1969,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         dot, color, label = style.get(status, style["pending"])
         self.stageLabels[stage_key].setText(f"<span style='color:{color}; font-weight:700'>{dot}</span> {label}")
         if hasattr(self, "sceneStageItems") and stage_key in self.sceneStageItems:
-            self.sceneStageItems[stage_key].setText(f"{dot} {label}")
-            try:
-                self.sceneStageItems[stage_key].setForeground(qt.QBrush(qt.QColor(color)))
-            except Exception:
-                pass
+            self.sceneStageItems[stage_key].setText(f"<span style='color:{color}; font-weight:700'>{dot}</span> {label}")
         self._update_progress_ui()
 
     def _update_progress_ui(self):

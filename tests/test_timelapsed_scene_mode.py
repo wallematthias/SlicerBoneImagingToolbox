@@ -37,13 +37,15 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "actions.addWidget(self.sceneRunButton)" not in source
     assert "layout.addWidget(self.sceneRunButton)" in source
     assert "self.sceneStageItems = {}" in source
-    assert "self.sceneStageTable = qt.QTableWidget()" in source
-    assert "self.sceneStageTable.setRowCount(5)" in source
-    assert "self.sceneStageTable.verticalHeader().setDefaultSectionSize(24)" in source
-    assert "self.sceneStageTable.setMinimumHeight(138)" in source
-    assert "self.sceneStageItems[key] = status_item" in source
+    assert "self.sceneStageRows = {}" in source
+    assert "rowWidget.setFixedHeight(22)" in source
+    assert "stage_label.setMinimumWidth(72)" in source
+    assert "status_label.setMinimumWidth(84)" in source
+    assert "self.sceneStageItems[key] = status_label" in source
     assert "self.sceneStageItems[stage_key].setText" in source
+    assert "self.sceneStageItems[stage_key].setForeground" not in source
     assert "self.sceneStageLabels" not in source
+    assert "self.sceneStageTable" not in source
     assert 'qt.QGroupBox("Scene Results")' not in source
     assert "self.sceneResultsTable" not in source
     assert "_load_scene_results_table" in source
