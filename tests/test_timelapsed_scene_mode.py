@@ -170,3 +170,18 @@ def test_timelapsed_scene_discovery_ignores_masks_without_matching_loaded_image(
     assert len(discovery.timepoints) == 1
     assert discovery.timepoints[0].session_id == "1"
     assert discovery.timepoints[0].full_mask_node_id == ""
+
+
+def test_timelapsed_scene_discovery_supports_strambo_year_aim_names() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate("y00", "STRAMBO_0001_RL_Y00.AIM", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("y04", "STRAMBO_0001_RL_Y04.AIM;1", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("y08", "STRAMBO_0001_RL_Y08.AIM;1", "vtkMRMLScalarVolumeNode"),
+        ]
+    )
+
+    assert discovery.subject_id == "STRAMBO_0001"
+    assert discovery.site == "RL"
+    assert [timepoint.session_id for timepoint in discovery.timepoints] == ["00", "04", "08"]
+    assert [timepoint.image_node_id for timepoint in discovery.timepoints] == ["y00", "y04", "y08"]

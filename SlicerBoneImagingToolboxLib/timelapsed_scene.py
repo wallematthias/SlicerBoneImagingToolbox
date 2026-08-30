@@ -231,6 +231,7 @@ def _infer_scene_session(candidate: TimelapsedSceneNodeCandidate) -> str:
     patterns = (
         r"(?i)(?:^|[^A-Za-z0-9])ses[-_]?([A-Za-z0-9.]+)",
         r"(?i)(?:^|[^A-Za-z0-9])session[-_]?([A-Za-z0-9.]+)",
+        r"(?i)(?:^|[^A-Za-z0-9])Y([0-9]+)(?:[^A-Za-z0-9]|$)",
         r"(?i)(?:^|[^A-Za-z0-9])T([0-9]+)(?:[^A-Za-z0-9]|$)",
     )
     for pattern in patterns:
@@ -253,7 +254,19 @@ def _infer_scene_token(candidate: TimelapsedSceneNodeCandidate, attribute_name: 
             return _clean_token(value, prefix)
     pattern = rf"(?i)(?:^|[^A-Za-z0-9]){re.escape(prefix)}[-_]?([A-Za-z0-9.]+)"
     match = re.search(pattern, str(candidate.name or ""))
-    return _safe_token(match.group(1)) if match else ""
+    if match:
+        return _safe_token(match.group(1))
+    study_match = re.search(
+        r"(?i)^([A-Za-z][A-Za-z0-9]+)_([0-9]+)_([A-Za-z]+)_Y[0-9]+(?:[^A-Za-z0-9]|$)",
+        str(candidate.name or ""),
+    )
+    if not study_match:
+        return ""
+    if attribute_name == "subject":
+        return _safe_token(f"{study_match.group(1)}_{study_match.group(2)}")
+    if attribute_name == "site":
+        return _safe_token(study_match.group(3))
+    return ""
 
 
 def _scene_session_sort_key(session_id: str) -> tuple[int, int | str]:
