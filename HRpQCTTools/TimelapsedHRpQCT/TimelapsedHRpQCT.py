@@ -1440,26 +1440,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         actions.addStretch(1)
         layout.addLayout(actions)
         layout.addWidget(self.sceneRunButton)
-        stageRow = qt.QWidget()
-        stageLayout = qt.QVBoxLayout(stageRow)
-        stageLayout.setContentsMargins(4, 4, 4, 4)
-        stageLayout.setSpacing(4)
+        sceneStatusBox = qt.QGroupBox("Pipeline Status")
+        sceneStatusForm = qt.QFormLayout(sceneStatusBox)
+        sceneStatusForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
+        sceneStatusForm.setVerticalSpacing(6)
         self.sceneStageLabels = {}
-        for key, title in [("dataset", "Dataset"), ("parse", "Parse"), ("masks", "Masks"), ("registration", "Registration"), ("analysis", "Analysis")]:
-            row = qt.QWidget()
-            row_layout = qt.QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(10)
-            name_label = qt.QLabel(f"{title}:")
-            name_label.setMinimumWidth(92)
+        for key, title in [
+            ("dataset", "Dataset"),
+            ("parse", "Parse"),
+            ("masks", "Masks"),
+            ("registration", "Registration"),
+            ("analysis", "Analysis"),
+        ]:
             status_label = qt.QLabel("<span style='color:#888888; font-weight:700'>●</span> Pending")
+            status_label.wordWrap = False
             status_label.toolTip = f"Scene pipeline status for {title.lower()}."
             self.sceneStageLabels[key] = status_label
-            row_layout.addWidget(name_label)
-            row_layout.addWidget(status_label)
-            row_layout.addStretch(1)
-            stageLayout.addWidget(row)
-        layout.addWidget(stageRow)
+            sceneStatusForm.addRow(_label(title, f"Scene pipeline status for the {title.lower()} stage."), status_label)
+        layout.addWidget(sceneStatusBox)
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
