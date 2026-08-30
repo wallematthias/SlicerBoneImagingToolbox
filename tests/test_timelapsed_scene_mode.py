@@ -45,8 +45,11 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self.layout.addWidget(self.logText)" in source
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
     assert "except Exception as exc" in source
-    assert "self.sceneTimepointTable.setMaximumHeight(260)" in source
-    assert "ScrollBarAlwaysOn" in source
+    assert "self._resize_scene_timepoint_table()" in source
+    assert "ScrollBarAsNeeded" in source
+    assert 'env.insert("PYTHONPATH", os.environ["PYTHONPATH"])' in source
+    assert "timelapsedhrpqct.cli import main" in source
+    assert 'MIN_PIPELINE_VERSION = "2.0.39"' in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source
@@ -106,7 +109,7 @@ def test_timelapsed_scene_run_args_include_existing_pipeline_options(tmp_path: P
     assert args[:2] == ["run", str(plan.input_root)]
     assert "--output-root" in args
     assert str(plan.output_root) in args
-    assert "--allow-scene-images" not in args
+    assert "--allow-scene-images" in args
     assert "--config" in args
 
 

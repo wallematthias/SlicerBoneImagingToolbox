@@ -20,7 +20,7 @@ import slicer
 import vtk
 
 MODULE_VERSION = "0.2.4"
-MIN_PIPELINE_VERSION = "2.0.37"
+MIN_PIPELINE_VERSION = "2.0.39"
 
 
 def _version_tuple(version_text):
@@ -328,6 +328,8 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         proc.setProcessChannelMode(qt.QProcess.MergedChannels)
         env = qt.QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
+        if os.environ.get("PYTHONPATH"):
+            env.insert("PYTHONPATH", os.environ["PYTHONPATH"])
         # Enable Python faulthandler in CLI subprocesses to improve crash traces.
         if not env.contains("TIMELAPSE_FAULTHANDLER"):
             env.insert("TIMELAPSE_FAULTHANDLER", "1")
@@ -402,7 +404,16 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         if python_exe is None:
             raise RuntimeError("Could not find Python executable in Slicer environment")
 
-        full_args = ["-m", "timelapsedhrpqct.cli"] + args
+        if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC):
+            bootstrap = (
+                "import sys; "
+                f"sys.path.insert(0, {str(_PIPELINE_LOCAL_SRC)!r}); "
+                "from timelapsedhrpqct.cli import main; "
+                "raise SystemExit(main())"
+            )
+            full_args = ["-c", bootstrap] + args
+        else:
+            full_args = ["-m", "timelapsedhrpqct.cli"] + args
         if on_output:
             on_output(f"[process] launching: {python_exe} {' '.join(full_args)}\n")
         proc.start(python_exe, full_args)
@@ -1378,10 +1389,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ["Session", "Image", "Periosteal/full mask", "Trabecular mask", "Cortical mask", "Bone segmentation"]
         )
         self.sceneTimepointTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
-        self.sceneTimepointTable.setMinimumHeight(160)
-        self.sceneTimepointTable.setMaximumHeight(260)
-        self.sceneTimepointTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAlwaysOn)
+        self.sceneTimepointTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
         layout.addWidget(self.sceneTimepointTable)
+        self._resize_scene_timepoint_table()
 
         actions = qt.QHBoxLayout()
         self.sceneDiscoverButton = qt.QPushButton("Discover Loaded Timepoints")
@@ -1407,6 +1417,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
+
+    def _resize_scene_timepoint_table(self):
+        visible_rows = max(2, min(int(self.sceneTimepointTable.rowCount), 4))
+        try:
+            header_height = int(self.sceneTimepointTable.horizontalHeader().height())
+            row_height = int(self.sceneTimepointTable.verticalHeader().defaultSectionSize())
+        except Exception:
+            header_height = 28
+            row_height = 30
+        height = header_height + visible_rows * row_height + 12
+        self.sceneTimepointTable.setMinimumHeight(height)
+        self.sceneTimepointTable.setMaximumHeight(height)
 
     def _default_scene_results_root(self):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"
@@ -1468,6 +1490,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_scene_row_node(row, 3, timepoint.trab_mask_node_id)
             self._set_scene_row_node(row, 4, timepoint.cort_mask_node_id)
             self._set_scene_row_node(row, 5, timepoint.seg_mask_node_id)
+        self._resize_scene_timepoint_table()
 
     def _set_scene_row_node(self, row, column, node_id):
         if not node_id:
@@ -1483,6 +1506,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             row = self.sceneTimepointTable.rowCount - 1
         if row >= 0:
             self.sceneTimepointTable.removeRow(row)
+            self._resize_scene_timepoint_table()
 
     def _move_scene_timepoint(self, offset):
         row = self.sceneTimepointTable.currentRow()
@@ -1496,6 +1520,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for timepoint in timepoints:
             self._add_scene_timepoint(timepoint)
         self.sceneTimepointTable.selectRow(target)
+        self._resize_scene_timepoint_table()
 
     def _scene_node_candidates(self):
         candidates = []
@@ -1537,6 +1562,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.sceneTimepointTable.setRowCount(0)
         for timepoint in discovery.timepoints:
             self._add_scene_timepoint(timepoint)
+        self._resize_scene_timepoint_table()
         if discovery.subject_id:
             self._scene_subject_id = discovery.subject_id
         if discovery.site:
