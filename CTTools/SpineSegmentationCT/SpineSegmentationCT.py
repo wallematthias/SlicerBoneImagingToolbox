@@ -673,7 +673,7 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         button_row_widget = qt.QWidget()
         button_row = qt.QHBoxLayout(button_row_widget)
         button_row.setContentsMargins(0, 0, 0, 0)
-        self.runButton = qt.QPushButton("Run")
+        self.runButton = qt.QPushButton("Run Spine Segmentation")
         self.stopButton = qt.QPushButton("Stop")
         self.stopButton.enabled = False
         self.runButton.clicked.connect(self._run_segmentation)

@@ -111,3 +111,15 @@ def test_mechanoregulation_module_contains_derivative_discovery_helpers() -> Non
     assert '"FEA"' in source
     discover_body = source.split("    def discover_cases(self, path):", 1)[1].split("\n    def ", 1)[0]
     assert "discover_mechanoregulation_manifests(root)" in discover_body
+
+
+def test_mechanoregulation_ui_uses_batch_and_review_tabs() -> None:
+    source = MECHREG_MODULE.read_text(encoding="utf-8")
+    setup_source = source[source.index("    def setup(self):", source.index("class MechanoregulationHRpQCTWidget")) :]
+
+    assert "self.modeTabs = qt.QTabWidget()" in setup_source
+    assert 'self.modeTabs.addTab(batch_tab, "Batch")' in setup_source
+    assert 'self.modeTabs.addTab(review_tab, "Review")' in setup_source
+    assert 'box.text = "Batch"' in source
+    assert 'box.text = "Review"' in source
+    assert 'self.runButton = qt.QPushButton("Run Batch")' in source

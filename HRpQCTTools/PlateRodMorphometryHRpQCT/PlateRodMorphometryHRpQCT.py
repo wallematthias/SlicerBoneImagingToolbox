@@ -732,9 +732,18 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._lastTable = None
         self._activePlateRodJob = None
 
+        self.modeTabs = qt.QTabWidget()
+        scene_tab = qt.QWidget()
+        batch_tab = qt.QWidget()
+        scene_layout = qt.QVBoxLayout(scene_tab)
+        batch_layout = qt.QVBoxLayout(batch_tab)
+        self.modeTabs.addTab(scene_tab, "Scene")
+        self.modeTabs.addTab(batch_tab, "Batch")
+        self.layout.addWidget(self.modeTabs)
+
         parameters_collapsible = ctk.ctkCollapsibleButton()
         parameters_collapsible.text = "Parameters"
-        self.layout.addWidget(parameters_collapsible)
+        scene_layout.addWidget(parameters_collapsible)
         form_layout = qt.QFormLayout(parameters_collapsible)
 
         self.boneSegmentationSelector = slicer.qMRMLNodeComboBox()
@@ -827,26 +836,45 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
         form_layout.addRow(self.installCoreButton)
         self._refresh_core_status()
 
-        batch = ctk.ctkCollapsibleButton()
-        batch.text = "Folder Batch"
-        self.layout.addWidget(batch)
-        batch_form = qt.QFormLayout(batch)
+        discovery_box = qt.QGroupBox("Discovery")
+        batch_form = qt.QFormLayout(discovery_box)
+        batch_layout.addWidget(discovery_box)
         self.folderDatasetRootEdit = qt.QLineEdit()
         self.folderSubjectEdit = qt.QLineEdit()
         self.folderSiteEdit = qt.QLineEdit()
+        self.folderDiscoverButton = qt.QPushButton("Discover")
+        self.folderDiscoverButton.clicked.connect(self._discover_folder_batch_groups)
+        batch_form.addRow("Dataset root", self.folderDatasetRootEdit)
+        batch_form.addRow("Subject filter", self.folderSubjectEdit)
+        batch_form.addRow("Site filter", self.folderSiteEdit)
+        batch_form.addRow("", self.folderDiscoverButton)
+
+        self.folderBatchTable = qt.QTableWidget()
+        self.folderBatchTable.setColumnCount(3)
+        self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])
+        self.folderBatchTable.minimumHeight = 160
+        try:
+            self.folderBatchTable.horizontalHeader().setStretchLastSection(True)
+            self.folderBatchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        except Exception:
+            pass
+        batch_layout.addWidget(self.folderBatchTable)
+
+        workflow_box = qt.QGroupBox("Workflow")
+        workflow_form = qt.QFormLayout(workflow_box)
+        batch_layout.addWidget(workflow_box)
         self.folderUseCommonRegionCheck = qt.QCheckBox()
         self.folderUseCommonRegionCheck.checked = True
         self.folderForceCheck = qt.QCheckBox()
-        self.folderRunButton = qt.QPushButton("Run folder batch")
+        self.folderRunButton = qt.QPushButton("Run Batch")
         self.folderBatchStatus = qt.QLabel()
+        self.folderBatchStatus.wordWrap = True
         self.folderRunButton.clicked.connect(self._run_folder_batch)
-        batch_form.addRow("Dataset root", self.folderDatasetRootEdit)
-        batch_form.addRow("Subject", self.folderSubjectEdit)
-        batch_form.addRow("Site", self.folderSiteEdit)
-        batch_form.addRow("Use common region", self.folderUseCommonRegionCheck)
-        batch_form.addRow("Force recompute", self.folderForceCheck)
-        batch_form.addRow(self.folderRunButton)
-        batch_form.addRow(self.folderBatchStatus)
+        workflow_form.addRow("Use common region", self.folderUseCommonRegionCheck)
+        workflow_form.addRow("Force recompute", self.folderForceCheck)
+        workflow_form.addRow(self.folderRunButton)
+        batch_layout.addWidget(self.folderBatchStatus)
+        batch_layout.addStretch(1)
 
         self.layout.addStretch(1)
 
@@ -865,6 +893,49 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _on_folder_batch_finished(self, exit_code, _exit_status):
         self.folderRunButton.enabled = True
         self.folderBatchStatus.text = f"Folder batch finished with exit code {int(exit_code)}."
+
+    def _discover_folder_batch_groups(self):
+        root_text = str(self.folderDatasetRootEdit.text or "").strip()
+        if not root_text:
+            self.folderBatchStatus.text = "Select a dataset root before discovery."
+            return
+        root = Path(root_text).expanduser()
+        subject_filter = str(self.folderSubjectEdit.text or "").strip()
+        site_filter = str(self.folderSiteEdit.text or "").strip()
+        groups = {}
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            name = path.name.lower()
+            if "mask" not in name or not (name.endswith(".nii") or name.endswith(".nii.gz")):
+                continue
+            subject = ""
+            site = ""
+            session = ""
+            for part in path.parts:
+                if part.startswith("sub-"):
+                    subject = part[4:]
+                elif part.startswith("site-"):
+                    site = part[5:]
+                elif part.startswith("ses-"):
+                    session = part[4:]
+            if subject_filter and subject != subject_filter:
+                continue
+            if site_filter and site != site_filter:
+                continue
+            if subject or site:
+                groups.setdefault((subject, site), set()).add(session)
+        self.folderBatchTable.setRowCount(len(groups))
+        for row_index, ((subject, site), sessions) in enumerate(sorted(groups.items())):
+            for column, value in enumerate([subject, site, ", ".join(sorted(s for s in sessions if s))]):
+                item = qt.QTableWidgetItem(value)
+                item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+                self.folderBatchTable.setItem(row_index, column, item)
+        try:
+            self.folderBatchTable.resizeColumnsToContents()
+        except Exception:
+            pass
+        self.folderBatchStatus.text = f"Discovered {len(groups)} subject/site group(s)."
 
     def _segmentation_input_row(self, node_selector, segment_selector):
         row = qt.QWidget()

@@ -77,6 +77,10 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     widget_setup = source[source.index("    def setup(self):", source.index("class PlateRodMorphometryHRpQCTWidget")) :]
 
+    assert "self.modeTabs = qt.QTabWidget()" in widget_setup
+    assert 'self.modeTabs.addTab(scene_tab, "Scene")' in widget_setup
+    assert 'self.modeTabs.addTab(batch_tab, "Batch")' in widget_setup
+    assert "Folder Batch" not in widget_setup
     assert "def _segmentation_input_row(self, node_selector, segment_selector):" in source
     assert "row_layout = qt.QHBoxLayout(row)" in source
     assert "row_layout.addWidget(node_selector, 2)" in source
@@ -121,6 +125,19 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
     assert "TOPOLOGY_LABEL_COLORS" in source
     assert 'set_labelmap_display_colors(node, map_role)' in source
     assert "show_full_thickness_labels_in_3d(nodes.get(\"Full-thickness labels\"))" in source
+
+
+def test_plate_rod_batch_ui_uses_derivative_discovery_pattern() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def setup(self):", source.index("class PlateRodMorphometryHRpQCTWidget")) :]
+
+    assert 'qt.QGroupBox("Discovery")' in widget_setup
+    assert "self.folderDiscoverButton" in widget_setup
+    assert "self.folderBatchTable" in widget_setup
+    assert 'self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])' in widget_setup
+    assert "Subject filter" in widget_setup
+    assert "Site filter" in widget_setup
+    assert 'self.folderRunButton = qt.QPushButton("Run Batch")' in widget_setup
 
 
 def test_plate_rod_run_passes_selected_segments_to_logic() -> None:

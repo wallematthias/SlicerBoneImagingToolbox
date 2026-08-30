@@ -1347,7 +1347,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneTimepointTable = qt.QTableWidget()
         self.sceneTimepointTable.setColumnCount(6)
         self.sceneTimepointTable.setHorizontalHeaderLabels(
-            ["Session", "Image", "Full mask", "Trab mask", "Cort mask", "Seg mask"]
+            ["Session", "Image", "Periosteal/full mask", "Trabecular mask", "Cortical mask", "Bone segmentation"]
         )
         self.sceneTimepointTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
         self.sceneTimepointTable.setMinimumHeight(180)
@@ -1356,7 +1356,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         actions = qt.QHBoxLayout()
         self.sceneAddTimepointButton = qt.QPushButton("Add timepoint")
         self.sceneRemoveTimepointButton = qt.QPushButton("Remove timepoint")
-        self.sceneRunButton = qt.QPushButton("Run scene pipeline")
+        self.sceneRunButton = qt.QPushButton("Run Scene Pipeline")
         self.sceneAddTimepointButton.clicked.connect(self._add_scene_timepoint)
         self.sceneRemoveTimepointButton.clicked.connect(self._remove_scene_timepoint)
         self.sceneRunButton.clicked.connect(self._on_run_scene_pipeline)

@@ -227,6 +227,7 @@ def test_registered_series_mode_uses_timelapsed_discovery_and_slicer_timelapsed_
 def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
+    registered_tab = source[source.index("    def _setup_registered_series_tab(self, layout):") :]
 
     assert "class BoneMicroarchitecture(ScriptedLoadableModule):" in source
     assert "class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):" in source
@@ -235,7 +236,7 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert 'parent.categories = ["Bone Imaging.HR-pQCT"]' in source
 
     assert "self.modeTabs = qt.QTabWidget()" in widget_setup
-    assert 'self.modeTabs.addTab(single_tab, "Single Scan")' in widget_setup
+    assert 'self.modeTabs.addTab(single_tab, "Scene")' in widget_setup
     assert 'self.modeTabs.addTab(series_tab, "Registered Series")' in widget_setup
     assert "RegisteredMicroarchitecture" in widget_setup
     assert "self.seriesDatasetRootEdit" in widget_setup
@@ -244,17 +245,16 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert "self.seriesSiteCombo" in widget_setup
     assert "All subjects" in widget_setup
     assert "All sites" in widget_setup
-    assert "self.seriesSubjectFilterEdit" not in widget_setup
-    assert "self.seriesSiteFilterEdit" not in widget_setup
-    assert '"Subject filter"' not in widget_setup
-    assert '"Site filter"' not in widget_setup
+    assert "self.seriesSubjectFilterEdit" not in registered_tab
+    assert "self.seriesSiteFilterEdit" not in registered_tab
+    assert '"Subject filter"' not in registered_tab
+    assert '"Site filter"' not in registered_tab
     assert "self.discoverSeriesButton" in widget_setup
     assert "self.runRegisteredSeriesButton" in widget_setup
     assert "self.prepareRegisteredSeriesButton" not in widget_setup
     assert widget_setup.index("self.discoverSeriesButton") < widget_setup.index("form.addRow(\"Subject\"")
     assert widget_setup.index("form.addRow(\"Subject\"") < widget_setup.index("form.addRow(\"Missing masks\"")
-    assert 'qt.QPushButton("Run")' in widget_setup
-    assert '"Run series measurements"' not in widget_setup
+    assert 'qt.QPushButton("Run Registered Series")' in widget_setup
     assert "def _prepare_registered_series(self):" in source
     assert "if not self._lastRegisteredRows:" in source[source.index("    def _run_registered_series(self):") :]
     assert "self.seriesTable.setHorizontalHeaderLabels" in widget_setup
@@ -265,6 +265,22 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert "_refresh_registered_series_table" in source
     assert "_prepare_registered_series" in source
     assert "_run_registered_series" in source
+
+
+def test_microarchitecture_batch_ui_uses_discovery_table_and_release_labels() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
+
+    assert 'self.modeTabs.addTab(single_tab, "Scene")' in widget_setup
+    assert "Folder Batch" not in widget_setup
+    assert 'qt.QGroupBox("Discovery")' in widget_setup
+    assert 'qt.QGroupBox("Workflow")' in widget_setup
+    assert "self.folderDiscoverButton" in widget_setup
+    assert "self.folderBatchTable" in widget_setup
+    assert 'self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])' in widget_setup
+    assert 'self.folderRunButton = qt.QPushButton("Run Batch")' in widget_setup
+    assert "Subject filter" in widget_setup
+    assert "Site filter" in widget_setup
 
 
 def test_registered_series_prepare_can_generate_missing_masks() -> None:

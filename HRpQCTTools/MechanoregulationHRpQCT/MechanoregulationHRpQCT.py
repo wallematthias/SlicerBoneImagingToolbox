@@ -439,8 +439,16 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._discoverTimer.timeout.connect(lambda: self.discover_cases(show_errors=False))
 
         self._build_runtime_section()
-        self._build_input_section()
-        self._build_review_section()
+        self.modeTabs = qt.QTabWidget()
+        batch_tab = qt.QWidget()
+        review_tab = qt.QWidget()
+        batch_layout = qt.QVBoxLayout(batch_tab)
+        review_layout = qt.QVBoxLayout(review_tab)
+        self.modeTabs.addTab(batch_tab, "Batch")
+        self.modeTabs.addTab(review_tab, "Review")
+        self.layout.addWidget(self.modeTabs)
+        self._build_input_section(batch_layout)
+        self._build_review_section(review_layout)
 
         self.layout.addStretch(1)
         self.update_runtime_status()
@@ -463,10 +471,10 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addRow(row)
         layout.addRow("Status", self.coreStatusLabel)
 
-    def _build_input_section(self):
+    def _build_input_section(self, parent_layout=None):
         box = ctk.ctkCollapsibleButton()
-        box.text = "Input"
-        self.layout.addWidget(box)
+        box.text = "Batch"
+        (parent_layout or self.layout).addWidget(box)
         layout = qt.QFormLayout(box)
 
         self.datasetRootSelector = ctk.ctkPathLineEdit()
@@ -504,7 +512,7 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addRow("", self.overwriteCheckBox)
 
         action_row = qt.QHBoxLayout()
-        self.runButton = qt.QPushButton("Run")
+        self.runButton = qt.QPushButton("Run Batch")
         self.stopButton = qt.QPushButton("Stop")
         self.stopButton.enabled = False
         self.runButton.clicked.connect(self.run)
@@ -537,11 +545,13 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.currentStepLabel.toolTip = "Currently running mechanoregulation step."
         layout.addRow("Progress", self.progressBar)
         layout.addRow("Current", self.currentStepLabel)
+        if parent_layout is not None:
+            parent_layout.addStretch(1)
 
-    def _build_review_section(self):
+    def _build_review_section(self, parent_layout=None):
         box = ctk.ctkCollapsibleButton()
         box.text = "Review"
-        self.layout.addWidget(box)
+        (parent_layout or self.layout).addWidget(box)
         layout = qt.QVBoxLayout(box)
 
         self.metricsTable = qt.QTableWidget()
@@ -608,6 +618,8 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText.setSizePolicy(qt.QSizePolicy.Ignored, qt.QSizePolicy.Preferred)
         self.logText.maximumBlockCount = 500
         layout.addWidget(self.logText)
+        if parent_layout is not None:
+            parent_layout.addStretch(1)
 
     def _show(self, message):
         text = self._status_text(message)

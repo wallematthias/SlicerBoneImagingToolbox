@@ -1599,21 +1599,47 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._setup_registered_series_tab(series_layout)
 
         batch_tab = qt.QWidget()
-        batch_layout = qt.QFormLayout(batch_tab)
+        batch_layout = qt.QVBoxLayout(batch_tab)
+        discovery_box = qt.QGroupBox("Discovery")
+        discovery_form = qt.QFormLayout(discovery_box)
+        batch_layout.addWidget(discovery_box)
         self.folderDatasetRootEdit = qt.QLineEdit()
+        self.folderSubjectEdit = qt.QLineEdit()
+        self.folderSiteEdit = qt.QLineEdit()
+        self.folderDiscoverButton = qt.QPushButton("Discover")
+        self.folderBatchTable = qt.QTableWidget()
+        self.folderBatchTable.setColumnCount(3)
+        self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])
+        self.folderBatchTable.minimumHeight = 160
+        try:
+            self.folderBatchTable.horizontalHeader().setStretchLastSection(True)
+            self.folderBatchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        except Exception:
+            pass
+        self.folderDiscoverButton.clicked.connect(self._discover_folder_batch_groups)
+        discovery_form.addRow("Dataset root", self.folderDatasetRootEdit)
+        discovery_form.addRow("Subject filter", self.folderSubjectEdit)
+        discovery_form.addRow("Site filter", self.folderSiteEdit)
+        discovery_form.addRow("", self.folderDiscoverButton)
+        batch_layout.addWidget(self.folderBatchTable)
+
+        workflow_box = qt.QGroupBox("Workflow")
+        workflow_form = qt.QFormLayout(workflow_box)
+        batch_layout.addWidget(workflow_box)
         self.folderUseCommonRegionCheck = qt.QCheckBox()
         self.folderUseCommonRegionCheck.checked = True
         self.folderForceCheck = qt.QCheckBox()
-        self.folderRunButton = qt.QPushButton("Run folder batch")
+        self.folderRunButton = qt.QPushButton("Run Batch")
         self.folderBatchStatus = qt.QLabel()
+        self.folderBatchStatus.wordWrap = True
         self.folderRunButton.clicked.connect(self._run_folder_batch)
-        batch_layout.addRow("Dataset root", self.folderDatasetRootEdit)
-        batch_layout.addRow("Use common region", self.folderUseCommonRegionCheck)
-        batch_layout.addRow("Force recompute", self.folderForceCheck)
-        batch_layout.addRow(self.folderRunButton)
-        batch_layout.addRow(self.folderBatchStatus)
+        workflow_form.addRow("Use common region", self.folderUseCommonRegionCheck)
+        workflow_form.addRow("Force recompute", self.folderForceCheck)
+        workflow_form.addRow(self.folderRunButton)
+        batch_layout.addWidget(self.folderBatchStatus)
+        batch_layout.addStretch(1)
 
-        self.modeTabs.addTab(single_tab, "Single Scan")
+        self.modeTabs.addTab(single_tab, "Scene")
         self.modeTabs.addTab(series_tab, "Registered Series")
         self.modeTabs.addTab(batch_tab, "Batch")
         self.layout.addStretch(1)
@@ -1621,9 +1647,11 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
 
     def _run_folder_batch(self):
         self.folderRunButton.enabled = False
-        self.folderBatchStatus.text = "Folder batch is running in the background."
+        self.folderBatchStatus.text = "Microarchitecture batch is running in the background."
         self.logic.run_folder_batch_job(
             self.folderDatasetRootEdit.text,
+            subject_id=self.folderSubjectEdit.text,
+            site=self.folderSiteEdit.text,
             use_common_region=bool(self.folderUseCommonRegionCheck.checked),
             force=bool(self.folderForceCheck.checked),
             thickness_method=str(self.thicknessMethodCombo.currentData),
@@ -1633,7 +1661,51 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
 
     def _on_folder_batch_finished(self, exit_code, _exit_status):
         self.folderRunButton.enabled = True
-        self.folderBatchStatus.text = f"Folder batch finished with exit code {int(exit_code)}."
+        self.folderBatchStatus.text = f"Microarchitecture batch finished with exit code {int(exit_code)}."
+
+    def _discover_folder_batch_groups(self):
+        root_text = str(self.folderDatasetRootEdit.text or "").strip()
+        if not root_text:
+            self.folderBatchStatus.text = "Select a dataset root before discovery."
+            return
+        root = Path(root_text).expanduser()
+        subject_filter = str(self.folderSubjectEdit.text or "").strip()
+        site_filter = str(self.folderSiteEdit.text or "").strip()
+        groups = {}
+        try:
+            rows = self.logic.discover_registered_series(root, subject_filter=subject_filter, site_filter=site_filter)
+            for row in rows:
+                key = (str(row.get("subject_id", "")), str(row.get("site", "")))
+                groups.setdefault(key, set()).add(str(row.get("session_id", "")))
+        except Exception:
+            for path in root.rglob("*"):
+                name = path.name
+                if "sub-" not in name or "site-" not in name:
+                    continue
+                subject = ""
+                site = ""
+                for part in path.parts:
+                    if part.startswith("sub-"):
+                        subject = part[4:]
+                    elif part.startswith("site-"):
+                        site = part[5:]
+                if subject_filter and subject != subject_filter:
+                    continue
+                if site_filter and site != site_filter:
+                    continue
+                if subject or site:
+                    groups.setdefault((subject, site), set())
+        self.folderBatchTable.setRowCount(len(groups))
+        for row_index, ((subject, site), sessions) in enumerate(sorted(groups.items())):
+            for column, value in enumerate([subject, site, ", ".join(sorted(s for s in sessions if s))]):
+                item = qt.QTableWidgetItem(value)
+                item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+                self.folderBatchTable.setItem(row_index, column, item)
+        try:
+            self.folderBatchTable.resizeColumnsToContents()
+        except Exception:
+            pass
+        self.folderBatchStatus.text = f"Discovered {len(groups)} subject/site group(s). Run Batch processes the package batch workflow for the selected dataset root."
 
     def _setup_registered_series_tab(self, layout):
         box = ctk.ctkCollapsibleButton()
@@ -1724,7 +1796,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         settings_layout.addWidget(self.seriesThicknessBackendCombo)
         form.addRow("Thickness", settings_row)
 
-        self.runRegisteredSeriesButton = qt.QPushButton("Run")
+        self.runRegisteredSeriesButton = qt.QPushButton("Run Registered Series")
         self.runRegisteredSeriesButton.clicked.connect(self._run_registered_series)
         self._tip(
             self.runRegisteredSeriesButton,

@@ -350,7 +350,7 @@ class RegisteredCommonRegionWidget(ScriptedLoadableModuleWidget):
         layout.addRow("Follow-up volume", self.followupVolumeSelector)
         layout.addRow("Baseline registration mask", self.baselineMaskSelector)
         layout.addRow("Follow-up registration mask", self.followupMaskSelector)
-        self.sceneRunButton = qt.QPushButton("Run")
+        self.sceneRunButton = qt.QPushButton("Build Common Region")
         layout.addRow(self.sceneRunButton)
 
     def _setup_batch_tab(self, parent):
@@ -358,7 +358,7 @@ class RegisteredCommonRegionWidget(ScriptedLoadableModuleWidget):
         self.datasetRootEdit = qt.QLineEdit()
         self.derivativesRootEdit = qt.QLineEdit()
         self.discoverButton = qt.QPushButton("Discover")
-        self.runButton = qt.QPushButton("Run")
+        self.runButton = qt.QPushButton("Run Batch")
         self.statusLog = qt.QPlainTextEdit()
         self.statusLog.readOnly = True
         self.batchGroupsList = qt.QListWidget()
