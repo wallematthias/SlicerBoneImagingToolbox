@@ -1351,6 +1351,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "with the Timelapsed mask-generation settings."
         )
         form.addRow("Masks", self.sceneGenerateMissingMasksCheck)
+        self.sceneAppendDiscoveryCheck = qt.QCheckBox("Append to table")
+        self.sceneAppendDiscoveryCheck.checked = False
+        self.sceneAppendDiscoveryCheck.toolTip = "Append discovered loaded timepoints instead of replacing the current table."
+        form.addRow("Discovery", self.sceneAppendDiscoveryCheck)
         layout.addLayout(form)
 
         self.sceneTimepointTable = qt.QTableWidget()
@@ -1366,14 +1370,20 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneDiscoverButton = qt.QPushButton("Discover Loaded Timepoints")
         self.sceneAddTimepointButton = qt.QPushButton("Add timepoint")
         self.sceneRemoveTimepointButton = qt.QPushButton("Remove timepoint")
+        self.sceneMoveUpButton = qt.QPushButton("Move up")
+        self.sceneMoveDownButton = qt.QPushButton("Move down")
         self.sceneRunButton = qt.QPushButton("Run Scene Pipeline")
         self.sceneDiscoverButton.clicked.connect(self._on_discover_scene_timepoints)
         self.sceneAddTimepointButton.clicked.connect(self._add_scene_timepoint)
         self.sceneRemoveTimepointButton.clicked.connect(self._remove_scene_timepoint)
+        self.sceneMoveUpButton.clicked.connect(lambda _checked=False: self._move_scene_timepoint(-1))
+        self.sceneMoveDownButton.clicked.connect(lambda _checked=False: self._move_scene_timepoint(1))
         self.sceneRunButton.clicked.connect(self._on_run_scene_pipeline)
         actions.addWidget(self.sceneDiscoverButton)
         actions.addWidget(self.sceneAddTimepointButton)
         actions.addWidget(self.sceneRemoveTimepointButton)
+        actions.addWidget(self.sceneMoveUpButton)
+        actions.addWidget(self.sceneMoveDownButton)
         actions.addStretch(1)
         actions.addWidget(self.sceneRunButton)
         layout.addLayout(actions)
@@ -1427,6 +1437,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if row >= 0:
             self.sceneTimepointTable.removeRow(row)
 
+    def _move_scene_timepoint(self, offset):
+        row = self.sceneTimepointTable.currentRow()
+        target = row + int(offset)
+        if row < 0 or target < 0 or target >= self.sceneTimepointTable.rowCount:
+            return
+        timepoints = list(self._scene_timepoints())
+        moving = timepoints.pop(row)
+        timepoints.insert(target, moving)
+        self.sceneTimepointTable.setRowCount(0)
+        for timepoint in timepoints:
+            self._add_scene_timepoint(timepoint)
+        self.sceneTimepointTable.selectRow(target)
+
     def _scene_node_candidates(self):
         candidates = []
         scene = slicer.mrmlScene
@@ -1463,7 +1486,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _on_discover_scene_timepoints(self):
         discovery = discover_timelapsed_scene_timepoints(self._scene_node_candidates())
-        self.sceneTimepointTable.setRowCount(0)
+        if not bool(self.sceneAppendDiscoveryCheck.checked):
+            self.sceneTimepointTable.setRowCount(0)
         for timepoint in discovery.timepoints:
             self._add_scene_timepoint(timepoint)
         if discovery.subject_id and not str(self.sceneSubjectEdit.text or "").strip():
@@ -1471,7 +1495,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if discovery.site and not str(self.sceneSiteEdit.text or "").strip():
             self.sceneSiteEdit.text = discovery.site
         count = len(discovery.timepoints)
-        self.sceneStatusLabel.text = f"Discovered {count} loaded timepoint(s)."
+        self.sceneStatusLabel.text = (
+            f"Best guess: {discovery.image_count} image(s), {discovery.matched_mask_count}/"
+            f"{discovery.mask_count} mask(s) matched; added {count} timepoint row(s)."
+        )
 
     def _scene_selected_node_id(self, row, column):
         selector = self.sceneTimepointTable.cellWidget(row, column)

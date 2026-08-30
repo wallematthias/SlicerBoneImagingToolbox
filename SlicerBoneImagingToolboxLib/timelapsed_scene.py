@@ -47,6 +47,9 @@ class TimelapsedSceneDiscovery:
     subject_id: str
     site: str
     timepoints: tuple[TimelapsedSceneTimepoint, ...]
+    image_count: int = 0
+    mask_count: int = 0
+    matched_mask_count: int = 0
 
 
 def discover_timelapsed_scene_timepoints(
@@ -56,8 +59,14 @@ def discover_timelapsed_scene_timepoints(
     groups: dict[str, dict[str, str]] = {}
     subjects: list[str] = []
     sites: list[str] = []
+    scalar_candidates: list[TimelapsedSceneNodeCandidate] = []
+    mask_count = 0
     for candidate in candidates:
         role = _infer_scene_role(candidate)
+        if role == "image":
+            scalar_candidates.append(candidate)
+        elif role:
+            mask_count += 1
         session_id = _infer_scene_session(candidate)
         if not role or not session_id:
             continue
@@ -72,11 +81,13 @@ def discover_timelapsed_scene_timepoints(
             group[role] = candidate.node_id
 
     timepoints: list[TimelapsedSceneTimepoint] = []
+    matched_mask_count = 0
     for session_id in sorted(groups, key=_scene_session_sort_key):
         group = groups[session_id]
         image_node_id = group.get("image", "")
         if not image_node_id:
             continue
+        matched_mask_count += sum(1 for role in ("full", "trab", "cort", "seg") if group.get(role))
         timepoints.append(
             TimelapsedSceneTimepoint(
                 session_id=session_id,
@@ -87,10 +98,18 @@ def discover_timelapsed_scene_timepoints(
                 seg_mask_node_id=group.get("seg", ""),
             )
         )
+    if not timepoints and scalar_candidates:
+        timepoints = [
+            TimelapsedSceneTimepoint(session_id=str(index), image_node_id=candidate.node_id)
+            for index, candidate in enumerate(scalar_candidates, start=1)
+        ]
     return TimelapsedSceneDiscovery(
         subject_id=_most_common(subjects),
         site=_most_common(sites),
         timepoints=tuple(timepoints),
+        image_count=len(scalar_candidates),
+        mask_count=mask_count,
+        matched_mask_count=matched_mask_count,
     )
 
 

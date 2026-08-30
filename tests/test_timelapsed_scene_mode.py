@@ -26,7 +26,10 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "def _on_run_scene_pipeline" in source
     assert "build_timelapsed_scene_plan" in source
     assert "Discover Loaded Timepoints" in source
+    assert "Append to table" in source
     assert "Generate missing masks" in source
+    assert "Move up" in source
+    assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source
     assert "self._run_skips_mask_generation = not bool(self.sceneGenerateMissingMasksCheck.checked)" in source
     assert 'importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")' in source
@@ -185,3 +188,32 @@ def test_timelapsed_scene_discovery_supports_strambo_year_aim_names() -> None:
     assert discovery.site == "RL"
     assert [timepoint.session_id for timepoint in discovery.timepoints] == ["00", "04", "08"]
     assert [timepoint.image_node_id for timepoint in discovery.timepoints] == ["y00", "y04", "y08"]
+
+
+def test_timelapsed_scene_discovery_falls_back_to_loaded_scalar_order() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate("first", "Loaded scan A", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("mask", "Unmatched full mask", "vtkMRMLLabelMapVolumeNode"),
+            TimelapsedSceneNodeCandidate("second", "Completely random image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("third", "Another volume", "vtkMRMLScalarVolumeNode"),
+        ]
+    )
+
+    assert [timepoint.session_id for timepoint in discovery.timepoints] == ["1", "2", "3"]
+    assert [timepoint.image_node_id for timepoint in discovery.timepoints] == ["first", "second", "third"]
+    assert all(timepoint.full_mask_node_id == "" for timepoint in discovery.timepoints)
+
+
+def test_timelapsed_scene_discovery_reports_summary_counts() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate("img1", "sub-SAMPLE001_ses-1_site-tibia_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("img2", "sub-SAMPLE001_ses-2_site-tibia_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("full1", "sub-SAMPLE001_ses-1_site-tibia_mask-full", "vtkMRMLLabelMapVolumeNode"),
+        ]
+    )
+
+    assert discovery.image_count == 2
+    assert discovery.mask_count == 1
+    assert discovery.matched_mask_count == 1
