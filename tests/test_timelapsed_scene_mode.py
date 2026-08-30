@@ -37,7 +37,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "actions.addWidget(self.sceneRunButton)" not in source
     assert "layout.addWidget(self.sceneRunButton)" in source
     assert "self.sceneStageLabels = {}" in source
-    assert 'sceneStatusBox = qt.QGroupBox("Pipeline Status")' in source
+    assert 'self.sceneStatusBox = qt.QGroupBox("Pipeline Status")' in source
+    assert "sceneStatusBox = self.sceneStatusBox" in source
     assert "sceneStatusForm = qt.QFormLayout(sceneStatusBox)" in source
     assert "sceneStatusForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)" in source
     assert "sceneStatusForm.setVerticalSpacing(6)" in source
@@ -59,6 +60,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self.runAnalysisBtn.visible = not scene_mode" in source
     assert "self.statusBox = statusBox" in source
     assert "self.statusBox.visible = not scene_mode" in source
+    assert "self.sceneStatusBox.visible = scene_mode" in source
     assert "_clear_loaded_review_nodes()" in source
     assert "_scene_processed_subject_site" in source
     assert "candidate.parent.name == \"derivatives\"" in source
@@ -130,7 +132,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)" in source
     assert "viewport().update()" in source
     assert "layout().activate()" in source
-    assert "setMaximumHeight(max(280, min(520, height + 170)))" in source
+    assert "setMaximumHeight(max(380, min(660, height + 290)))" in source
     assert "setMaximumHeight(max(520" not in source
     assert "scene_results_table_path" in source
     assert "layout.setContentsMargins(0, 0, 0, 0)" in source

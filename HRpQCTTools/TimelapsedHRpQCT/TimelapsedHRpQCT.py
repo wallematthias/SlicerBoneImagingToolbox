@@ -1440,7 +1440,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         actions.addStretch(1)
         layout.addLayout(actions)
         layout.addWidget(self.sceneRunButton)
-        sceneStatusBox = qt.QGroupBox("Pipeline Status")
+        self.sceneStatusBox = qt.QGroupBox("Pipeline Status")
+        sceneStatusBox = self.sceneStatusBox
         sceneStatusForm = qt.QFormLayout(sceneStatusBox)
         sceneStatusForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
         sceneStatusForm.setVerticalSpacing(6)
@@ -1502,6 +1503,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.seriesSummaryBox.visible = not scene_mode
         if hasattr(self, "statusBox"):
             self.statusBox.visible = not scene_mode
+        if hasattr(self, "sceneStatusBox"):
+            self.sceneStatusBox.visible = scene_mode
 
     def _resize_timelapsed_mode_tabs(self):
         if not hasattr(self, "timelapsedModeTabs"):
@@ -1511,7 +1514,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             current_index = current_index()
         if int(current_index) == 0 and hasattr(self, "sceneTimepointTable"):
             height = int(getattr(self, "_scene_timepoint_table_height", 100))
-            self.timelapsedModeTabs.setMaximumHeight(max(280, min(520, height + 170)))
+            self.timelapsedModeTabs.setMaximumHeight(max(380, min(660, height + 290)))
         else:
             self.timelapsedModeTabs.setMaximumHeight(520)
         try:
