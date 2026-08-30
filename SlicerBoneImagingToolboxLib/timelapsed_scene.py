@@ -166,7 +166,6 @@ def timelapsed_scene_run_args(
         str(plan.output_root),
         "--mode",
         mode,
-        "--allow-scene-images",
         "--config",
         str(config_path),
     ]

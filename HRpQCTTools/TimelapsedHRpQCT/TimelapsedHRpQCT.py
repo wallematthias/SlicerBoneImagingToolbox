@@ -1405,7 +1405,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
-        layout.addStretch(1)
 
     def _default_scene_results_root(self):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"

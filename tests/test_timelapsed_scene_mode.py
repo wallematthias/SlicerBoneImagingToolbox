@@ -104,7 +104,7 @@ def test_timelapsed_scene_run_args_include_existing_pipeline_options(tmp_path: P
     assert args[:2] == ["run", str(plan.input_root)]
     assert "--output-root" in args
     assert str(plan.output_root) in args
-    assert "--allow-scene-images" in args
+    assert "--allow-scene-images" not in args
     assert "--config" in args
 
 
