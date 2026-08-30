@@ -1208,14 +1208,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.cancelRunBtn.clicked.connect(self._on_cancel_run)
         self.cancelRunBtn.enabled = False
         self.cancelRunBtn.toolTip = "Cancel the currently running pipeline step."
-        self.runTimelapseBtn.setMinimumHeight(34)
-        self.runTimelapseBtn.setStyleSheet(
-            "QPushButton { background:#1f6feb; color:white; border:1px solid #175cc5; "
-            "border-radius:4px; padding:7px 10px; font-weight:600; } "
-            "QPushButton:hover { background:#1a5fd0; } "
-            "QPushButton:pressed { background:#154ea8; } "
-            "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
-        )
+        self._style_primary_run_button(self.runTimelapseBtn)
         self.seriesSummaryExportBtn.setStyleSheet(
             "QPushButton { background:#f5f7fa; color:#222; border:1px solid #b8c0ca; "
             "border-radius:4px; padding:5px 8px; } "
@@ -1361,6 +1354,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._update_progress_ui()
         self._on_timelapsed_mode_changed()
 
+    def _style_primary_run_button(self, button):
+        button.setMinimumHeight(34)
+        button.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Fixed)
+        button.setStyleSheet(
+            "QPushButton { background:#1f6feb; color:white; border:1px solid #175cc5; "
+            "border-radius:4px; padding:7px 10px; font-weight:600; } "
+            "QPushButton:hover { background:#1a5fd0; } "
+            "QPushButton:pressed { background:#154ea8; } "
+            "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
+        )
+
     def _build_scene_ui(self, parent):
         def _cap_width(widget, width=220):
             try:
@@ -1421,14 +1425,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneMoveUpButton = qt.QPushButton("Move up")
         self.sceneMoveDownButton = qt.QPushButton("Move down")
         self.sceneRunButton = qt.QPushButton("Run")
-        self.sceneRunButton.setMinimumHeight(34)
-        self.sceneRunButton.setStyleSheet(
-            "QPushButton { background:#1f6feb; color:white; border:1px solid #175cc5; "
-            "border-radius:4px; padding:7px 10px; font-weight:600; } "
-            "QPushButton:hover { background:#1a5fd0; } "
-            "QPushButton:pressed { background:#154ea8; } "
-            "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
-        )
+        self._style_primary_run_button(self.sceneRunButton)
         self.sceneDiscoverButton.clicked.connect(self._on_discover_scene_timepoints)
         self.sceneAddTimepointButton.clicked.connect(self._add_scene_timepoint)
         self.sceneRemoveTimepointButton.clicked.connect(self._remove_scene_timepoint)

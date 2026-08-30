@@ -28,8 +28,11 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Discover Loaded Timepoints" in source
     assert "Append to table" in source
     assert "Initial transform" in source
+    assert "def _style_primary_run_button" in source
     assert 'self.sceneRunButton = qt.QPushButton("Run")' in source
-    assert "self.sceneRunButton.setMinimumHeight(34)" in source
+    assert "self._style_primary_run_button(self.runTimelapseBtn)" in source
+    assert "self._style_primary_run_button(self.sceneRunButton)" in source
+    assert "button.setMinimumHeight(34)" in source
     assert "QPushButton { background:#1f6feb; color:white;" in source
     assert "actions.addWidget(self.sceneRunButton)" not in source
     assert "layout.addWidget(self.sceneRunButton)" in source
