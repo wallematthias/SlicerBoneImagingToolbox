@@ -45,6 +45,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self.layout.addWidget(self.logText)" in source
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
     assert "except Exception as exc" in source
+    assert "self.sceneTimepointTable.setMaximumHeight(260)" in source
+    assert "ScrollBarAlwaysOn" in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source

@@ -1378,7 +1378,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ["Session", "Image", "Periosteal/full mask", "Trabecular mask", "Cortical mask", "Bone segmentation"]
         )
         self.sceneTimepointTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
-        self.sceneTimepointTable.setMinimumHeight(180)
+        self.sceneTimepointTable.setMinimumHeight(160)
+        self.sceneTimepointTable.setMaximumHeight(260)
+        self.sceneTimepointTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAlwaysOn)
         layout.addWidget(self.sceneTimepointTable)
 
         actions = qt.QHBoxLayout()
