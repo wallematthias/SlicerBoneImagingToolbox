@@ -180,6 +180,26 @@ def test_timelapsed_batch_series_summary_is_parented_and_collapsed() -> None:
     assert "importlib.reload(_timelapsed_scene)" in source
 
 
+def test_timelapsed_batch_current_comparison_uses_table() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert 'metricsBox = qt.QGroupBox("Current Comparison")' in source
+    assert "self.currentComparisonTable = qt.QTableWidget()" in source
+    assert '["Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"]' in source
+    assert "metricsLayout.addWidget(self.currentComparisonTable)" in source
+    assert "def _update_current_comparison_table" in source
+    metric_rows_body = source.split("    def _set_pair_metric_rows", 1)[1].split("\n    def ", 1)[0]
+    assert "self._update_current_comparison_table(normalized_rows)" in metric_rows_body
+    assert "first_row = normalized_rows[0]" not in metric_rows_body
+    assert "metricsLayout.addWidget(self.analysisFormationFractionLabel)" not in source
+
+
 def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]

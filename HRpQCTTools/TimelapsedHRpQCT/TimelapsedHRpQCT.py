@@ -1017,24 +1017,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.analysisMarrowMaskErosion, 220)
         self.analysisStatusLabel = qt.QLabel("Ready")
         self.analysisStatusLabel.styleSheet = "color: #666666;"
-        self.analysisPairMetricsMaskLabel = qt.QLabel("Mask: N/A")
-        self.analysisFormationFractionLabel = qt.QLabel("Formation volume fraction (FV/BV): N/A")
-        self.analysisResorptionFractionLabel = qt.QLabel("Resorption volume fraction (RV/BV): N/A")
-        self.analysisNetChangeFractionLabel = qt.QLabel("Net change volume fraction (NV/BV): N/A")
-        self.analysisActiveFractionLabel = qt.QLabel("Active volume fraction (AV/BV): N/A")
-        for metric_label in (
-            self.analysisPairMetricsMaskLabel,
-            self.analysisFormationFractionLabel,
-            self.analysisResorptionFractionLabel,
-            self.analysisNetChangeFractionLabel,
-            self.analysisActiveFractionLabel,
-        ):
-            metric_label.wordWrap = True
-        self.analysisPairMetricsMaskLabel.toolTip = "Compartment/mask used for the displayed pair metrics."
-        self.analysisFormationFractionLabel.toolTip = "Formation volume fraction for the currently loaded/previewed comparison."
-        self.analysisResorptionFractionLabel.toolTip = "Resorption volume fraction for the currently loaded/previewed comparison."
-        self.analysisNetChangeFractionLabel.toolTip = "Net change volume fraction: FV/BV minus RV/BV."
-        self.analysisActiveFractionLabel.toolTip = "Active volume fraction: FV/BV plus RV/BV."
         self.applyAnalysisSettingsBtn = qt.QPushButton("Apply settings")
         self.applyAnalysisSettingsBtn.toolTip = (
             "Apply the current remodelling analysis options to the loaded comparison."
@@ -1072,15 +1054,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         metricsLayout = qt.QVBoxLayout(metricsBox)
         metricsLayout.setContentsMargins(8, 10, 8, 8)
         metricsLayout.setSpacing(4)
-        self.analysisFormationFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #c95b00;")
-        self.analysisResorptionFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #b02c83;")
-        self.analysisNetChangeFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #4c5a64;")
-        self.analysisActiveFractionLabel.setStyleSheet("font-size: 13px; font-weight: 600; color: #336b5f;")
-        metricsLayout.addWidget(self.analysisPairMetricsMaskLabel)
-        metricsLayout.addWidget(self.analysisFormationFractionLabel)
-        metricsLayout.addWidget(self.analysisResorptionFractionLabel)
-        metricsLayout.addWidget(self.analysisNetChangeFractionLabel)
-        metricsLayout.addWidget(self.analysisActiveFractionLabel)
+        self.currentComparisonTable = qt.QTableWidget()
+        self.currentComparisonTable.setColumnCount(5)
+        self.currentComparisonTable.setHorizontalHeaderLabels(["Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"])
+        self.currentComparisonTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
+        self.currentComparisonTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
+        self.currentComparisonTable.verticalHeader().setVisible(False)
+        self.currentComparisonTable.horizontalHeader().setStretchLastSection(True)
+        self.currentComparisonTable.setAlternatingRowColors(True)
+        self.currentComparisonTable.setMinimumHeight(82)
+        self.currentComparisonTable.setMaximumHeight(120)
+        self.currentComparisonTable.toolTip = (
+            "Formation, resorption, activity, and net-change fractions for the currently loaded comparison."
+        )
+        metricsLayout.addWidget(self.currentComparisonTable)
+        self._update_current_comparison_table([])
         analysisActionsRow = qt.QWidget()
         analysisActionsLayout = qt.QHBoxLayout(analysisActionsRow)
         analysisActionsLayout.setContentsMargins(0, 0, 0, 0)
@@ -4316,11 +4304,44 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "mineralisation": 2,
         }
 
+    def _current_comparison_table_row(self, metric_row):
+        formation = metric_row.get("formation_frac_bv0")
+        resorption = metric_row.get("resorption_frac_bv0")
+        try:
+            activity = float(formation) + float(resorption)
+        except Exception:
+            activity = ""
+        try:
+            net = float(formation) - float(resorption)
+        except Exception:
+            net = ""
+        return [
+            str(metric_row.get("compartment", "full")),
+            self._format_scene_result_fraction(formation),
+            self._format_scene_result_fraction(resorption),
+            self._format_scene_result_fraction(activity),
+            self._format_scene_result_fraction(net),
+        ]
+
+    def _update_current_comparison_table(self, rows=None):
+        if not hasattr(self, "currentComparisonTable"):
+            return
+        normalized_rows = list(rows or [])
+        display_rows = [self._current_comparison_table_row(row) for row in normalized_rows]
+        if not display_rows:
+            display_rows = [["N/A", "N/A", "N/A", "N/A", "N/A"]]
+        self.currentComparisonTable.setRowCount(len(display_rows))
+        for row_idx, values in enumerate(display_rows):
+            for col_idx, value in enumerate(values):
+                item = qt.QTableWidgetItem(str(value))
+                self.currentComparisonTable.setItem(row_idx, col_idx, item)
+        try:
+            self.currentComparisonTable.resizeColumnsToContents()
+            self.currentComparisonTable.horizontalHeader().setStretchLastSection(True)
+        except Exception:
+            pass
+
     def _set_pair_metric_labels(self, formation_frac=None, resorption_frac=None, compartment="full"):
-        def _fmt(value):
-            if value is None or not np.isfinite(value):
-                return "N/A"
-            return f"{100.0 * float(value):.2f}%"
         rows = []
         if formation_frac is not None or resorption_frac is not None:
             rows.append(
@@ -4331,39 +4352,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 }
             )
         self._latest_pair_metric_rows = list(rows)
-        comp_text = str(compartment) if rows else "N/A"
-        if formation_frac is not None and resorption_frac is not None:
-            net_change_frac = float(formation_frac) - float(resorption_frac)
-            active_frac = float(formation_frac) + float(resorption_frac)
-        else:
-            net_change_frac = None
-            active_frac = None
-        self.analysisPairMetricsMaskLabel.text = f"Mask: {comp_text}"
-        self.analysisFormationFractionLabel.text = (
-            f"Formation volume fraction (FV/BV): {_fmt(formation_frac)}"
-        )
-        self.analysisResorptionFractionLabel.text = (
-            f"Resorption volume fraction (RV/BV): {_fmt(resorption_frac)}"
-        )
-        self.analysisNetChangeFractionLabel.text = (
-            f"Net change volume fraction (NV/BV): {_fmt(net_change_frac)}"
-        )
-        self.analysisActiveFractionLabel.text = (
-            f"Active volume fraction (AV/BV): {_fmt(active_frac)}"
-        )
+        self._update_current_comparison_table(rows)
 
     def _set_pair_metric_rows(self, rows=None):
         normalized_rows = list(rows or [])
         self._latest_pair_metric_rows = normalized_rows
-        if not normalized_rows:
-            self._set_pair_metric_labels(None, None)
-            return
-        first_row = normalized_rows[0]
-        self._set_pair_metric_labels(
-            formation_frac=first_row.get("formation_frac_bv0"),
-            resorption_frac=first_row.get("resorption_frac_bv0"),
-            compartment=str(first_row.get("compartment", "full")),
-        )
+        self._update_current_comparison_table(normalized_rows)
 
     def _scene_result_row_from_metric(self, ctx, metric_row):
         formation = metric_row.get("formation_frac_bv0")
