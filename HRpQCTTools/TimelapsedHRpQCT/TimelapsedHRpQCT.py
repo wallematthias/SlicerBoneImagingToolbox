@@ -1442,10 +1442,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addWidget(self.sceneRunButton)
         self.sceneStatusBox = qt.QGroupBox("Pipeline Status")
         sceneStatusBox = self.sceneStatusBox
-        sceneStatusForm = qt.QFormLayout(sceneStatusBox)
-        sceneStatusForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
-        sceneStatusForm.setVerticalSpacing(6)
-        self.sceneStageLabels = {}
+        sceneStatusLayout = qt.QVBoxLayout(sceneStatusBox)
+        sceneStatusLayout.setContentsMargins(6, 8, 6, 6)
+        self.sceneStageTable = qt.QTableWidget()
+        self.sceneStageTable.setColumnCount(2)
+        self.sceneStageTable.setRowCount(5)
+        self.sceneStageTable.setHorizontalHeaderLabels(["Stage", "Status"])
+        self.sceneStageTable.horizontalHeader().setVisible(False)
+        self.sceneStageTable.verticalHeader().setVisible(False)
+        self.sceneStageTable.verticalHeader().setDefaultSectionSize(24)
+        self.sceneStageTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
+        self.sceneStageTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
+        self.sceneStageTable.setShowGrid(False)
+        self.sceneStageTable.setMinimumHeight(138)
+        self.sceneStageTable.setMaximumHeight(138)
+        self.sceneStageItems = {}
         for key, title in [
             ("dataset", "Dataset"),
             ("parse", "Parse"),
@@ -1453,11 +1464,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ("registration", "Registration"),
             ("analysis", "Analysis"),
         ]:
-            status_label = qt.QLabel("<span style='color:#888888; font-weight:700'>●</span> Pending")
-            status_label.wordWrap = False
-            status_label.toolTip = f"Scene pipeline status for {title.lower()}."
-            self.sceneStageLabels[key] = status_label
-            sceneStatusForm.addRow(_label(title, f"Scene pipeline status for the {title.lower()} stage."), status_label)
+            row = len(self.sceneStageItems)
+            stage_item = qt.QTableWidgetItem(title)
+            status_item = qt.QTableWidgetItem("● Pending")
+            stage_item.setFlags(stage_item.flags() & ~qt.Qt.ItemIsEditable)
+            status_item.setFlags(status_item.flags() & ~qt.Qt.ItemIsEditable)
+            self.sceneStageTable.setItem(row, 0, stage_item)
+            self.sceneStageTable.setItem(row, 1, status_item)
+            self.sceneStageItems[key] = status_item
+        self.sceneStageTable.resizeColumnsToContents()
+        self.sceneStageTable.horizontalHeader().setStretchLastSection(True)
+        sceneStatusLayout.addWidget(self.sceneStageTable)
         layout.addWidget(sceneStatusBox)
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
@@ -1514,7 +1531,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             current_index = current_index()
         if int(current_index) == 0 and hasattr(self, "sceneTimepointTable"):
             height = int(getattr(self, "_scene_timepoint_table_height", 100))
-            self.timelapsedModeTabs.setMaximumHeight(max(380, min(660, height + 290)))
+            self.timelapsedModeTabs.setMaximumHeight(max(440, min(760, height + 350)))
         else:
             self.timelapsedModeTabs.setMaximumHeight(520)
         try:
@@ -1955,10 +1972,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         }
         dot, color, label = style.get(status, style["pending"])
         self.stageLabels[stage_key].setText(f"<span style='color:{color}; font-weight:700'>{dot}</span> {label}")
-        if hasattr(self, "sceneStageLabels") and stage_key in self.sceneStageLabels:
-            self.sceneStageLabels[stage_key].setText(
-                f"<span style='color:{color}; font-weight:700'>{dot}</span> {label}"
-            )
+        if hasattr(self, "sceneStageItems") and stage_key in self.sceneStageItems:
+            self.sceneStageItems[stage_key].setText(f"{dot} {label}")
+            try:
+                self.sceneStageItems[stage_key].setForeground(qt.QBrush(qt.QColor(color)))
+            except Exception:
+                pass
         self._update_progress_ui()
 
     def _update_progress_ui(self):

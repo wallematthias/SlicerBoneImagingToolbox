@@ -36,16 +36,14 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "QPushButton { background:#1f6feb; color:white;" in source
     assert "actions.addWidget(self.sceneRunButton)" not in source
     assert "layout.addWidget(self.sceneRunButton)" in source
-    assert "self.sceneStageLabels = {}" in source
-    assert 'self.sceneStatusBox = qt.QGroupBox("Pipeline Status")' in source
-    assert "sceneStatusBox = self.sceneStatusBox" in source
-    assert "sceneStatusForm = qt.QFormLayout(sceneStatusBox)" in source
-    assert "sceneStatusForm.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)" in source
-    assert "sceneStatusForm.setVerticalSpacing(6)" in source
-    assert "sceneStatusForm.addRow(_label(title, f\"Scene pipeline status for the {title.lower()} stage.\"), status_label)" in source
-    assert "self.sceneStageLabels[key] = status_label" in source
-    assert "self.sceneStageLabels[stage_key].setText" in source
-    assert "f\"<span style='color:{color}; font-weight:700'>{dot}</span> {label}\"" in source
+    assert "self.sceneStageItems = {}" in source
+    assert "self.sceneStageTable = qt.QTableWidget()" in source
+    assert "self.sceneStageTable.setRowCount(5)" in source
+    assert "self.sceneStageTable.verticalHeader().setDefaultSectionSize(24)" in source
+    assert "self.sceneStageTable.setMinimumHeight(138)" in source
+    assert "self.sceneStageItems[key] = status_item" in source
+    assert "self.sceneStageItems[stage_key].setText" in source
+    assert "self.sceneStageLabels" not in source
     assert 'qt.QGroupBox("Scene Results")' not in source
     assert "self.sceneResultsTable" not in source
     assert "_load_scene_results_table" in source
@@ -132,7 +130,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)" in source
     assert "viewport().update()" in source
     assert "layout().activate()" in source
-    assert "setMaximumHeight(max(380, min(660, height + 290)))" in source
+    assert "setMaximumHeight(max(440, min(760, height + 350)))" in source
     assert "setMaximumHeight(max(520" not in source
     assert "scene_results_table_path" in source
     assert "layout.setContentsMargins(0, 0, 0, 0)" in source
