@@ -64,6 +64,8 @@ def discover_timelapsed_scene_timepoints(
     scalar_candidates: list[TimelapsedSceneNodeCandidate] = []
     mask_count = 0
     for candidate in candidates:
+        if _is_generated_timelapsed_display_artifact(candidate):
+            continue
         role = _infer_scene_role(candidate)
         if role == "image":
             scalar_candidates.append(candidate)
@@ -215,6 +217,20 @@ def _clean_token(value: str, prefix: str) -> str:
 def _safe_token(value: str) -> str:
     token = re.sub(r"[^0-9A-Za-z_.-]+", "-", str(value).strip())
     return token.strip("-")
+
+
+def _is_generated_timelapsed_display_artifact(candidate: TimelapsedSceneNodeCandidate) -> bool:
+    attributes = candidate.attributes or {}
+    if attributes.get("TimelapsedHRpQCT.RemodellingFull") == "1":
+        return True
+    if attributes.get("TimelapsedHRpQCT.SliceReference") == "1":
+        return True
+    name = str(candidate.name or "").lower()
+    return "remodelling" in name and (
+        name.endswith("_full")
+        or "slice_reference" in name
+        or "segmentation" in name
+    )
 
 
 def _infer_scene_role(candidate: TimelapsedSceneNodeCandidate) -> str:

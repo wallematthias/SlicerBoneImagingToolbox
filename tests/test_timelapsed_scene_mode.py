@@ -385,3 +385,29 @@ def test_timelapsed_scene_discovery_reports_summary_counts() -> None:
     assert discovery.image_count == 2
     assert discovery.mask_count == 1
     assert discovery.matched_mask_count == 1
+
+
+def test_timelapsed_scene_discovery_ignores_loaded_timelapsed_outputs() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate("img1", "sub-SAMPLE001_ses-1_site-tibia_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("img2", "sub-SAMPLE001_ses-2_site-tibia_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate(
+                "remodel",
+                "sub-SAMPLE001_site-tibia_comp-full_t0-1_t1-2_thr-225_cluster-12_remodelling_segmentation_full",
+                "vtkMRMLSegmentationNode",
+                {"TimelapsedHRpQCT.RemodellingFull": "1"},
+            ),
+            TimelapsedSceneNodeCandidate(
+                "reference",
+                "sub-SAMPLE001_site-tibia_comp-full_t0-1_t1-2_thr-225_cluster-12_remodelling_segmentation_slice_reference",
+                "vtkMRMLScalarVolumeNode",
+                {"TimelapsedHRpQCT.SliceReference": "1"},
+            ),
+        ]
+    )
+
+    assert discovery.image_count == 2
+    assert discovery.mask_count == 0
+    assert discovery.matched_mask_count == 0
+    assert [timepoint.image_node_id for timepoint in discovery.timepoints] == ["img1", "img2"]
