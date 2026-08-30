@@ -2157,6 +2157,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._patient_keys = []
         self._remodelling_comparison_items = []
         self._interactive_preview_cache = {}
+        self._last_scene_results_plan = None
         self._latest_series_summary = None
         self._latest_study_summary_rows = []
         self._series_summary_pair_checks = {}
@@ -4361,6 +4362,26 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             compartment=str(first_row.get("compartment", "full")),
         )
 
+    def _scene_result_row_from_metric(self, ctx, metric_row):
+        formation = metric_row.get("formation_frac_bv0")
+        resorption = metric_row.get("resorption_frac_bv0")
+        try:
+            activity = float(formation) + float(resorption)
+        except Exception:
+            activity = ""
+        try:
+            net = float(formation) - float(resorption)
+        except Exception:
+            net = ""
+        return [
+            f"{str(ctx.get('t0', '')).strip()} -> {str(ctx.get('t1', '')).strip()}",
+            str(metric_row.get("compartment", "full")),
+            self._format_scene_result_fraction(formation),
+            self._format_scene_result_fraction(resorption),
+            self._format_scene_result_fraction(activity),
+            self._format_scene_result_fraction(net),
+        ]
+
     def _set_series_summary_labels(self, summary=None):
         self._latest_series_summary = summary
         if not summary:
@@ -5045,6 +5066,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             resorption_frac=preview.resorption_frac_bv0,
             compartment=str((preview_inputs.get("context") or {}).get("compartment", "full")),
         )
+        self._refresh_scene_results_table_from_loaded_remodelling()
         self._set_interactive_preview_busy(False, "Ready")
         self._show(
             "[preview] remodelling updated "
@@ -6283,6 +6305,33 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return []
         return rows
 
+    def _scene_result_rows_from_loaded_remodelling(self):
+        if not hasattr(self, "remodellingFullSegCombo"):
+            return []
+        self._refresh_remodelling_full_selector()
+        source_paths = []
+        for index in range(int(self.remodellingFullSegCombo.count)):
+            node_id = self.remodellingFullSegCombo.itemData(index)
+            node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id is not None else None
+            if node is None:
+                continue
+            source_path = str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
+            if source_path and source_path not in source_paths:
+                source_paths.append(source_path)
+
+        rows = []
+        for source_path in source_paths:
+            try:
+                preview_inputs = self._get_interactive_preview_inputs(source_path)
+                ctx = preview_inputs.get("context") or {}
+                if str(ctx.get("compartment", "")) != "full":
+                    continue
+                for metric_row in self._compute_pair_metric_rows(preview_inputs):
+                    rows.append(self._scene_result_row_from_metric(ctx, metric_row))
+            except Exception as exc:
+                self._show(f"[scene] could not refresh preview table rows for {Path(source_path).name}: {exc}")
+        return rows
+
     def _load_scene_results_table_node(self, rows, plan):
         name = f"TimelapsedHRpQCT Scene Results {plan.run_id}"
         table_node = slicer.mrmlScene.GetFirstNodeByName(name)
@@ -6299,7 +6348,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         table_node.SetUseColumnTitleAsColumnHeader(True)
         folder_item_id = self._ensure_load_folder(*self._scene_processed_subject_site(plan))
         self._place_node_in_folder(table_node, folder_item_id)
-        self._show_scene_results_table_node(table_node)
         return table_node
 
     def _show_scene_results_table_node(self, table_node):
@@ -6312,14 +6360,26 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._show(f"[scene] could not show scene results table in Slicer table view: {exc}")
 
-    def _load_scene_results_table(self, plan):
-        rows = self._scene_result_rows(plan)
+    def _load_scene_results_table(self, plan, *, show=True):
+        rows = self._scene_result_rows_from_loaded_remodelling()
+        rows_source = "current scene display"
+        if not rows:
+            rows = self._scene_result_rows(plan)
+            rows_source = "saved CSV"
         if not rows:
             return 0
 
-        self._load_scene_results_table_node(rows, plan)
-        self._show(f"[scene] Loaded scene results table with {len(rows)} row(s).")
+        table_node = self._load_scene_results_table_node(rows, plan)
+        if show:
+            self._show_scene_results_table_node(table_node)
+        self._show(f"[scene] Loaded scene results table with {len(rows)} row(s) from {rows_source}.")
         return len(rows)
+
+    def _refresh_scene_results_table_from_loaded_remodelling(self):
+        plan = getattr(self, "_last_scene_results_plan", None)
+        if plan is None:
+            return 0
+        return self._load_scene_results_table(plan, show=False)
 
     def _select_first_scene_remodelling_output(self):
         if not hasattr(self, "remodellingFullSegCombo"):
@@ -6335,6 +6395,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         self._clear_loaded_review_nodes()
+        self._last_scene_results_plan = plan
         processed_subject_id, processed_site = self._scene_processed_subject_site(plan)
         folder_item_id = self._ensure_load_folder(processed_subject_id, processed_site)
         loaded_masks = self._load_scene_run_masks(plan)

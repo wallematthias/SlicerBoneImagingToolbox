@@ -187,6 +187,23 @@ def test_scene_remodelling_loadback_uses_interactive_display_mask() -> None:
     assert "_refresh_pair_metrics_for_current_selection()" in source
 
 
+def test_scene_results_table_uses_loaded_preview_metrics() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "def _scene_result_rows_from_loaded_remodelling" in source
+    load_table = source.split("    def _load_scene_results_table(self", 1)[1].split("\n    def ", 1)[0]
+    assert "rows = self._scene_result_rows_from_loaded_remodelling()" in load_table
+    assert "rows_source = \"current scene display\"" in load_table
+    apply_update = source.split("    def _on_apply_interactive_remodelling", 1)[1].split("\n    def ", 1)[0]
+    assert "self._refresh_scene_results_table_from_loaded_remodelling()" in apply_update
+
+
 def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
