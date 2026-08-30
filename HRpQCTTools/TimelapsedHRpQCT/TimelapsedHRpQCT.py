@@ -1335,6 +1335,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.logText = qt.QPlainTextEdit()
         self.logText.readOnly = True
+        self.logText.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         self.logText.setMinimumHeight(200)
         self.logText.setMaximumHeight(260)
 
@@ -1350,6 +1351,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(analysisSectionBox)
         self.layout.addWidget(settingsBox)
         self.layout.addWidget(self.logText)
+        self.layout.addStretch(1)
         self._update_dependency_ui()
         self._set_stage_status("dataset", "pending")
         self._set_stage_status("parse", "pending")

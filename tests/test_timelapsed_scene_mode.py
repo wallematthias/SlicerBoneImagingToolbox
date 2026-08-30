@@ -95,6 +95,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self.layout.addWidget(settingsBox)" in source
     assert "self.layout.addWidget(statusBox)" in source
     assert "self.layout.addWidget(self.logText)" in source
+    assert "self.logText.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
+    assert "self.layout.addStretch(1)" in source
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
     assert 'self._set_stage_status("dataset", "done")' in source
     assert 'self._set_stage_status("parse", "done")' in source
