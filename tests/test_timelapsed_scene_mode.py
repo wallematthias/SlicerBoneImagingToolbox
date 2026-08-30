@@ -31,6 +31,13 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Scene Results" in source
     assert "self.sceneResultsTable" in source
     assert "_load_scene_results_table" in source
+    assert "_load_scene_results_table_node" in source
+    assert "_show_scene_results_table_node" in source
+    assert "vtkMRMLTableNode" in source
+    assert "SetActiveTableID" in source
+    assert "PropagateTableSelection" in source
+    assert "GetLayoutWithTable" in source
+    assert "_clear_loaded_review_nodes()" in source
     assert "_scene_processed_subject_site" in source
     assert "candidate.parent.name == \"derivatives\"" in source
     assert "return candidate.parent.parent" in source
@@ -50,6 +57,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "_load_scene_mask_labelmap" in source
     assert "iter_imported_stack_records" in source
     assert "iter_fused_session_records" in source
+    assert "Only native/imported masks are loaded back for scene rediscovery." in source
     assert "_adopt_scene_run_as_current_dataset" in source
     assert "_set_path_without_immediate_reset" in source
     assert "current dataset set to scene run" in source
@@ -116,6 +124,7 @@ def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     source = module_path.read_text(encoding="utf-8")
 
     assert 'setHorizontalHeaderLabels(["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"])' in source
+    assert "TimelapsedHRpQCT Scene Results" in source
     assert "formation_frac_bv0" in source
     assert "resorption_frac_bv0" in source
     assert "AV_BV" in source

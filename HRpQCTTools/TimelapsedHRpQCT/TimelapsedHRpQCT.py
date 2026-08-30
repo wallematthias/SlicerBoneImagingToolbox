@@ -6091,14 +6091,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         seen_paths = set()
         processed_subject_id, processed_site = self._scene_processed_subject_site(plan)
         try:
-            from timelapsedhrpqct.dataset.artifacts import (
-                iter_fused_session_records,
-                iter_imported_stack_records,
-            )
+            from timelapsedhrpqct.dataset.artifacts import iter_imported_stack_records
 
-            records = list(iter_imported_stack_records(dataset_root)) + list(
-                iter_fused_session_records(dataset_root)
-            )
+            # Only native/imported masks are loaded back for scene rediscovery.
+            # Fused masks live in transformed space and must not be offered as
+            # native scene-run inputs for the original loaded volumes.
+            records = list(iter_imported_stack_records(dataset_root))
         except Exception as exc:
             self._show(f"[scene] could not inspect scene-run mask artifacts: {exc}")
             return 0
@@ -6146,10 +6144,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return "N/A"
         return f"{number:.5g}"
 
-    def _load_scene_results_table(self, plan):
-        if not hasattr(self, "sceneResultsTable"):
-            return 0
-        self.sceneResultsTable.setRowCount(0)
+    def _scene_result_rows(self, plan):
         try:
             from timelapsedhrpqct.dataset.derivative_paths import pairwise_remodelling_csv_path
 
@@ -6162,10 +6157,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._show(f"[scene] scene_results_table_path={pairwise_path}")
         except Exception as exc:
             self._show(f"[scene] could not resolve scene results table path: {exc}")
-            return 0
+            return []
         if not pairwise_path.exists():
             self._show(f"[scene] no pairwise results table found: {pairwise_path}")
-            return 0
+            return []
 
         rows = []
         try:
@@ -6200,14 +6195,53 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     )
         except Exception as exc:
             self._show(f"[scene] could not read scene results table: {exc}")
+            return []
+        return rows
+
+    def _load_scene_results_table_node(self, rows, plan):
+        name = f"TimelapsedHRpQCT Scene Results {plan.run_id}"
+        table_node = slicer.mrmlScene.GetFirstNodeByName(name)
+        if table_node is None:
+            table_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", name)
+        table_node.RemoveAllColumns()
+        headers = ["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"]
+        for col_idx, header in enumerate(headers):
+            column = vtk.vtkStringArray()
+            column.SetName(header)
+            for row in rows:
+                column.InsertNextValue(str(row[col_idx]))
+            table_node.AddColumn(column)
+        table_node.SetUseColumnTitleAsColumnHeader(True)
+        folder_item_id = self._ensure_load_folder(*self._scene_processed_subject_site(plan))
+        self._place_node_in_folder(table_node, folder_item_id)
+        self._show_scene_results_table_node(table_node)
+        return table_node
+
+    def _show_scene_results_table_node(self, table_node):
+        try:
+            layout_manager = slicer.app.layoutManager()
+            layout_with_table = slicer.modules.tables.logic().GetLayoutWithTable(layout_manager.layout)
+            layout_manager.setLayout(layout_with_table)
+            slicer.app.applicationLogic().GetSelectionNode().SetActiveTableID(table_node.GetID())
+            slicer.app.applicationLogic().PropagateTableSelection()
+        except Exception as exc:
+            self._show(f"[scene] could not show scene results table in Slicer table view: {exc}")
+
+    def _load_scene_results_table(self, plan):
+        if hasattr(self, "sceneResultsTable"):
+            self.sceneResultsTable.setRowCount(0)
+        rows = self._scene_result_rows(plan)
+        if not rows:
             return 0
 
-        self.sceneResultsTable.setRowCount(len(rows))
-        for row_idx, values in enumerate(rows):
-            for col_idx, value in enumerate(values):
-                item = qt.QTableWidgetItem(str(value))
-                self.sceneResultsTable.setItem(row_idx, col_idx, item)
-        self.sceneResultsTable.resizeColumnsToContents()
+        if hasattr(self, "sceneResultsTable"):
+            self.sceneResultsTable.setRowCount(len(rows))
+            for row_idx, values in enumerate(rows):
+                for col_idx, value in enumerate(values):
+                    item = qt.QTableWidgetItem(str(value))
+                    self.sceneResultsTable.setItem(row_idx, col_idx, item)
+            self.sceneResultsTable.resizeColumnsToContents()
+        self._load_scene_results_table_node(rows, plan)
         self._show(f"[scene] Loaded scene results table with {len(rows)} row(s).")
         return len(rows)
 
@@ -6224,6 +6258,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._show(f"[scene] output folder not found for load-back: {output_root}")
             return
 
+        self._clear_loaded_review_nodes()
         processed_subject_id, processed_site = self._scene_processed_subject_site(plan)
         folder_item_id = self._ensure_load_folder(processed_subject_id, processed_site)
         loaded_masks = self._load_scene_run_masks(plan)
