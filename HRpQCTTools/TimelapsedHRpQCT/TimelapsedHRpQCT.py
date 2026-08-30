@@ -1433,6 +1433,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
 
+        sceneResultsBox = qt.QGroupBox("Scene Results")
+        sceneResultsLayout = qt.QVBoxLayout(sceneResultsBox)
+        sceneResultsLayout.setContentsMargins(6, 6, 6, 6)
+        sceneResultsLayout.setSpacing(4)
+        self.sceneResultsTable = qt.QTableWidget()
+        self.sceneResultsTable.setColumnCount(6)
+        self.sceneResultsTable.setHorizontalHeaderLabels(["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"])
+        self.sceneResultsTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
+        self.sceneResultsTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
+        self.sceneResultsTable.verticalHeader().setVisible(False)
+        self.sceneResultsTable.horizontalHeader().setStretchLastSection(True)
+        self.sceneResultsTable.setMinimumHeight(90)
+        self.sceneResultsTable.setMaximumHeight(160)
+        self.sceneResultsTable.toolTip = "Saved pairwise formation, resorption, activity, and net-change fractions for the scene run."
+        sceneResultsLayout.addWidget(self.sceneResultsTable)
+        layout.addWidget(sceneResultsBox)
+
     def _resize_scene_timepoint_table(self):
         visible_rows = max(2, min(int(self.sceneTimepointTable.rowCount), 4))
         try:
@@ -6001,6 +6018,78 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     self._show(f"[scene] could not load mask {path.name}: {exc}")
         return loaded_masks
 
+    def _format_scene_result_fraction(self, value):
+        try:
+            number = float(value)
+        except Exception:
+            return "N/A"
+        if not np.isfinite(number):
+            return "N/A"
+        return f"{number:.5g}"
+
+    def _load_scene_results_table(self, plan):
+        if not hasattr(self, "sceneResultsTable"):
+            return 0
+        self.sceneResultsTable.setRowCount(0)
+        try:
+            from timelapsedhrpqct.dataset.derivative_paths import pairwise_remodelling_csv_path
+
+            pairwise_path = pairwise_remodelling_csv_path(
+                Path(plan.output_root),
+                plan.subject_id,
+                plan.site,
+            )
+        except Exception as exc:
+            self._show(f"[scene] could not resolve scene results table path: {exc}")
+            return 0
+        if not pairwise_path.exists():
+            self._show(f"[scene] no pairwise results table found: {pairwise_path}")
+            return 0
+
+        rows = []
+        try:
+            with pairwise_path.open("r", encoding="utf-8", newline="") as f:
+                for row in csv.DictReader(f):
+                    t0 = str(row.get("t0") or "").strip()
+                    t1 = str(row.get("t1") or "").strip()
+                    compartment = str(row.get("compartment") or "").strip()
+                    formation = row.get("formation_frac_bv0")
+                    resorption = row.get("resorption_frac_bv0")
+                    activity = row.get("AV_BV")
+                    net = row.get("NV_BV")
+                    if activity in (None, ""):
+                        try:
+                            activity = float(formation) + float(resorption)
+                        except Exception:
+                            activity = ""
+                    if net in (None, ""):
+                        try:
+                            net = float(formation) - float(resorption)
+                        except Exception:
+                            net = ""
+                    rows.append(
+                        [
+                            f"{t0} -> {t1}",
+                            compartment,
+                            self._format_scene_result_fraction(formation),
+                            self._format_scene_result_fraction(resorption),
+                            self._format_scene_result_fraction(activity),
+                            self._format_scene_result_fraction(net),
+                        ]
+                    )
+        except Exception as exc:
+            self._show(f"[scene] could not read scene results table: {exc}")
+            return 0
+
+        self.sceneResultsTable.setRowCount(len(rows))
+        for row_idx, values in enumerate(rows):
+            for col_idx, value in enumerate(values):
+                item = qt.QTableWidgetItem(str(value))
+                self.sceneResultsTable.setItem(row_idx, col_idx, item)
+        self.sceneResultsTable.resizeColumnsToContents()
+        self._show(f"[scene] Loaded scene results table with {len(rows)} row(s).")
+        return len(rows)
+
     def _load_scene_run_outputs(self, plan):
         output_root = Path(plan.output_root)
         if not output_root.exists():
@@ -6011,6 +6100,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         loaded_masks = self._load_scene_run_masks(plan)
         loaded_transforms = 0
         loaded_remodelling = 0
+        loaded_result_rows = 0
 
         transform_paths = sorted(
             path
@@ -6048,13 +6138,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception as exc:
                 self._show(f"[scene] could not load remodelling output {path.name}: {exc}")
 
+        loaded_result_rows = self._load_scene_results_table(plan)
         self.sceneStatusLabel.text = (
             f"Loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
-            f"and {loaded_remodelling} remodelling output(s) from the scene run."
+            f"{loaded_remodelling} remodelling output(s), and "
+            f"{loaded_result_rows} result row(s) from the scene run."
         )
         self._show(
             f"[scene] loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
-            f"{loaded_remodelling} remodelling output(s) from {output_root}"
+            f"{loaded_remodelling} remodelling output(s), "
+            f"{loaded_result_rows} result row(s) from {output_root}"
         )
         self._refresh_remodelling_full_selector()
 

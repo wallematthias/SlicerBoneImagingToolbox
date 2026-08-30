@@ -28,6 +28,14 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Discover Loaded Timepoints" in source
     assert "Append to table" in source
     assert "Initial transform" in source
+    assert "Scene Results" in source
+    assert "self.sceneResultsTable" in source
+    assert "_load_scene_results_table" in source
+    assert "FV/BV" in source
+    assert "RV/BV" in source
+    assert "AV/BV" in source
+    assert "NV/BV" in source
+    assert "pairwise_remodelling_csv_path" in source
     assert "vtkMRMLTransformNode" in source
     assert "transform_node_id" in source
     assert "_load_scene_run_outputs" in source
@@ -82,6 +90,23 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self._scene_generate_missing_masks()" in source
     assert 'importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")' in source
     assert "importlib.reload(_timelapsed_scene)" in source
+
+
+def test_timelapsed_scene_loads_pairwise_results_table() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert 'setHorizontalHeaderLabels(["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"])' in source
+    assert "formation_frac_bv0" in source
+    assert "resorption_frac_bv0" in source
+    assert "AV_BV" in source
+    assert "NV_BV" in source
+    assert "Loaded scene results table" in source
 
 
 def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
