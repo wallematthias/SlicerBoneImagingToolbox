@@ -76,6 +76,11 @@ if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PI
 
 from bone_imaging_derivatives import discover_manifests  # noqa: E402
 from bone_imaging_derivatives import resolve_workflow_plan  # noqa: E402
+from SlicerBoneImagingToolboxLib.timelapsed_scene import (  # noqa: E402
+    TimelapsedSceneTimepoint,
+    build_timelapsed_scene_plan,
+    timelapsed_scene_run_args,
+)
 
 _reporting = importlib.import_module("TimelapsedHRpQCTLib.Reporting")
 if not hasattr(_reporting, "COHORT_DEFAULT_EXPORT_FIELDS"):
@@ -536,6 +541,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             widget.toolTip = str(help_text)
             return widget
 
+        self.timelapsedModeTabs = qt.QTabWidget()
+        scenePage = qt.QWidget()
+        batchPage = qt.QWidget()
+        self.timelapsedModeTabs.addTab(scenePage, "Scene")
+        self.timelapsedModeTabs.addTab(batchPage, "Batch")
+        self.layout.addWidget(self.timelapsedModeTabs)
+        self._build_scene_ui(scenePage)
+        self.batchLayout = qt.QVBoxLayout(batchPage)
+
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
         depBox.collapsed = True
@@ -558,7 +572,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         row.addWidget(self.updateToolboxBtn)
         depForm.addRow(_label("Status", "Installed timelapsed-hrpqct package status inside Slicer Python."), self.pipelineStatusLabel)
         depForm.addRow(rowWidget)
-        self.layout.addWidget(depBox)
+        self.batchLayout.addWidget(depBox)
 
         form = qt.QFormLayout()
         form.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
@@ -1294,18 +1308,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText.setMinimumHeight(200)
         self.logText.setMaximumHeight(260)
 
-        self.layout.addLayout(form)
-        self.layout.addWidget(quickBox)
-        self.layout.addWidget(parseBox)
-        self.layout.addWidget(actionBox)
-        self.layout.addWidget(statusBox)
+        self.batchLayout.addLayout(form)
+        self.batchLayout.addWidget(quickBox)
+        self.batchLayout.addWidget(parseBox)
+        self.batchLayout.addWidget(actionBox)
+        self.batchLayout.addWidget(statusBox)
         self.seriesSummaryBox.visible = False
-        self.layout.addWidget(loadBox)
-        self.layout.addWidget(analysisSectionBox)
-        self.layout.addWidget(metricsBox)
-        self.layout.addWidget(settingsBox)
-        self.layout.addWidget(self.logText)
-        self.layout.addStretch(1)
+        self.batchLayout.addWidget(loadBox)
+        self.batchLayout.addWidget(analysisSectionBox)
+        self.batchLayout.addWidget(metricsBox)
+        self.batchLayout.addWidget(settingsBox)
+        self.batchLayout.addWidget(self.logText)
+        self.batchLayout.addStretch(1)
         self._update_dependency_ui()
         self._set_stage_status("dataset", "pending")
         self._set_stage_status("parse", "pending")
@@ -1313,6 +1327,143 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("registration", "pending")
         self._set_stage_status("analysis", "pending")
         self._update_progress_ui()
+
+    def _build_scene_ui(self, parent):
+        layout = qt.QVBoxLayout(parent)
+        form = qt.QFormLayout()
+        self.sceneSubjectEdit = qt.QLineEdit()
+        self.sceneSiteEdit = qt.QLineEdit()
+        self.sceneResultsRootPath = ctk.ctkPathLineEdit()
+        self.sceneResultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
+        self.sceneResultsRootPath.setCurrentPath("")
+        self.sceneSubjectEdit.toolTip = "Subject label used for this scene run."
+        self.sceneSiteEdit.toolTip = "Site label used for this scene run."
+        self.sceneResultsRootPath.toolTip = "Folder that will contain this scene run's derivatives."
+        form.addRow("Subject", self.sceneSubjectEdit)
+        form.addRow("Site", self.sceneSiteEdit)
+        form.addRow("Results folder", self.sceneResultsRootPath)
+        layout.addLayout(form)
+
+        self.sceneTimepointTable = qt.QTableWidget()
+        self.sceneTimepointTable.setColumnCount(6)
+        self.sceneTimepointTable.setHorizontalHeaderLabels(
+            ["Session", "Image", "Full mask", "Trab mask", "Cort mask", "Seg mask"]
+        )
+        self.sceneTimepointTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
+        self.sceneTimepointTable.setMinimumHeight(180)
+        layout.addWidget(self.sceneTimepointTable)
+
+        actions = qt.QHBoxLayout()
+        self.sceneAddTimepointButton = qt.QPushButton("Add timepoint")
+        self.sceneRemoveTimepointButton = qt.QPushButton("Remove timepoint")
+        self.sceneRunButton = qt.QPushButton("Run scene pipeline")
+        self.sceneAddTimepointButton.clicked.connect(self._add_scene_timepoint)
+        self.sceneRemoveTimepointButton.clicked.connect(self._remove_scene_timepoint)
+        self.sceneRunButton.clicked.connect(self._on_run_scene_pipeline)
+        actions.addWidget(self.sceneAddTimepointButton)
+        actions.addWidget(self.sceneRemoveTimepointButton)
+        actions.addStretch(1)
+        actions.addWidget(self.sceneRunButton)
+        layout.addLayout(actions)
+        layout.addStretch(1)
+        self._add_scene_timepoint()
+        self._add_scene_timepoint()
+
+    def _scene_node_selector(self, node_types):
+        selector = slicer.qMRMLNodeComboBox()
+        selector.nodeTypes = node_types
+        selector.noneEnabled = True
+        selector.addEnabled = False
+        selector.setMRMLScene(slicer.mrmlScene)
+        return selector
+
+    def _add_scene_timepoint(self):
+        row = self.sceneTimepointTable.rowCount
+        self.sceneTimepointTable.insertRow(row)
+        self.sceneTimepointTable.setItem(row, 0, qt.QTableWidgetItem(f"ses-{row + 1}"))
+        self.sceneTimepointTable.setCellWidget(
+            row, 1, self._scene_node_selector(["vtkMRMLScalarVolumeNode"])
+        )
+        for column in range(2, 6):
+            self.sceneTimepointTable.setCellWidget(
+                row,
+                column,
+                self._scene_node_selector(["vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"]),
+            )
+
+    def _remove_scene_timepoint(self):
+        row = self.sceneTimepointTable.currentRow()
+        if row < 0:
+            row = self.sceneTimepointTable.rowCount - 1
+        if row >= 0:
+            self.sceneTimepointTable.removeRow(row)
+
+    def _scene_selected_node_id(self, row, column):
+        selector = self.sceneTimepointTable.cellWidget(row, column)
+        node = selector.currentNode() if selector is not None else None
+        return node.GetID() if node is not None else ""
+
+    def _scene_timepoints(self):
+        timepoints = []
+        for row in range(self.sceneTimepointTable.rowCount):
+            session_item = self.sceneTimepointTable.item(row, 0)
+            timepoints.append(
+                TimelapsedSceneTimepoint(
+                    session_id=session_item.text() if session_item is not None else "",
+                    image_node_id=self._scene_selected_node_id(row, 1),
+                    full_mask_node_id=self._scene_selected_node_id(row, 2),
+                    trab_mask_node_id=self._scene_selected_node_id(row, 3),
+                    cort_mask_node_id=self._scene_selected_node_id(row, 4),
+                    seg_mask_node_id=self._scene_selected_node_id(row, 5),
+                )
+            )
+        return timepoints
+
+    def _export_scene_node(self, node_id, path):
+        node = slicer.mrmlScene.GetNodeByID(node_id)
+        if node is None:
+            raise ValueError(f"Selected scene node is no longer available: {node_id}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not slicer.util.saveNode(node, str(path)):
+            raise RuntimeError(f"Could not export {node.GetName()} to {path}")
+
+    def _on_run_scene_pipeline(self):
+        if not self._require_pipeline_installed():
+            return
+        results_root = self._path_text(self.sceneResultsRootPath)
+        if not results_root:
+            slicer.util.errorDisplay("Select a results folder for the scene run.")
+            return
+        try:
+            plan = build_timelapsed_scene_plan(
+                results_root=results_root,
+                subject_id=self.sceneSubjectEdit.text,
+                site=self.sceneSiteEdit.text,
+                timepoints=self._scene_timepoints(),
+                run_id=datetime.now().strftime("%Y%m%d_%H%M%S_%f"),
+            )
+            for timepoint in plan.timepoints:
+                self._export_scene_node(timepoint.image_node_id, timepoint.image_path)
+                for node_id, path in [
+                    (timepoint.full_mask_node_id, timepoint.full_mask_path),
+                    (timepoint.trab_mask_node_id, timepoint.trab_mask_path),
+                    (timepoint.cort_mask_node_id, timepoint.cort_mask_path),
+                    (timepoint.seg_mask_node_id, timepoint.seg_mask_path),
+                ]:
+                    if node_id and path is not None:
+                        self._export_scene_node(node_id, path)
+            cfg = self.logic.create_override_config(
+                self._settings_override(), results_root=plan.output_root
+            )
+        except (ValueError, RuntimeError) as exc:
+            slicer.util.errorDisplay(str(exc))
+            return
+
+        self._active_stage = "masks"
+        self._is_full_pipeline_run = True
+        self._run_skips_mask_generation = False
+        self._run_includes_analysis = True
+        self._run(timelapsed_scene_run_args(plan, mode="regular", config_path=cfg))
 
     def _dataset_root(self):
         p = self.inputPath.currentPath.strip()
@@ -2213,6 +2364,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for btn in [
             self.runMasksBtn,
             self.runTimelapseBtn,
+            self.sceneRunButton,
             self.applyAnalysisSettingsBtn,
             self.runAnalysisBtn,
             self.seriesSummaryExportBtn,

@@ -9,6 +9,22 @@ from SlicerBoneImagingToolboxLib.timelapsed_scene import (
 )
 
 
+def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "self.timelapsedModeTabs" in source
+    assert "Scene" in source
+    assert "Batch" in source
+    assert "def _on_run_scene_pipeline" in source
+    assert "build_timelapsed_scene_plan" in source
+
+
 def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
     plan = build_timelapsed_scene_plan(
         results_root=tmp_path,
