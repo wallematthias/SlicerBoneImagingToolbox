@@ -1,8 +1,39 @@
+from pathlib import Path
+
 from SlicerBoneImagingToolboxLib.motionscore_scene import (
     build_motionscore_scene_plan,
     motionscore_scene_predict_args,
     motionscore_scene_runner_args,
 )
+
+
+def test_motionscore_module_exposes_scene_and_batch_modes():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "MotionScoreHRpQCT"
+        / "MotionScoreHRpQCT.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self.motionScoreModeTabs" in source
+    assert "Scene" in source
+    assert "Batch" in source
+    assert "def onRunScenePredict" in source
+    assert "build_motionscore_scene_plan" in source
+
+
+def test_motionscore_scene_setup_does_not_capture_cleanup():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "MotionScoreHRpQCT"
+        / "MotionScoreHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    cleanup_start = source.index("    def cleanup(self):")
+    cleanup_end = source.index("    def _setup_scene_mode(self):", cleanup_start)
+    cleanup = source[cleanup_start:cleanup_end]
+
+    assert "self._preload_executor.shutdown" in cleanup
 
 
 def test_motionscore_scene_plan_uses_derivative_scene_folder(tmp_path):
