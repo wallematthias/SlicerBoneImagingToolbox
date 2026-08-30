@@ -89,6 +89,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "sceneMaskLowerSlider" not in source
     assert "Analysis Options" in source
     assert "Advanced Settings" in source
+    assert "analysisSectionBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
+    assert "settingsBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "self.layout.addWidget(analysisSectionBox)" in source
     assert "self.layout.addWidget(settingsBox)" in source
     assert "self.layout.addWidget(statusBox)" in source

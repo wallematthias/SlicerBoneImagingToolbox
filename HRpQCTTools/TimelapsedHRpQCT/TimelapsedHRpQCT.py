@@ -687,11 +687,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
         analysisSectionBox.collapsed = False
+        analysisSectionBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         analysisSectionLayout = qt.QVBoxLayout(analysisSectionBox)
 
         settingsBox = ctk.ctkCollapsibleButton()
         settingsBox.text = "Advanced Settings"
         settingsBox.collapsed = True
+        settingsBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         self.advancedSettingsBox = settingsBox
         settingsLayout = qt.QVBoxLayout(settingsBox)
         settingsLayout.setSpacing(10)
