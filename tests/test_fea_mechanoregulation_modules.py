@@ -79,6 +79,19 @@ def test_parosol_scene_ui_requires_explicit_derivative_dataset_context() -> None
     assert "def _fea_derivative_context(self, output_dir):" in source
 
 
+def test_parosol_module_contains_artifact_discovery_batch_tab() -> None:
+    source = PAROSOL_MODULE.read_text(encoding="utf-8")
+
+    assert "discover_fea_batch_cases" in source
+    assert "build_parosol_case_commands" in source
+    assert 'self.batchPage, batch_page_layout = self._workflow_tab_page("Batch")' in source
+    assert "self.batchDiscoverButton" in source
+    assert "self.batchRunButton" in source
+    assert "def discover_fea_batch(self):" in source
+    assert "def run_fea_batch(self):" in source
+    assert "def _run_next_fea_batch_case(self):" in source
+
+
 def test_mechanoregulation_module_contains_derivative_discovery_helpers() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
 

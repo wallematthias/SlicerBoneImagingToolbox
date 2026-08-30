@@ -140,6 +140,18 @@ from ParOSolFEALib.workflow_controllers import (
 )
 from ParOSolFEALib.workflow_stage import WorkflowStageController, WorkflowStageState
 
+TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
+if str(TOOLBOX_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLBOX_ROOT))
+
+from SlicerBoneImagingToolboxLib.fea_batch import (
+    build_parosol_case_commands,
+    case_readiness,
+    discover_fea_batch_cases,
+    parosol_command_derivative_context,
+    role_options_for_workflow,
+)
+
 
 MODULE_VERSION = "0.1.0"
 DEFAULT_PAROSOL = ""
@@ -452,6 +464,26 @@ class ParOSolFEALogic(ScriptedLoadableModuleLogic):
     def set_setting_value(self, key, value):
         if hasattr(qt, "QSettings"):
             qt.QSettings().setValue(key, value)
+
+    def discover_fea_batch_cases(self, dataset_root, **filters):
+        return discover_fea_batch_cases(dataset_root, **filters)
+
+    def build_fea_batch_commands(
+        self,
+        dataset_root,
+        cases,
+        *,
+        workflow,
+        selected_roles=None,
+        dry_run=False,
+    ):
+        return build_parosol_case_commands(
+            dataset_root,
+            cases,
+            workflow=workflow,
+            selected_roles=selected_roles,
+            dry_run=dry_run,
+        )
 
     def python_launcher(self):
         exe = Path(sys.executable).resolve()
@@ -4089,6 +4121,71 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         deformed_layout.addWidget(self.deleteDeformedButton)
         results_layout.addLayout(deformed_layout)
 
+        self.batchPage, batch_page_layout = self._workflow_tab_page("Batch")
+        self.batchCollapsible = qt.QWidget()
+        batch_page_layout.insertWidget(batch_page_layout.count() - 1, self.batchCollapsible)
+        batch_layout = qt.QVBoxLayout(self.batchCollapsible)
+        batch_layout.setContentsMargins(0, 0, 0, 0)
+        batch_layout.setSpacing(8)
+
+        self.batchDiscoveryGroup = qt.QGroupBox("Discovery")
+        batch_discovery_form = qt.QFormLayout(self.batchDiscoveryGroup)
+        batch_layout.addWidget(self.batchDiscoveryGroup)
+        self.batchDatasetRootSelector = ctk.ctkPathLineEdit()
+        self.batchDatasetRootSelector.filters = ctk.ctkPathLineEdit.Dirs
+        batch_discovery_form.addRow("Dataset root", self.batchDatasetRootSelector)
+        self.batchSubjectEdit = qt.QLineEdit()
+        self.batchSiteEdit = qt.QLineEdit()
+        self.batchSessionEdit = qt.QLineEdit()
+        batch_discovery_form.addRow("Subject filter", self.batchSubjectEdit)
+        batch_discovery_form.addRow("Site filter", self.batchSiteEdit)
+        batch_discovery_form.addRow("Session filter", self.batchSessionEdit)
+        self.batchDiscoverButton = qt.QPushButton("Discover")
+        batch_discovery_form.addRow("", self.batchDiscoverButton)
+
+        self.batchTable = qt.QTableWidget()
+        self.batchTable.setColumnCount(6)
+        self.batchTable.setHorizontalHeaderLabels(["Run", "Subject", "Site", "Session", "Images", "Masks"])
+        self.batchTable.minimumHeight = 180
+        try:
+            self.batchTable.horizontalHeader().setStretchLastSection(True)
+            self.batchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        except Exception:
+            pass
+        batch_layout.addWidget(self.batchTable)
+
+        self.batchMappingGroup = qt.QGroupBox("Workflow")
+        batch_mapping_form = qt.QFormLayout(self.batchMappingGroup)
+        batch_layout.addWidget(self.batchMappingGroup)
+        self.batchWorkflowBox = qt.QComboBox()
+        self.batchWorkflowBox.setEditable(True)
+        self.batchWorkflowBox.addItems(_default_profiles())
+        if PREFERRED_WORKFLOW in _default_profiles():
+            self.batchWorkflowBox.setCurrentText(PREFERRED_WORKFLOW)
+        self.batchImageRoleBox = qt.QComboBox()
+        self.batchMaskRoleBox = qt.QComboBox()
+        self.batchDryRunCheckBox = qt.QCheckBox("Dry run")
+        self.batchDryRunCheckBox.checked = False
+        batch_mapping_form.addRow("Workflow", self.batchWorkflowBox)
+        batch_mapping_form.addRow("Image source", self.batchImageRoleBox)
+        batch_mapping_form.addRow("Mask source", self.batchMaskRoleBox)
+        batch_mapping_form.addRow("", self.batchDryRunCheckBox)
+
+        self.batchStatusLabel = qt.QLabel("Discover a dataset to prepare FEA batch cases.")
+        self.batchStatusLabel.wordWrap = True
+        batch_layout.addWidget(self.batchStatusLabel)
+        batch_buttons = qt.QHBoxLayout()
+        self.batchRunButton = qt.QPushButton("Run Batch")
+        self.batchStopButton = qt.QPushButton("Stop")
+        self.batchStopButton.enabled = False
+        batch_buttons.addWidget(self.batchRunButton)
+        batch_buttons.addWidget(self.batchStopButton)
+        batch_buttons.addStretch(1)
+        batch_layout.addLayout(batch_buttons)
+        self._feaBatchCases = []
+        self._feaBatchCommands = []
+        self._feaBatchCommandIndex = 0
+
         self.consoleCollapsible = ctk.ctkCollapsibleButton()
         self.consoleCollapsible.text = "Console / Logs"
         self.consoleCollapsible.collapsed = True
@@ -4103,6 +4200,12 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
 
         self._install_tooltips()
 
+        self.batchDiscoverButton.clicked.connect(self.discover_fea_batch)
+        self.batchWorkflowBox.currentTextChanged.connect(self._on_fea_batch_workflow_changed)
+        self.batchImageRoleBox.currentTextChanged.connect(self._refresh_fea_batch_readiness)
+        self.batchMaskRoleBox.currentTextChanged.connect(self._refresh_fea_batch_readiness)
+        self.batchRunButton.clicked.connect(self.run_fea_batch)
+        self.batchStopButton.clicked.connect(self.stop_fea_batch)
         self.createTopDiskButton.clicked.connect(lambda: self._create_disk_plane("top"))
         self.createBottomDiskButton.clicked.connect(lambda: self._create_disk_plane("bottom"))
         self.imageSelector.currentNodeChanged.connect(self._on_input_node_changed)
@@ -11782,6 +11885,205 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
 
     def stop_case(self):
         self.logic.interrupt()
+
+    def discover_fea_batch(self):
+        root = str(getattr(self.batchDatasetRootSelector, "currentPath", "") or "").strip()
+        if not root:
+            slicer.util.errorDisplay("Select a dataset root before discovery.")
+            return
+        try:
+            self._feaBatchCases = self.logic.discover_fea_batch_cases(
+                root,
+                subject_id=str(self.batchSubjectEdit.text or "").strip(),
+                site=str(self.batchSiteEdit.text or "").strip(),
+                session_id=str(self.batchSessionEdit.text or "").strip(),
+            )
+        except Exception as exc:
+            self.batchStatusLabel.text = f"Discovery failed: {exc}"
+            slicer.util.errorDisplay(str(exc))
+            return
+        self._populate_fea_batch_table()
+        self._populate_fea_batch_role_selectors()
+        self._refresh_fea_batch_readiness()
+        self._append_log(
+            f"[fea batch] discovered {len(self._feaBatchCases)} case(s) from {root}\n"
+        )
+
+    def _populate_fea_batch_table(self):
+        table = self.batchTable
+        table.setRowCount(len(self._feaBatchCases))
+        for row, case in enumerate(self._feaBatchCases):
+            run_item = qt.QTableWidgetItem("")
+            run_item.setFlags(run_item.flags() | qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
+            run_item.setCheckState(qt.Qt.Checked)
+            table.setItem(row, 0, run_item)
+            values = [
+                case.subject_id,
+                case.site,
+                case.session_id or "",
+                ", ".join(sorted({artifact.role for artifact in case.artifacts if artifact.role in {"calibrated_image", "density_image", "material_labelmap", "labelmap", "segmentation", "image", "raw_image"}})),
+                ", ".join(sorted({artifact.role for artifact in case.artifacts if artifact.role in {"vertebra_mask", "mask_full", "mask", "common_region_mask", "mask_cort", "mask_trab"}})),
+            ]
+            for column, value in enumerate(values, start=1):
+                item = qt.QTableWidgetItem(str(value))
+                item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+                table.setItem(row, column, item)
+        try:
+            table.resizeColumnsToContents()
+        except Exception:
+            pass
+
+    def _populate_fea_batch_role_selectors(self):
+        signal_states = []
+        for box in (self.batchImageRoleBox, self.batchMaskRoleBox):
+            try:
+                signal_states.append((box, box.blockSignals(True)))
+            except Exception:
+                signal_states.append((box, False))
+            box.clear()
+            box.addItem("Auto")
+        workflow = str(self.batchWorkflowBox.currentText or "").strip()
+        for role in role_options_for_workflow(self._feaBatchCases, workflow, "image"):
+            self.batchImageRoleBox.addItem(role)
+        for role in role_options_for_workflow(self._feaBatchCases, workflow, "mask"):
+            self.batchMaskRoleBox.addItem(role)
+        for box, was_blocked in signal_states:
+            try:
+                box.blockSignals(was_blocked)
+            except Exception:
+                pass
+
+    def _on_fea_batch_workflow_changed(self):
+        self._populate_fea_batch_role_selectors()
+        self._refresh_fea_batch_readiness()
+
+    def _selected_fea_batch_roles(self):
+        selected = {}
+        for group, box in (("image", self.batchImageRoleBox), ("mask", self.batchMaskRoleBox)):
+            role = str(box.currentText or "").strip()
+            if role and role != "Auto":
+                selected[group] = role
+        return selected
+
+    def _selected_fea_batch_cases(self):
+        selected = []
+        for row, case in enumerate(self._feaBatchCases):
+            item = self.batchTable.item(row, 0)
+            checked = item is None or item.checkState() == qt.Qt.Checked
+            if checked:
+                selected.append(case)
+        return selected
+
+    def _refresh_fea_batch_readiness(self):
+        cases = list(getattr(self, "_feaBatchCases", []) or [])
+        if not cases:
+            self.batchStatusLabel.text = "Discover a dataset to prepare FEA batch cases."
+            return
+        workflow = str(self.batchWorkflowBox.currentText or "").strip()
+        selected_roles = self._selected_fea_batch_roles()
+        ready = 0
+        missing_counts = {}
+        for case in cases:
+            ok, missing = case_readiness(case, workflow, selected_roles)
+            if ok:
+                ready += 1
+            for group in missing:
+                missing_counts[group] = missing_counts.get(group, 0) + 1
+        if missing_counts:
+            missing_text = ", ".join(f"{name}: {count}" for name, count in sorted(missing_counts.items()))
+            self.batchStatusLabel.text = (
+                f"{ready}/{len(cases)} case(s) ready for {workflow or 'selected workflow'}; missing {missing_text}."
+            )
+        else:
+            self.batchStatusLabel.text = f"{ready}/{len(cases)} case(s) ready for {workflow or 'selected workflow'}."
+
+    def run_fea_batch(self):
+        root = str(getattr(self.batchDatasetRootSelector, "currentPath", "") or "").strip()
+        if not root:
+            slicer.util.errorDisplay("Select a dataset root before running a batch.")
+            return
+        cases = self._selected_fea_batch_cases()
+        if not cases:
+            slicer.util.errorDisplay("Select at least one discovered FEA case.")
+            return
+        workflow = str(self.batchWorkflowBox.currentText or "").strip()
+        try:
+            commands = self.logic.build_fea_batch_commands(
+                root,
+                cases,
+                workflow=workflow,
+                selected_roles=self._selected_fea_batch_roles(),
+                dry_run=bool(self.batchDryRunCheckBox.checked),
+            )
+        except Exception as exc:
+            slicer.util.errorDisplay(str(exc))
+            return
+        if not commands:
+            slicer.util.errorDisplay("No selected FEA cases have the artifacts required by this workflow.")
+            return
+        self._feaBatchCommands = commands
+        self._feaBatchCommandIndex = 0
+        self.batchRunButton.enabled = False
+        self.batchStopButton.enabled = True
+        self.batchStatusLabel.text = f"Running 0/{len(commands)} FEA batch case(s)..."
+        self._append_log(f"[fea batch] starting {len(commands)} case(s)\n")
+        self._run_next_fea_batch_case()
+
+    def _run_next_fea_batch_case(self):
+        if self._feaBatchCommandIndex >= len(self._feaBatchCommands):
+            self.batchRunButton.enabled = True
+            self.batchStopButton.enabled = False
+            total = len(self._feaBatchCommands)
+            self.batchStatusLabel.text = f"Finished {total}/{total} FEA batch case(s)."
+            self._append_log("[fea batch] finished\n")
+            return
+        command = self._feaBatchCommands[self._feaBatchCommandIndex]
+        case_number = self._feaBatchCommandIndex + 1
+        total = len(self._feaBatchCommands)
+        self.batchStatusLabel.text = f"Running {case_number}/{total}: {Path(command[0]).name}"
+        self._append_log(f"[fea batch] running {case_number}/{total}: {' '.join(command)}\n")
+        self.logic.run_parosol(
+            command,
+            on_output=self._append_log,
+            on_finished=self._on_fea_batch_case_finished,
+            cwd=Path(command[0]).parent,
+        )
+
+    def _on_fea_batch_case_finished(self, exit_code, interrupted):
+        if interrupted:
+            self.batchRunButton.enabled = True
+            self.batchStopButton.enabled = False
+            self.batchStatusLabel.text = "FEA batch stopped."
+            self._append_log("[fea batch] stopped\n")
+            return
+        if int(exit_code) != 0:
+            self.batchRunButton.enabled = True
+            self.batchStopButton.enabled = False
+            self.batchStatusLabel.text = f"FEA batch failed at case {self._feaBatchCommandIndex + 1}."
+            self._append_log(f"[fea batch] failed with exit code {exit_code}\n")
+            return
+        self._write_completed_fea_batch_manifest(self._feaBatchCommands[self._feaBatchCommandIndex])
+        self._feaBatchCommandIndex += 1
+        self._run_next_fea_batch_case()
+
+    def stop_fea_batch(self):
+        self.logic.interrupt()
+
+    def _write_completed_fea_batch_manifest(self, command):
+        context = parosol_command_derivative_context(command)
+        if not context:
+            return
+        try:
+            manifest_path = _write_parosol_run_derivative_manifest(
+                context["output_dir"],
+                dataset_root=context["dataset_root"],
+                subject_id=context["subject_id"],
+                site=context["site"],
+                session_id=context["session_id"],
+            )
+            self._append_log(f"[fea batch] FEA derivative manifest: {manifest_path}\n")
+        except Exception as exc:
+            self._append_log(f"[fea batch] Could not write FEA derivative manifest: {exc}\n")
 
     def _on_finished(self, exit_code, interrupted):
         self.runButton.enabled = True
