@@ -567,7 +567,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.timelapsedModeTabs = qt.QTabWidget()
         self.timelapsedModeTabs.setMaximumHeight(520)
-        self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
+        self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)
         self.timelapsedModeTabs.currentChanged.connect(lambda *_args: self._resize_timelapsed_mode_tabs())
         scenePage = qt.QWidget()
         batchPage = qt.QWidget()
@@ -1462,6 +1462,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._scene_timepoint_table_height = height
         self.sceneTimepointTable.setMinimumHeight(height)
         self.sceneTimepointTable.setMaximumHeight(height)
+        self.sceneTimepointTable.resizeRowsToContents()
+        try:
+            self.sceneTimepointTable.viewport().update()
+            self.sceneTimepointTable.updateGeometry()
+            if self.sceneTimepointTable.parent() is not None and self.sceneTimepointTable.parent().layout() is not None:
+                self.sceneTimepointTable.parent().layout().activate()
+        except Exception:
+            pass
         self._resize_timelapsed_mode_tabs()
 
     def _scene_timepoint_visible_rows(self):
@@ -1476,9 +1484,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             current_index = current_index()
         if int(current_index) == 0 and hasattr(self, "sceneTimepointTable"):
             height = int(getattr(self, "_scene_timepoint_table_height", 100))
-            self.timelapsedModeTabs.setMaximumHeight(min(560, height + 220))
+            self.timelapsedModeTabs.setMaximumHeight(max(520, min(760, height + 360)))
         else:
             self.timelapsedModeTabs.setMaximumHeight(520)
+        try:
+            self.timelapsedModeTabs.updateGeometry()
+            if self.timelapsedModeTabs.parent() is not None and self.timelapsedModeTabs.parent().layout() is not None:
+                self.timelapsedModeTabs.parent().layout().activate()
+        except Exception:
+            pass
 
     def _default_scene_results_root(self):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"
@@ -6145,6 +6159,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 subject_id,
                 site,
             )
+            self._show(f"[scene] scene_results_table_path={pairwise_path}")
         except Exception as exc:
             self._show(f"[scene] could not resolve scene results table path: {exc}")
             return 0

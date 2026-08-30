@@ -87,7 +87,11 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "min(row_count, 8)" in source
     assert "max(2, min(row_count, 8))" in source
     assert "ScrollBarAsNeeded" in source
-    assert "setMaximumHeight(min(560" in source
+    assert "setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)" in source
+    assert "viewport().update()" in source
+    assert "layout().activate()" in source
+    assert "setMaximumHeight(max(520" in source
+    assert "scene_results_table_path" in source
     assert "layout.setContentsMargins(0, 0, 0, 0)" in source
     assert 'env.insert("PYTHONPATH", os.environ["PYTHONPATH"])' in source
     assert "_resolve_local_pipeline_paths" in source
