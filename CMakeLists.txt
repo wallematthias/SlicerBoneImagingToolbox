@@ -25,6 +25,7 @@ set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/segmentation_methods.py
   SlicerBoneImagingToolboxLib/slicer_pip.py
   SlicerBoneImagingToolboxLib/slicer_update_ui.py
+  SlicerBoneImagingToolboxLib/spine_segmentation_batch.py
   SlicerBoneImagingToolboxLib/updater.py
   SlicerBoneImagingToolboxLib/vertebra_labels.py
   SlicerBoneImagingToolboxLib/workflow_planning.py
