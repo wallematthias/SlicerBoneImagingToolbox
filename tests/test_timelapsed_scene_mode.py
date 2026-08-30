@@ -47,7 +47,11 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "except Exception as exc" in source
     assert "self._resize_scene_timepoint_table()" in source
     assert "ScrollBarAsNeeded" in source
+    assert "setMaximumHeight(min(430" in source
+    assert "layout.setContentsMargins(0, 0, 0, 0)" in source
     assert 'env.insert("PYTHONPATH", os.environ["PYTHONPATH"])' in source
+    assert "_resolve_local_pipeline_paths" in source
+    assert 'base / "TimelapsedHRpQCT"' in source
     assert "timelapsedhrpqct.cli import main" in source
     assert 'MIN_PIPELINE_VERSION = "2.0.39"' in source
     assert "Move up" in source

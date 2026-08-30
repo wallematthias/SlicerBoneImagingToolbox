@@ -49,6 +49,15 @@ def _local_pipeline_usable(repo_path, src_path):
     )
 
 
+def _resolve_local_pipeline_paths(toolbox_root):
+    for base in (Path(toolbox_root).parent, *Path(toolbox_root).parents):
+        candidate_repo = base / "TimelapsedHRpQCT"
+        candidate_src = candidate_repo / "src"
+        if _local_pipeline_usable(candidate_repo, candidate_src):
+            return candidate_repo, candidate_src
+    return Path(toolbox_root).parent / "TimelapsedHRpQCT", Path(toolbox_root).parent / "TimelapsedHRpQCT" / "src"
+
+
 # Prevent Slicer-specific ITK ImageIO plugin autoloading in this process.
 # This avoids repeated MRMLIDImageIO factory noise from SimpleITK calls.
 for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
@@ -63,8 +72,7 @@ import SimpleITK as sitk
 _TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
-_PIPELINE_LOCAL_REPO = _TOOLBOX_ROOT.parent / "TimelapsedHRpQCT"
-_PIPELINE_LOCAL_SRC = _PIPELINE_LOCAL_REPO / "src"
+_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC = _resolve_local_pipeline_paths(_TOOLBOX_ROOT)
 if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PIPELINE_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(_PIPELINE_LOCAL_SRC))
     _existing_pythonpath = os.environ.get("PYTHONPATH", "")
@@ -557,6 +565,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return widget
 
         self.timelapsedModeTabs = qt.QTabWidget()
+        self.timelapsedModeTabs.setMaximumHeight(520)
+        self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
+        self.timelapsedModeTabs.currentChanged.connect(lambda *_args: self._resize_timelapsed_mode_tabs())
         scenePage = qt.QWidget()
         batchPage = qt.QWidget()
         self.timelapsedModeTabs.addTab(scenePage, "Scene")
@@ -1356,7 +1367,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return label
 
         layout = qt.QVBoxLayout(parent)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
         form = qt.QFormLayout()
+        form.setVerticalSpacing(4)
         self.sceneProfileCombo = qt.QComboBox()
         self._populate_study_profiles(self.sceneProfileCombo)
         self.sceneProfileCombo.currentIndexChanged.connect(self._on_scene_profile_changed)
@@ -1429,6 +1443,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         height = header_height + visible_rows * row_height + 12
         self.sceneTimepointTable.setMinimumHeight(height)
         self.sceneTimepointTable.setMaximumHeight(height)
+        self._resize_timelapsed_mode_tabs()
+
+    def _resize_timelapsed_mode_tabs(self):
+        if not hasattr(self, "timelapsedModeTabs"):
+            return
+        if int(self.timelapsedModeTabs.currentIndex) == 0 and hasattr(self, "sceneTimepointTable"):
+            self.timelapsedModeTabs.setMaximumHeight(min(430, int(self.sceneTimepointTable.maximumHeight) + 170))
+        else:
+            self.timelapsedModeTabs.setMaximumHeight(520)
 
     def _default_scene_results_root(self):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"
