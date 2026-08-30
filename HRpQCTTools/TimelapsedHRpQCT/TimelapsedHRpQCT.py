@@ -764,12 +764,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Input parsing mode. 'auto' tries filename parsing first, "
             "then falls back to header parsing."
         )
+        self.storageModeCombo = qt.QComboBox()
+        self.storageModeCombo.addItem("Minimal", "minimal")
+        self.storageModeCombo.addItem("Full debug", "full")
+        self.storageModeCombo.setCurrentIndex(0)
+        self.storageModeCombo.toolTip = (
+            "Derivative storage mode. Minimal keeps imported grayscale stack images as lazy AIM-backed views; "
+            "derived analysis products remain cached. Full debug also writes split stack image files."
+        )
         _cap_width(self.copyRawInputsCheck, 220)
         _cap_width(self.restructureRawCheck, 220)
         _cap_width(self.parseModeCombo, 220)
+        _cap_width(self.storageModeCombo, 220)
         maskForm.addRow(_label("Copy raw inputs", "Copy raw AIM files into sourcedata/hrpqct during import."), self.copyRawInputsCheck)
         maskForm.addRow(_label("Restructure raw inputs", "Move raw AIM files into the results root sub-*/site-*/ses-* layout during import."), self.restructureRawCheck)
         maskForm.addRow(_label("Parse mode", "Input parsing mode. Auto tries filenames first, then AIM headers."), self.parseModeCombo)
+        maskForm.addRow(_label("Storage mode", "Minimal avoids copied imported stack images; full debug writes them for inspection."), self.storageModeCombo)
 
         registrationBox = qt.QGroupBox("Registration")
         registrationForm = qt.QFormLayout(registrationBox)
@@ -2659,6 +2669,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return ["--restructure-raw"]
         return []
 
+    def _storage_cli_flags(self):
+        mode = str(getattr(self.storageModeCombo, "currentData", "minimal") or "minimal")
+        if mode == "full":
+            return ["--storage-mode", "full"]
+        return ["--storage-mode", "minimal"]
+
     def _selected_parse_mode(self):
         mode = str(getattr(self.parseModeCombo, "currentText", "auto")).strip().lower()
         if mode not in {"auto", "filename", "header"}:
@@ -2894,6 +2910,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     "--output-root",
                     str(imported),
                     *self._raw_ingest_cli_flags(raw_ingest_mode),
+                    *self._storage_cli_flags(),
                     *self._raw_discovery_cli_flags(),
                     *self._profile_cli_args(),
                     "--config",
@@ -2952,6 +2969,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 mode,
                 "--skip-mask-generation",
                 *self._raw_ingest_cli_flags(raw_ingest_mode),
+                *self._storage_cli_flags(),
                 *self._raw_discovery_cli_flags(),
                 *self._profile_cli_args(),
                 "--config",
@@ -3143,6 +3161,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "--mode",
             mode,
             *self._raw_ingest_cli_flags(raw_ingest_mode),
+            *self._storage_cli_flags(),
             *self._raw_discovery_cli_flags(),
             *self._profile_cli_args(),
             "--config",

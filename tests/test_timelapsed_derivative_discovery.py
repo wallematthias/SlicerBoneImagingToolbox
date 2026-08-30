@@ -1,12 +1,39 @@
 from pathlib import Path
 import importlib.util
 import sys
+import types
 
 from bone_imaging_derivatives import DerivativeManifest, DerivativeRecord, write_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
+
+
+def _install_slicer_import_stubs(monkeypatch) -> None:
+    qt = types.ModuleType("qt")
+    ctk = types.ModuleType("ctk")
+    vtk = types.ModuleType("vtk")
+    slicer = types.ModuleType("slicer")
+    scripted = types.ModuleType("slicer.ScriptedLoadableModule")
+
+    class _Base:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    scripted.ScriptedLoadableModule = _Base
+    scripted.ScriptedLoadableModuleWidget = _Base
+    scripted.ScriptedLoadableModuleLogic = _Base
+    scripted.ScriptedLoadableModuleTest = _Base
+    slicer.ScriptedLoadableModule = scripted
+    slicer.util = types.SimpleNamespace()
+    slicer.app = types.SimpleNamespace()
+
+    monkeypatch.setitem(sys.modules, "qt", qt)
+    monkeypatch.setitem(sys.modules, "ctk", ctk)
+    monkeypatch.setitem(sys.modules, "vtk", vtk)
+    monkeypatch.setitem(sys.modules, "slicer", slicer)
+    monkeypatch.setitem(sys.modules, "slicer.ScriptedLoadableModule", scripted)
 
 
 def test_timelapsed_imports_derivative_discovery_and_planning_helpers():
@@ -37,7 +64,8 @@ def test_timelapsed_prerequisites_use_shared_derivative_planner() -> None:
     assert "from bone_imaging_derivatives import resolve_workflow_plan" in source
 
 
-def test_timelapsed_prerequisites_accept_dataset_or_derivatives_root(tmp_path: Path) -> None:
+def test_timelapsed_prerequisites_accept_dataset_or_derivatives_root(tmp_path: Path, monkeypatch) -> None:
+    _install_slicer_import_stubs(monkeypatch)
     module_dir = MODULE_PATH.parent
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
@@ -69,3 +97,14 @@ def test_timelapsed_ui_mentions_derivative_prerequisites():
 
     assert "Derivative prerequisites" in source
     assert "Registration/CommonRegion derivatives" in source
+
+
+def test_timelapsed_ui_exposes_minimal_storage_mode_for_batch_runs():
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "self.storageModeCombo" in source
+    assert 'self.storageModeCombo.addItem("Minimal", "minimal")' in source
+    assert 'self.storageModeCombo.addItem("Full debug", "full")' in source
+    assert "def _storage_cli_flags(self):" in source
+    assert '"--storage-mode", "minimal"' in source
+    assert "*self._storage_cli_flags()" in source

@@ -35,12 +35,12 @@ def test_package_status_row_marks_missing_package_installable() -> None:
     row = package_status_row(
         spec,
         installed_versions={},
-        latest_versions={"timelapsed-hrpqct": "2.0.41"},
+        latest_versions={"timelapsed-hrpqct": "2.0.42"},
         validation_errors={},
     )
 
     assert row.installed_version is None
-    assert row.latest_version == "2.0.41"
+    assert row.latest_version == "2.0.42"
     assert row.status == "missing"
     assert row.action == "install"
 
