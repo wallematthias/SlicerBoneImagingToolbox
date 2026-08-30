@@ -29,6 +29,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Generate missing masks" in source
     assert "discover_timelapsed_scene_timepoints" in source
     assert "self._run_skips_mask_generation = not bool(self.sceneGenerateMissingMasksCheck.checked)" in source
+    assert 'importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")' in source
+    assert "importlib.reload(_timelapsed_scene)" in source
 
 
 def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:

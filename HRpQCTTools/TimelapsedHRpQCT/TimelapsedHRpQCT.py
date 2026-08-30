@@ -76,13 +76,13 @@ if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PI
 
 from bone_imaging_derivatives import discover_manifests  # noqa: E402
 from bone_imaging_derivatives import resolve_workflow_plan  # noqa: E402
-from SlicerBoneImagingToolboxLib.timelapsed_scene import (  # noqa: E402
-    TimelapsedSceneNodeCandidate,
-    TimelapsedSceneTimepoint,
-    build_timelapsed_scene_plan,
-    discover_timelapsed_scene_timepoints,
-    timelapsed_scene_run_args,
-)
+_timelapsed_scene = importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")
+_timelapsed_scene = importlib.reload(_timelapsed_scene)
+TimelapsedSceneNodeCandidate = _timelapsed_scene.TimelapsedSceneNodeCandidate
+TimelapsedSceneTimepoint = _timelapsed_scene.TimelapsedSceneTimepoint
+build_timelapsed_scene_plan = _timelapsed_scene.build_timelapsed_scene_plan
+discover_timelapsed_scene_timepoints = _timelapsed_scene.discover_timelapsed_scene_timepoints
+timelapsed_scene_run_args = _timelapsed_scene.timelapsed_scene_run_args
 
 _reporting = importlib.import_module("TimelapsedHRpQCTLib.Reporting")
 if not hasattr(_reporting, "COHORT_DEFAULT_EXPORT_FIELDS"):
