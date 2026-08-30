@@ -38,10 +38,14 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "_last_scene_plan" in source
     assert "loadTransform" in source
     assert "self.sceneProfileCombo" in source
-    assert "self.sceneMaskPolicyCombo" in source
-    assert "Missing masks" in source
-    assert 'addItem("Generate", "generate")' in source
-    assert 'addItem("None", "none")' in source
+    assert "self.sceneMaskPolicyCombo" not in source
+    assert "Missing masks" not in source
+    assert "def _scene_mask_selector" in source
+    assert "def _scene_selected_mask_node_id" in source
+    assert "def _scene_mask_generation_requested" in source
+    assert 'addItem("Generate", "__generate__")' in source
+    assert 'addItem("None", "__none__")' in source
+    assert "self._scene_mask_generation_requested()" in source
     assert "identifiersBox" not in source
     assert "sceneSubjectEdit" not in source
     assert "sceneSiteEdit" not in source
@@ -70,6 +74,23 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self._scene_generate_missing_masks()" in source
     assert 'importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")' in source
     assert "importlib.reload(_timelapsed_scene)" in source
+
+
+def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "self._scene_mask_selector()" in source
+    assert 'selector.addItem("Generate", "__generate__")' in source
+    assert 'selector.addItem("None", "__none__")' in source
+    assert 'value in {"__generate__", "__none__"}' in source
+    assert 'str(selector.currentData or "") == "__generate__"' in source
+    assert "sceneMaskPolicyCombo" not in source
 
 
 def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:

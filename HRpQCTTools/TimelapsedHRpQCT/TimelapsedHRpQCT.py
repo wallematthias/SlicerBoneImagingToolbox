@@ -1382,16 +1382,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneResultsRootPath.setCurrentPath(str(self._default_scene_results_root()))
         self.sceneResultsRootPath.toolTip = "Folder that will contain this scene run's derivatives."
         _cap_width(self.sceneResultsRootPath, 360)
-        self.sceneMaskPolicyCombo = qt.QComboBox()
-        self.sceneMaskPolicyCombo.addItem("Generate", "generate")
-        self.sceneMaskPolicyCombo.addItem("None", "none")
-        self.sceneMaskPolicyCombo.toolTip = (
-            "Choose whether missing masks are generated from the selected profile or left absent."
-        )
-        _cap_width(self.sceneMaskPolicyCombo)
         form.addRow(_label("Profile", "Study defaults used for registration, mask generation, and remodelling analysis."), self.sceneProfileCombo)
         form.addRow(_label("Results folder", "Folder that will contain this scene run's derivatives."), self.sceneResultsRootPath)
-        form.addRow(_label("Missing masks", "Generate missing masks, or leave absent masks unused."), self.sceneMaskPolicyCombo)
         self.sceneAppendDiscoveryCheck = qt.QCheckBox("Append to table")
         self.sceneAppendDiscoveryCheck.checked = False
         self.sceneAppendDiscoveryCheck.toolTip = "Append discovered loaded timepoints instead of replacing the current table."
@@ -1471,10 +1463,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"
 
     def _scene_generate_missing_masks(self):
-        combo = getattr(self, "sceneMaskPolicyCombo", None)
-        if combo is None:
-            return True
-        return str(combo.currentData or "generate") == "generate"
+        return self._scene_mask_generation_requested()
 
     def _on_scene_profile_changed(self, *_args):
         if hasattr(self, "studyProfileCombo"):
@@ -1506,6 +1495,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         selector.setMRMLScene(slicer.mrmlScene)
         return selector
 
+    def _scene_mask_selector(self):
+        selector = qt.QComboBox()
+        selector.addItem("Generate", "__generate__")
+        selector.addItem("None", "__none__")
+        for candidate in self._scene_node_candidates():
+            node_class = str(candidate.node_class or "")
+            if "LabelMapVolume" not in node_class and "Segmentation" not in node_class:
+                continue
+            label = str(candidate.name or candidate.node_id)
+            selector.addItem(label, str(candidate.node_id))
+        selector.toolTip = "Use a loaded mask, generate it during the run, or leave it absent."
+        return selector
+
     def _add_scene_timepoint(self, timepoint=None):
         if not isinstance(timepoint, TimelapsedSceneTimepoint):
             timepoint = None
@@ -1519,7 +1521,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.sceneTimepointTable.setCellWidget(
                 row,
                 column,
-                self._scene_node_selector(["vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"]),
+                self._scene_mask_selector(),
             )
         self.sceneTimepointTable.setCellWidget(
             row,
@@ -1528,10 +1530,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         if timepoint is not None:
             self._set_scene_row_node(row, 1, timepoint.image_node_id)
-            self._set_scene_row_node(row, 2, timepoint.full_mask_node_id)
-            self._set_scene_row_node(row, 3, timepoint.trab_mask_node_id)
-            self._set_scene_row_node(row, 4, timepoint.cort_mask_node_id)
-            self._set_scene_row_node(row, 5, timepoint.seg_mask_node_id)
+            self._set_scene_mask_row_node(row, 2, timepoint.full_mask_node_id)
+            self._set_scene_mask_row_node(row, 3, timepoint.trab_mask_node_id)
+            self._set_scene_mask_row_node(row, 4, timepoint.cort_mask_node_id)
+            self._set_scene_mask_row_node(row, 5, timepoint.seg_mask_node_id)
             self._set_scene_row_node(row, 6, timepoint.transform_node_id)
         self._resize_scene_timepoint_table()
 
@@ -1542,6 +1544,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         node = slicer.mrmlScene.GetNodeByID(str(node_id)) if selector is not None else None
         if node is not None:
             selector.setCurrentNode(node)
+
+    def _set_scene_mask_row_node(self, row, column, node_id):
+        selector = self.sceneTimepointTable.cellWidget(row, column)
+        if selector is None:
+            return
+        if not node_id:
+            index = selector.findData("__generate__")
+            if index >= 0:
+                selector.setCurrentIndex(index)
+            return
+        index = selector.findData(str(node_id))
+        if index >= 0:
+            selector.setCurrentIndex(index)
 
     def _remove_scene_timepoint(self):
         row = self.sceneTimepointTable.currentRow()
@@ -1622,6 +1637,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         node = selector.currentNode() if selector is not None else None
         return node.GetID() if node is not None else ""
 
+    def _scene_selected_mask_node_id(self, row, column):
+        selector = self.sceneTimepointTable.cellWidget(row, column)
+        value = str(selector.currentData or "") if selector is not None else ""
+        if value in {"__generate__", "__none__"}:
+            return ""
+        return value
+
+    def _scene_mask_generation_requested(self):
+        if not hasattr(self, "sceneTimepointTable"):
+            return True
+        for row in range(self.sceneTimepointTable.rowCount):
+            for column in range(2, 6):
+                selector = self.sceneTimepointTable.cellWidget(row, column)
+                if selector is not None and str(selector.currentData or "") == "__generate__":
+                    return True
+        return False
+
     def _scene_timepoints(self):
         timepoints = []
         for row in range(self.sceneTimepointTable.rowCount):
@@ -1630,10 +1662,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 TimelapsedSceneTimepoint(
                     session_id=session_item.text() if session_item is not None else "",
                     image_node_id=self._scene_selected_node_id(row, 1),
-                    full_mask_node_id=self._scene_selected_node_id(row, 2),
-                    trab_mask_node_id=self._scene_selected_node_id(row, 3),
-                    cort_mask_node_id=self._scene_selected_node_id(row, 4),
-                    seg_mask_node_id=self._scene_selected_node_id(row, 5),
+                    full_mask_node_id=self._scene_selected_mask_node_id(row, 2),
+                    trab_mask_node_id=self._scene_selected_mask_node_id(row, 3),
+                    cort_mask_node_id=self._scene_selected_mask_node_id(row, 4),
+                    seg_mask_node_id=self._scene_selected_mask_node_id(row, 5),
                     transform_node_id=self._scene_selected_node_id(row, 6),
                 )
             )
