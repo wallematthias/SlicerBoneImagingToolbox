@@ -567,7 +567,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.timelapsedModeTabs = qt.QTabWidget()
         self.timelapsedModeTabs.setMaximumHeight(520)
-        self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)
+        self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         self.timelapsedModeTabs.currentChanged.connect(self._on_timelapsed_mode_changed)
         scenePage = qt.QWidget()
         batchPage = qt.QWidget()
@@ -686,7 +686,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
-        analysisSectionBox.collapsed = False
+        analysisSectionBox.collapsed = True
         analysisSectionBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         analysisSectionLayout = qt.QVBoxLayout(analysisSectionBox)
 
@@ -1186,6 +1186,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         settingsLayout.addWidget(registrationBox)
         settingsLayout.addWidget(advancedAnalysisBox)
         analysisSectionLayout.addWidget(analysisBox)
+        analysisSectionLayout.addWidget(self.seriesSummaryBox)
 
         actionBox = qt.QGroupBox("Pipeline")
         actionBox.setStyleSheet(
@@ -1529,7 +1530,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             height = int(getattr(self, "_scene_timepoint_table_height", 100))
             self.timelapsedModeTabs.setMaximumHeight(max(440, min(760, height + 350)))
         else:
-            self.timelapsedModeTabs.setMaximumHeight(520)
+            self.timelapsedModeTabs.setMaximumHeight(16777215)
         try:
             self.timelapsedModeTabs.updateGeometry()
             if self.timelapsedModeTabs.parent() is not None and self.timelapsedModeTabs.parent().layout() is not None:

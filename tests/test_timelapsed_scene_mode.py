@@ -129,13 +129,44 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "min(row_count, 8)" in source
     assert "max(2, min(row_count, 8))" in source
     assert "ScrollBarAsNeeded" in source
-    assert "setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)" in source
+    assert "setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "viewport().update()" in source
     assert "layout().activate()" in source
     assert "setMaximumHeight(max(440, min(760, height + 350)))" in source
+
+
+def test_timelapsed_batch_tab_uses_uncapped_height() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    resize_body = source.split("    def _resize_timelapsed_mode_tabs", 1)[1].split("\n    def ", 1)[0]
+    assert "self.timelapsedModeTabs.setMaximumHeight(max(440, min(760, height + 350)))" in resize_body
+    assert "self.timelapsedModeTabs.setMaximumHeight(16777215)" in resize_body
+    assert "self.timelapsedModeTabs.setMaximumHeight(520)" not in resize_body
+    assert "self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "setMaximumHeight(max(520" not in source
     assert "scene_results_table_path" in source
     assert "layout.setContentsMargins(0, 0, 0, 0)" in source
+
+
+def test_timelapsed_batch_series_summary_is_parented_and_collapsed() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert 'analysisSectionBox.text = "Analysis Options"' in source
+    assert "analysisSectionBox.collapsed = True" in source
+    assert "analysisSectionLayout.addWidget(self.seriesSummaryBox)" in source
+    assert "self.seriesSummaryBox.visible = False" in source
     assert 'env.insert("PYTHONPATH", os.environ["PYTHONPATH"])' in source
     assert "_resolve_local_pipeline_paths" in source
     assert 'base / "TimelapsedHRpQCT"' in source
