@@ -27,11 +27,20 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "build_timelapsed_scene_plan" in source
     assert "Discover Loaded Timepoints" in source
     assert "Append to table" in source
-    assert "Generate missing masks" in source
+    assert "self.sceneProfileCombo" in source
+    assert "self.sceneMaskPolicyCombo" in source
+    assert "Missing masks" in source
+    assert 'addItem("Generate", "generate")' in source
+    assert 'addItem("None", "none")' in source
+    assert "Identifiers" in source
+    assert "Mask Generation" in source
+    assert "Analysis Options" in source
+    assert "sceneAnalysisThresholdSlider" in source
+    assert "sceneAnalysisClusterSlider" in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source
-    assert "self._run_skips_mask_generation = not bool(self.sceneGenerateMissingMasksCheck.checked)" in source
+    assert "self._scene_generate_missing_masks()" in source
     assert 'importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")' in source
     assert "importlib.reload(_timelapsed_scene)" in source
 
@@ -51,6 +60,23 @@ def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
     assert plan.input_root == tmp_path / "derivatives" / "Timelapsed" / "scene_runs" / "scene-test" / "input"
     assert plan.timepoints[0].image_path.name == "sub-SAMPLE001_ses-1_site-tibia_image.nii.gz"
     assert plan.timepoints[1].full_mask_path.name == "sub-SAMPLE001_ses-2_site-tibia_mask-full.nii.gz"
+
+
+def test_timelapsed_scene_plan_defaults_identifiers_for_loaded_scene_runs(tmp_path: Path) -> None:
+    plan = build_timelapsed_scene_plan(
+        results_root=tmp_path,
+        subject_id="",
+        site="",
+        timepoints=[
+            TimelapsedSceneTimepoint(session_id="1", image_node_id="v1"),
+            TimelapsedSceneTimepoint(session_id="2", image_node_id="v2"),
+        ],
+        run_id="abc",
+    )
+
+    assert plan.subject_id == "SceneSubject"
+    assert plan.site == "scene"
+    assert plan.timepoints[0].image_path.name == "sub-SceneSubject_ses-1_site-scene_image.nii.gz"
 
 
 def test_timelapsed_scene_run_args_include_existing_pipeline_options(tmp_path: Path) -> None:

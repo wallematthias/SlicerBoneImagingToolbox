@@ -121,11 +121,9 @@ def build_timelapsed_scene_plan(
     run_id: str,
 ) -> TimelapsedScenePlan:
     """Plan deterministic scene-run paths without interacting with Slicer."""
-    clean_subject = _clean_token(subject_id, "sub")
-    clean_site = _clean_token(site, "site")
+    clean_subject = _clean_token(subject_id, "sub") or "SceneSubject"
+    clean_site = _clean_token(site, "site") or "scene"
     clean_run_id = _safe_token(run_id)
-    if not clean_subject or not clean_site:
-        raise ValueError("subject_id and site are required")
 
     selected_timepoints = tuple(timepoints)
     if len(selected_timepoints) < 2 or any(not timepoint.image_node_id.strip() for timepoint in selected_timepoints):
