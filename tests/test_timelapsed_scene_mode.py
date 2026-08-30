@@ -31,12 +31,20 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "vtkMRMLTransformNode" in source
     assert "transform_node_id" in source
     assert "_load_scene_run_outputs" in source
+    assert "_load_scene_run_masks" in source
+    assert "_load_scene_mask_labelmap" in source
+    assert "iter_imported_stack_records" in source
+    assert "iter_fused_session_records" in source
     assert "_adopt_scene_run_as_current_dataset" in source
     assert "_set_path_without_immediate_reset" in source
     assert "current dataset set to scene run" in source
     assert "remodelling image (full)" in source
     assert "_last_scene_plan" in source
     assert "loadTransform" in source
+    assert "mask-full" in source
+    assert "mask-trab" in source
+    assert "mask-cort" in source
+    assert "mask-seg" in source
     assert "self.sceneProfileCombo" in source
     assert "self.sceneMaskPolicyCombo" not in source
     assert "Missing masks" not in source

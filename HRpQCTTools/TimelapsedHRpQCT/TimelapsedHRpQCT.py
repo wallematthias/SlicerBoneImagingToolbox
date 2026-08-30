@@ -5929,6 +5929,78 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"input={plan.input_root} output={plan.output_root}"
         )
 
+    def _scene_mask_label_name(self, subject_id, site, session_id, role, stack_index=None):
+        role_token = {
+            "full": "mask-full",
+            "trab": "mask-trab",
+            "cort": "mask-cort",
+            "seg": "mask-seg",
+        }.get(str(role), f"mask-{role}")
+        stack = f"_stack-{int(stack_index):02d}" if stack_index is not None else ""
+        return f"sub-{subject_id}_ses-{session_id}_site-{site}{stack}_{role_token}"
+
+    def _load_scene_mask_labelmap(self, path, name, folder_item_id):
+        ok, node = self._load_labelmap_node(path)
+        if not ok or node is None:
+            return False
+        try:
+            node.SetName(str(name))
+        except Exception:
+            pass
+        self._place_node_in_folder(node, folder_item_id)
+        return True
+
+    def _load_scene_run_masks(self, plan):
+        dataset_root = Path(plan.output_root)
+        loaded_masks = 0
+        seen_paths = set()
+        try:
+            from timelapsedhrpqct.dataset.artifacts import (
+                iter_fused_session_records,
+                iter_imported_stack_records,
+            )
+
+            records = list(iter_imported_stack_records(dataset_root)) + list(
+                iter_fused_session_records(dataset_root)
+            )
+        except Exception as exc:
+            self._show(f"[scene] could not inspect scene-run mask artifacts: {exc}")
+            return 0
+
+        for record in records:
+            subject_id = str(getattr(record, "subject_id", ""))
+            site = str(getattr(record, "site", ""))
+            if subject_id != plan.subject_id or site != plan.site:
+                continue
+            session_id = str(getattr(record, "session_id", ""))
+            stack_index = getattr(record, "stack_index", None)
+            folder_item_id = self._ensure_load_folder(subject_id, site, session_id, stack_index)
+
+            role_to_path = dict(getattr(record, "mask_paths", {}) or {})
+            seg_path = getattr(record, "seg_path", None)
+            if seg_path is not None:
+                role_to_path.setdefault("seg", Path(seg_path))
+
+            for role, path in sorted(role_to_path.items()):
+                path = Path(path)
+                resolved = path.resolve()
+                if resolved in seen_paths or not path.exists():
+                    continue
+                seen_paths.add(resolved)
+                name = self._scene_mask_label_name(
+                    subject_id,
+                    site,
+                    session_id,
+                    str(role),
+                    stack_index=stack_index,
+                )
+                try:
+                    if self._load_scene_mask_labelmap(path, name, folder_item_id):
+                        loaded_masks += 1
+                except Exception as exc:
+                    self._show(f"[scene] could not load mask {path.name}: {exc}")
+        return loaded_masks
+
     def _load_scene_run_outputs(self, plan):
         output_root = Path(plan.output_root)
         if not output_root.exists():
@@ -5936,6 +6008,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         folder_item_id = self._ensure_load_folder(plan.subject_id, plan.site)
+        loaded_masks = self._load_scene_run_masks(plan)
         loaded_transforms = 0
         loaded_remodelling = 0
 
@@ -5976,11 +6049,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._show(f"[scene] could not load remodelling output {path.name}: {exc}")
 
         self.sceneStatusLabel.text = (
-            f"Loaded {loaded_transforms} transform(s) and {loaded_remodelling} "
-            "remodelling output(s) from the scene run."
+            f"Loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
+            f"and {loaded_remodelling} remodelling output(s) from the scene run."
         )
         self._show(
-            f"[scene] loaded {loaded_transforms} transform(s), "
+            f"[scene] loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
             f"{loaded_remodelling} remodelling output(s) from {output_root}"
         )
         self._refresh_remodelling_full_selector()
