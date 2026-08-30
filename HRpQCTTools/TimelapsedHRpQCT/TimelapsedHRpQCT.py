@@ -1481,7 +1481,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             current_index = current_index()
         if int(current_index) == 0 and hasattr(self, "sceneTimepointTable"):
             height = int(getattr(self, "_scene_timepoint_table_height", 100))
-            self.timelapsedModeTabs.setMaximumHeight(max(520, min(760, height + 360)))
+            self.timelapsedModeTabs.setMaximumHeight(max(280, min(520, height + 170)))
         else:
             self.timelapsedModeTabs.setMaximumHeight(520)
         try:
