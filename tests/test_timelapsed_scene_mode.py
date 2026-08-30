@@ -31,6 +31,13 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Scene Results" in source
     assert "self.sceneResultsTable" in source
     assert "_load_scene_results_table" in source
+    assert "_scene_processed_subject_site" in source
+    assert "candidate.parent.name == \"derivatives\"" in source
+    assert "return candidate.parent.parent" in source
+    assert "_seed_scene_transform_registry" in source
+    assert "upsert_transform_registry_record" in source
+    assert "TransformRegistryRecord" in source
+    assert "using external transform registry" not in source
     assert "FV/BV" in source
     assert "RV/BV" in source
     assert "AV/BV" in source
@@ -107,6 +114,10 @@ def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     assert "AV_BV" in source
     assert "NV_BV" in source
     assert "Loaded scene results table" in source
+    assert "_scene_processed_subject_site(plan)" in source
+    assert "_seed_scene_transform_registry(plan)" in source
+    assert "_select_first_scene_remodelling_output" in source
+    assert "_refresh_pair_metrics_for_current_selection()" in source
 
 
 def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:

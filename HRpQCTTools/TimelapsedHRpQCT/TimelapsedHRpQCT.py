@@ -10,7 +10,7 @@ import json
 import csv
 import sys
 import importlib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -1756,6 +1756,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                             path,
                             reference_node_id=timepoint.image_node_id,
                         )
+            seeded_transforms = self._seed_scene_transform_registry(plan)
+            if seeded_transforms:
+                self._show(f"[timelapsed-slicer] seeded {seeded_transforms} scene transform(s) for registration reuse.")
             cfg = self.logic.create_override_config(
                 self._settings_override(), results_root=plan.output_root
             )
@@ -4394,6 +4397,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         p = Path(path_obj).resolve()
         for candidate in [p] + list(p.parents):
             if candidate.name == "TimelapsedHRpQCT":
+                if candidate.parent.name == "derivatives":
+                    return candidate.parent.parent
                 return candidate
         return None
 
@@ -5937,6 +5942,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if hasattr(self, "resultsRootPath"):
             self._set_path_without_immediate_reset(self.resultsRootPath, plan.output_root)
         self._reset_progress_for_dataset_root()
+        subject_id, site = self._scene_processed_subject_site(plan)
+        if hasattr(self, "patientCombo"):
+            label = f"sub-{subject_id} | site-{site}"
+            index = self.patientCombo.findText(label)
+            if index >= 0:
+                self.patientCombo.setCurrentIndex(index)
         if hasattr(self, "loadTypeCombo"):
             idx = self.loadTypeCombo.findText("remodelling image (full)")
             if idx >= 0:
@@ -5945,6 +5956,95 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "[scene] current dataset set to scene run "
             f"input={plan.input_root} output={plan.output_root}"
         )
+
+    def _normalize_scene_site(self, site):
+        try:
+            from timelapsedhrpqct.config.models import DiscoveryConfig
+            from timelapsedhrpqct.dataset.filename_decoder import normalize_site
+
+            return normalize_site(str(site), DiscoveryConfig()) or str(site)
+        except Exception:
+            return str(site)
+
+    def _seed_scene_transform_registry(self, plan):
+        selected = [
+            timepoint
+            for timepoint in plan.timepoints
+            if timepoint.transform_path is not None and Path(timepoint.transform_path).exists()
+        ]
+        if not selected:
+            return 0
+        try:
+            from timelapsedhrpqct.dataset.transform_registry import (
+                TransformRegistryRecord,
+                upsert_transform_registry_record,
+            )
+        except Exception as exc:
+            self._show(f"[scene] could not prepare transform registry: {exc}")
+            return 0
+
+        subject_id = plan.subject_id
+        site = self._normalize_scene_site(plan.site)
+        seeded = 0
+        for previous, current in zip(plan.timepoints[:-1], plan.timepoints[1:]):
+            transform_path = current.transform_path
+            if transform_path is None or not Path(transform_path).exists():
+                continue
+            try:
+                upsert_transform_registry_record(
+                    Path(plan.output_root),
+                    TransformRegistryRecord(
+                        subject_id=subject_id,
+                        site=site,
+                        stack_index=1,
+                        moving_session=str(current.session_id),
+                        fixed_session=str(previous.session_id),
+                        transform_kind="pairwise",
+                        internal_path=Path(transform_path),
+                        source_format="slicer_tfm",
+                        source_path=Path(transform_path),
+                        source_direction="moving_to_fixed",
+                        internal_direction="moving_to_fixed",
+                        coordinate_convention="SimpleITK_LPS_physical",
+                        provenance="slicer_scene_selected_transform",
+                        import_timestamp=datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                seeded += 1
+            except Exception as exc:
+                self._show(
+                    "[scene] could not seed transform registry for "
+                    f"{current.session_id} -> {previous.session_id}: {exc}"
+                )
+        return seeded
+
+    def _scene_processed_subject_site(self, plan):
+        try:
+            from timelapsedhrpqct.dataset.artifacts import (
+                iter_fused_session_records,
+                iter_imported_stack_records,
+            )
+
+            records = list(iter_fused_session_records(Path(plan.output_root))) + list(
+                iter_imported_stack_records(Path(plan.output_root))
+            )
+        except Exception as exc:
+            self._show(f"[scene] could not inspect processed scene subject/site: {exc}")
+            return plan.subject_id, plan.site
+
+        if not records:
+            return plan.subject_id, plan.site
+        exact_subject = [record for record in records if str(getattr(record, "subject_id", "")) == plan.subject_id]
+        candidates = exact_subject or records
+        first = sorted(
+            candidates,
+            key=lambda record: (
+                str(getattr(record, "subject_id", "")),
+                str(getattr(record, "site", "")),
+                str(getattr(record, "session_id", "")),
+            ),
+        )[0]
+        return str(getattr(first, "subject_id", plan.subject_id)), str(getattr(first, "site", plan.site))
 
     def _scene_mask_label_name(self, subject_id, site, session_id, role, stack_index=None):
         role_token = {
@@ -5971,6 +6071,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         dataset_root = Path(plan.output_root)
         loaded_masks = 0
         seen_paths = set()
+        processed_subject_id, processed_site = self._scene_processed_subject_site(plan)
         try:
             from timelapsedhrpqct.dataset.artifacts import (
                 iter_fused_session_records,
@@ -5987,7 +6088,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for record in records:
             subject_id = str(getattr(record, "subject_id", ""))
             site = str(getattr(record, "site", ""))
-            if subject_id != plan.subject_id or site != plan.site:
+            if subject_id != processed_subject_id or site != processed_site:
                 continue
             session_id = str(getattr(record, "session_id", ""))
             stack_index = getattr(record, "stack_index", None)
@@ -6034,10 +6135,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         try:
             from timelapsedhrpqct.dataset.derivative_paths import pairwise_remodelling_csv_path
 
+            subject_id, site = self._scene_processed_subject_site(plan)
             pairwise_path = pairwise_remodelling_csv_path(
                 Path(plan.output_root),
-                plan.subject_id,
-                plan.site,
+                subject_id,
+                site,
             )
         except Exception as exc:
             self._show(f"[scene] could not resolve scene results table path: {exc}")
@@ -6090,13 +6192,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._show(f"[scene] Loaded scene results table with {len(rows)} row(s).")
         return len(rows)
 
+    def _select_first_scene_remodelling_output(self):
+        if not hasattr(self, "remodellingFullSegCombo"):
+            return
+        self._refresh_remodelling_full_selector()
+        if self.remodellingFullSegCombo.count > 0:
+            self.remodellingFullSegCombo.setCurrentIndex(0)
+
     def _load_scene_run_outputs(self, plan):
         output_root = Path(plan.output_root)
         if not output_root.exists():
             self._show(f"[scene] output folder not found for load-back: {output_root}")
             return
 
-        folder_item_id = self._ensure_load_folder(plan.subject_id, plan.site)
+        processed_subject_id, processed_site = self._scene_processed_subject_site(plan)
+        folder_item_id = self._ensure_load_folder(processed_subject_id, processed_site)
         loaded_masks = self._load_scene_run_masks(plan)
         loaded_transforms = 0
         loaded_remodelling = 0
@@ -6149,7 +6259,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             f"{loaded_remodelling} remodelling output(s), "
             f"{loaded_result_rows} result row(s) from {output_root}"
         )
-        self._refresh_remodelling_full_selector()
+        self._select_first_scene_remodelling_output()
+        self._refresh_pair_metrics_for_current_selection()
 
     def _maybe_apply_raw_stack_offset(self, node, record):
         """If imported raw stacks have zero origin, offset by metadata z_start."""
