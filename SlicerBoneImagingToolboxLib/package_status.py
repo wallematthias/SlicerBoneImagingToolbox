@@ -84,7 +84,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Plate/Rod Morphometry",
         package_name="plate-rod-thinning",
         import_name="plate_rod_thinning",
-        minimum_version="0.1.5",
+        minimum_version="0.1.6",
         install_options=(
             "--force-reinstall",
             "--prefer-binary",
