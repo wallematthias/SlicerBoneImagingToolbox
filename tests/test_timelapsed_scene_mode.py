@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 
 from SlicerBoneImagingToolboxLib.timelapsed_scene import (
+    TimelapsedSceneNodeCandidate,
     TimelapsedSceneTimepoint,
     build_timelapsed_scene_plan,
+    discover_timelapsed_scene_timepoints,
     timelapsed_scene_run_args,
 )
 
@@ -23,6 +25,10 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Batch" in source
     assert "def _on_run_scene_pipeline" in source
     assert "build_timelapsed_scene_plan" in source
+    assert "Discover Loaded Timepoints" in source
+    assert "Generate missing masks" in source
+    assert "discover_timelapsed_scene_timepoints" in source
+    assert "self._run_skips_mask_generation = not bool(self.sceneGenerateMissingMasksCheck.checked)" in source
 
 
 def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
@@ -61,6 +67,28 @@ def test_timelapsed_scene_run_args_include_existing_pipeline_options(tmp_path: P
     assert str(plan.output_root) in args
     assert "--allow-scene-images" in args
     assert "--config" in args
+
+
+def test_timelapsed_scene_run_args_can_skip_mask_generation(tmp_path: Path) -> None:
+    plan = build_timelapsed_scene_plan(
+        results_root=tmp_path,
+        subject_id="SAMPLE001",
+        site="radius",
+        timepoints=[
+            TimelapsedSceneTimepoint(session_id="ses-1", image_node_id="v1"),
+            TimelapsedSceneTimepoint(session_id="ses-2", image_node_id="v2"),
+        ],
+        run_id="abc",
+    )
+
+    args = timelapsed_scene_run_args(
+        plan,
+        mode="regular",
+        config_path=Path("/tmp/config.toml"),
+        generate_missing_masks=False,
+    )
+
+    assert "--skip-mask-generation" in args
 
 
 def test_timelapsed_scene_plan_requires_two_image_timepoints(tmp_path: Path) -> None:
@@ -103,3 +131,40 @@ def test_timelapsed_scene_export_converts_segmentation_nodes_against_reference_g
     assert "ExportAllSegmentsToLabelmapNode" in source
     assert "EXTENT_REFERENCE_GEOMETRY" in source
     assert "reference_node_id=timepoint.image_node_id" in source
+
+
+def test_timelapsed_scene_discovery_groups_loaded_images_and_optional_masks() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate("img1", "sub-SAMPLE001_ses-1_site-tibia_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("img2", "sub-SAMPLE001_ses-2_site-tibia_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("full1", "sub-SAMPLE001_ses-1_site-tibia_mask-full", "vtkMRMLLabelMapVolumeNode"),
+            TimelapsedSceneNodeCandidate("trab1", "sub-SAMPLE001_ses-1_site-tibia_mask-trab", "vtkMRMLSegmentationNode"),
+            TimelapsedSceneNodeCandidate("cort2", "sub-SAMPLE001_ses-2_site-tibia_mask-cort", "vtkMRMLLabelMapVolumeNode"),
+            TimelapsedSceneNodeCandidate("seg2", "sub-SAMPLE001_ses-2_site-tibia_mask-seg", "vtkMRMLLabelMapVolumeNode"),
+        ]
+    )
+
+    assert discovery.subject_id == "SAMPLE001"
+    assert discovery.site == "tibia"
+    assert [timepoint.session_id for timepoint in discovery.timepoints] == ["1", "2"]
+    assert discovery.timepoints[0].image_node_id == "img1"
+    assert discovery.timepoints[0].full_mask_node_id == "full1"
+    assert discovery.timepoints[0].trab_mask_node_id == "trab1"
+    assert discovery.timepoints[0].cort_mask_node_id == ""
+    assert discovery.timepoints[1].image_node_id == "img2"
+    assert discovery.timepoints[1].cort_mask_node_id == "cort2"
+    assert discovery.timepoints[1].seg_mask_node_id == "seg2"
+
+
+def test_timelapsed_scene_discovery_ignores_masks_without_matching_loaded_image() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate("img1", "SAMPLE001_T1_tibia", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("mask2", "SAMPLE001_T2_tibia_mask-full", "vtkMRMLLabelMapVolumeNode"),
+        ]
+    )
+
+    assert len(discovery.timepoints) == 1
+    assert discovery.timepoints[0].session_id == "1"
+    assert discovery.timepoints[0].full_mask_node_id == ""

@@ -9,6 +9,14 @@ from typing import Iterable
 
 
 @dataclass(frozen=True)
+class TimelapsedSceneNodeCandidate:
+    node_id: str
+    name: str
+    node_class: str
+    attributes: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
 class TimelapsedSceneTimepoint:
     session_id: str
     image_node_id: str
@@ -32,6 +40,58 @@ class TimelapsedScenePlan:
     input_root: Path
     output_root: Path
     timepoints: tuple[TimelapsedSceneTimepoint, ...]
+
+
+@dataclass(frozen=True)
+class TimelapsedSceneDiscovery:
+    subject_id: str
+    site: str
+    timepoints: tuple[TimelapsedSceneTimepoint, ...]
+
+
+def discover_timelapsed_scene_timepoints(
+    candidates: Iterable[TimelapsedSceneNodeCandidate],
+) -> TimelapsedSceneDiscovery:
+    """Group loaded Slicer node candidates into Timelapsed scene timepoints."""
+    groups: dict[str, dict[str, str]] = {}
+    subjects: list[str] = []
+    sites: list[str] = []
+    for candidate in candidates:
+        role = _infer_scene_role(candidate)
+        session_id = _infer_scene_session(candidate)
+        if not role or not session_id:
+            continue
+        subject = _infer_scene_token(candidate, "subject", "sub")
+        site = _infer_scene_token(candidate, "site", "site")
+        if subject:
+            subjects.append(subject)
+        if site:
+            sites.append(site)
+        group = groups.setdefault(session_id, {})
+        if role not in group:
+            group[role] = candidate.node_id
+
+    timepoints: list[TimelapsedSceneTimepoint] = []
+    for session_id in sorted(groups, key=_scene_session_sort_key):
+        group = groups[session_id]
+        image_node_id = group.get("image", "")
+        if not image_node_id:
+            continue
+        timepoints.append(
+            TimelapsedSceneTimepoint(
+                session_id=session_id,
+                image_node_id=image_node_id,
+                full_mask_node_id=group.get("full", ""),
+                trab_mask_node_id=group.get("trab", ""),
+                cort_mask_node_id=group.get("cort", ""),
+                seg_mask_node_id=group.get("seg", ""),
+            )
+        )
+    return TimelapsedSceneDiscovery(
+        subject_id=_most_common(subjects),
+        site=_most_common(sites),
+        timepoints=tuple(timepoints),
+    )
 
 
 def build_timelapsed_scene_plan(
@@ -79,9 +139,10 @@ def timelapsed_scene_run_args(
     *,
     mode: str,
     config_path: str | Path,
+    generate_missing_masks: bool = True,
 ) -> list[str]:
     """Return the existing Timelapsed CLI arguments for a scene plan."""
-    return [
+    args = [
         "run",
         str(plan.input_root),
         "--output-root",
@@ -92,6 +153,9 @@ def timelapsed_scene_run_args(
         "--config",
         str(config_path),
     ]
+    if not generate_missing_masks:
+        args.append("--skip-mask-generation")
+    return args
 
 
 def _plan_timepoint(
@@ -130,3 +194,78 @@ def _clean_token(value: str, prefix: str) -> str:
 def _safe_token(value: str) -> str:
     token = re.sub(r"[^0-9A-Za-z_.-]+", "-", str(value).strip())
     return token.strip("-")
+
+
+def _infer_scene_role(candidate: TimelapsedSceneNodeCandidate) -> str:
+    attributes = candidate.attributes or {}
+    role_text = " ".join(
+        str(value)
+        for key, value in attributes.items()
+        if key.lower().endswith("role") or "role" in key.lower()
+    ).lower()
+    text = f"{candidate.name} {role_text}".lower()
+    node_class = str(candidate.node_class or "")
+    is_scalar = "ScalarVolume" in node_class
+    is_mask_node = "LabelMapVolume" in node_class or "Segmentation" in node_class
+    if is_mask_node:
+        if any(token in text for token in ("mask-full", "full-mask", "periosteal", "peri", "mask_full")):
+            return "full"
+        if any(token in text for token in ("mask-trab", "trabecular", "trab", "mask_trab")):
+            return "trab"
+        if any(token in text for token in ("mask-cort", "cortical", "cort", "mask_cort")):
+            return "cort"
+        if any(token in text for token in ("mask-seg", "bone-seg", "bone segmentation", "segmentation", "mask_seg")):
+            return "seg"
+    if is_scalar and not any(token in text for token in ("mask", "segmentation", "label")):
+        return "image"
+    return ""
+
+
+def _infer_scene_session(candidate: TimelapsedSceneNodeCandidate) -> str:
+    attributes = candidate.attributes or {}
+    for key in ("session", "session_id", "HRpQCT.Session", "BoneImaging.Session"):
+        value = attributes.get(key)
+        if value:
+            return _clean_token(value, "ses")
+    text = str(candidate.name or "")
+    patterns = (
+        r"(?i)(?:^|[^A-Za-z0-9])ses[-_]?([A-Za-z0-9.]+)",
+        r"(?i)(?:^|[^A-Za-z0-9])session[-_]?([A-Za-z0-9.]+)",
+        r"(?i)(?:^|[^A-Za-z0-9])T([0-9]+)(?:[^A-Za-z0-9]|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return _safe_token(match.group(1))
+    lowered = text.lower()
+    if "baseline" in lowered:
+        return "1"
+    if "followup" in lowered or "follow-up" in lowered:
+        return "2"
+    return ""
+
+
+def _infer_scene_token(candidate: TimelapsedSceneNodeCandidate, attribute_name: str, prefix: str) -> str:
+    attributes = candidate.attributes or {}
+    for key in (attribute_name, f"{attribute_name}_id", f"HRpQCT.{attribute_name.title()}"):
+        value = attributes.get(key)
+        if value:
+            return _clean_token(value, prefix)
+    pattern = rf"(?i)(?:^|[^A-Za-z0-9]){re.escape(prefix)}[-_]?([A-Za-z0-9.]+)"
+    match = re.search(pattern, str(candidate.name or ""))
+    return _safe_token(match.group(1)) if match else ""
+
+
+def _scene_session_sort_key(session_id: str) -> tuple[int, int | str]:
+    text = str(session_id)
+    return (0, int(text)) if text.isdigit() else (1, text.lower())
+
+
+def _most_common(values: Iterable[str]) -> str:
+    counts: dict[str, int] = {}
+    for value in values:
+        if value:
+            counts[value] = counts.get(value, 0) + 1
+    if not counts:
+        return ""
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]

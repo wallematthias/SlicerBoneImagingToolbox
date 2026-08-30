@@ -77,8 +77,10 @@ if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PI
 from bone_imaging_derivatives import discover_manifests  # noqa: E402
 from bone_imaging_derivatives import resolve_workflow_plan  # noqa: E402
 from SlicerBoneImagingToolboxLib.timelapsed_scene import (  # noqa: E402
+    TimelapsedSceneNodeCandidate,
     TimelapsedSceneTimepoint,
     build_timelapsed_scene_plan,
+    discover_timelapsed_scene_timepoints,
     timelapsed_scene_run_args,
 )
 
@@ -1342,6 +1344,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         form.addRow("Subject", self.sceneSubjectEdit)
         form.addRow("Site", self.sceneSiteEdit)
         form.addRow("Results folder", self.sceneResultsRootPath)
+        self.sceneGenerateMissingMasksCheck = qt.QCheckBox("Generate missing masks")
+        self.sceneGenerateMissingMasksCheck.checked = True
+        self.sceneGenerateMissingMasksCheck.toolTip = (
+            "When enabled, loaded masks are used where selected and missing masks are constructed "
+            "with the Timelapsed mask-generation settings."
+        )
+        form.addRow("Masks", self.sceneGenerateMissingMasksCheck)
         layout.addLayout(form)
 
         self.sceneTimepointTable = qt.QTableWidget()
@@ -1354,20 +1363,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addWidget(self.sceneTimepointTable)
 
         actions = qt.QHBoxLayout()
+        self.sceneDiscoverButton = qt.QPushButton("Discover Loaded Timepoints")
         self.sceneAddTimepointButton = qt.QPushButton("Add timepoint")
         self.sceneRemoveTimepointButton = qt.QPushButton("Remove timepoint")
         self.sceneRunButton = qt.QPushButton("Run Scene Pipeline")
+        self.sceneDiscoverButton.clicked.connect(self._on_discover_scene_timepoints)
         self.sceneAddTimepointButton.clicked.connect(self._add_scene_timepoint)
         self.sceneRemoveTimepointButton.clicked.connect(self._remove_scene_timepoint)
         self.sceneRunButton.clicked.connect(self._on_run_scene_pipeline)
+        actions.addWidget(self.sceneDiscoverButton)
         actions.addWidget(self.sceneAddTimepointButton)
         actions.addWidget(self.sceneRemoveTimepointButton)
         actions.addStretch(1)
         actions.addWidget(self.sceneRunButton)
         layout.addLayout(actions)
+        self.sceneStatusLabel = qt.QLabel("")
+        self.sceneStatusLabel.wordWrap = True
+        layout.addWidget(self.sceneStatusLabel)
         layout.addStretch(1)
-        self._add_scene_timepoint()
-        self._add_scene_timepoint()
 
     def _scene_node_selector(self, node_types):
         selector = slicer.qMRMLNodeComboBox()
@@ -1377,19 +1390,35 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         selector.setMRMLScene(slicer.mrmlScene)
         return selector
 
-    def _add_scene_timepoint(self):
+    def _add_scene_timepoint(self, timepoint=None):
+        if not isinstance(timepoint, TimelapsedSceneTimepoint):
+            timepoint = None
         row = self.sceneTimepointTable.rowCount
         self.sceneTimepointTable.insertRow(row)
-        self.sceneTimepointTable.setItem(row, 0, qt.QTableWidgetItem(f"ses-{row + 1}"))
-        self.sceneTimepointTable.setCellWidget(
-            row, 1, self._scene_node_selector(["vtkMRMLScalarVolumeNode"])
-        )
+        session_id = timepoint.session_id if timepoint is not None else f"ses-{row + 1}"
+        self.sceneTimepointTable.setItem(row, 0, qt.QTableWidgetItem(session_id))
+        image_selector = self._scene_node_selector(["vtkMRMLScalarVolumeNode"])
+        self.sceneTimepointTable.setCellWidget(row, 1, image_selector)
         for column in range(2, 6):
             self.sceneTimepointTable.setCellWidget(
                 row,
                 column,
                 self._scene_node_selector(["vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"]),
             )
+        if timepoint is not None:
+            self._set_scene_row_node(row, 1, timepoint.image_node_id)
+            self._set_scene_row_node(row, 2, timepoint.full_mask_node_id)
+            self._set_scene_row_node(row, 3, timepoint.trab_mask_node_id)
+            self._set_scene_row_node(row, 4, timepoint.cort_mask_node_id)
+            self._set_scene_row_node(row, 5, timepoint.seg_mask_node_id)
+
+    def _set_scene_row_node(self, row, column, node_id):
+        if not node_id:
+            return
+        selector = self.sceneTimepointTable.cellWidget(row, column)
+        node = slicer.mrmlScene.GetNodeByID(str(node_id)) if selector is not None else None
+        if node is not None:
+            selector.setCurrentNode(node)
 
     def _remove_scene_timepoint(self):
         row = self.sceneTimepointTable.currentRow()
@@ -1397,6 +1426,52 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             row = self.sceneTimepointTable.rowCount - 1
         if row >= 0:
             self.sceneTimepointTable.removeRow(row)
+
+    def _scene_node_candidates(self):
+        candidates = []
+        scene = slicer.mrmlScene
+        for index in range(scene.GetNumberOfNodes()):
+            node = scene.GetNthNode(index)
+            if node is None:
+                continue
+            if not (
+                node.IsA("vtkMRMLScalarVolumeNode")
+                or node.IsA("vtkMRMLLabelMapVolumeNode")
+                or node.IsA("vtkMRMLSegmentationNode")
+            ):
+                continue
+            attributes = {}
+            try:
+                names = vtk.vtkStringArray()
+                node.GetAttributeNames(names)
+                for attribute_index in range(names.GetNumberOfValues()):
+                    name = names.GetValue(attribute_index)
+                    value = node.GetAttribute(name)
+                    if value:
+                        attributes[str(name)] = str(value)
+            except Exception:
+                attributes = {}
+            candidates.append(
+                TimelapsedSceneNodeCandidate(
+                    node_id=str(node.GetID()),
+                    name=str(node.GetName() or ""),
+                    node_class=str(node.GetClassName() if hasattr(node, "GetClassName") else ""),
+                    attributes=attributes,
+                )
+            )
+        return candidates
+
+    def _on_discover_scene_timepoints(self):
+        discovery = discover_timelapsed_scene_timepoints(self._scene_node_candidates())
+        self.sceneTimepointTable.setRowCount(0)
+        for timepoint in discovery.timepoints:
+            self._add_scene_timepoint(timepoint)
+        if discovery.subject_id and not str(self.sceneSubjectEdit.text or "").strip():
+            self.sceneSubjectEdit.text = discovery.subject_id
+        if discovery.site and not str(self.sceneSiteEdit.text or "").strip():
+            self.sceneSiteEdit.text = discovery.site
+        count = len(discovery.timepoints)
+        self.sceneStatusLabel.text = f"Discovered {count} loaded timepoint(s)."
 
     def _scene_selected_node_id(self, row, column):
         selector = self.sceneTimepointTable.cellWidget(row, column)
@@ -1493,9 +1568,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self._active_stage = "masks"
         self._is_full_pipeline_run = True
-        self._run_skips_mask_generation = False
+        self._run_skips_mask_generation = not bool(self.sceneGenerateMissingMasksCheck.checked)
         self._run_includes_analysis = True
-        self._run(timelapsed_scene_run_args(plan, mode="regular", config_path=cfg))
+        self._run(
+            timelapsed_scene_run_args(
+                plan,
+                mode="regular",
+                config_path=cfg,
+                generate_missing_masks=bool(self.sceneGenerateMissingMasksCheck.checked),
+            )
+        )
 
     def _dataset_root(self):
         p = self.inputPath.currentPath.strip()
