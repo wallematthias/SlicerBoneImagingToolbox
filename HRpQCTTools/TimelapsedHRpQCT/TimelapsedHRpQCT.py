@@ -536,6 +536,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._suppress_interactive_preview_updates = False
         self._scene_subject_id = ""
         self._scene_site = ""
+        self._last_scene_plan = None
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -1398,9 +1399,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addLayout(form)
 
         self.sceneTimepointTable = qt.QTableWidget()
-        self.sceneTimepointTable.setColumnCount(6)
+        self.sceneTimepointTable.setColumnCount(7)
         self.sceneTimepointTable.setHorizontalHeaderLabels(
-            ["Session", "Image", "Periosteal/full mask", "Trabecular mask", "Cortical mask", "Bone segmentation"]
+            [
+                "Session",
+                "Image",
+                "Periosteal/full mask",
+                "Trabecular mask",
+                "Cortical mask",
+                "Bone segmentation",
+                "Initial transform",
+            ]
         )
         self.sceneTimepointTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
         self.sceneTimepointTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
@@ -1441,6 +1450,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             header_height = 28
             row_height = 30
         height = header_height + visible_rows * row_height + 12
+        self._scene_timepoint_table_height = height
         self.sceneTimepointTable.setMinimumHeight(height)
         self.sceneTimepointTable.setMaximumHeight(height)
         self._resize_timelapsed_mode_tabs()
@@ -1448,8 +1458,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _resize_timelapsed_mode_tabs(self):
         if not hasattr(self, "timelapsedModeTabs"):
             return
-        if int(self.timelapsedModeTabs.currentIndex) == 0 and hasattr(self, "sceneTimepointTable"):
-            self.timelapsedModeTabs.setMaximumHeight(min(430, int(self.sceneTimepointTable.maximumHeight) + 170))
+        current_index = self.timelapsedModeTabs.currentIndex
+        if callable(current_index):
+            current_index = current_index()
+        if int(current_index) == 0 and hasattr(self, "sceneTimepointTable"):
+            height = int(getattr(self, "_scene_timepoint_table_height", 100))
+            self.timelapsedModeTabs.setMaximumHeight(min(430, height + 170))
         else:
             self.timelapsedModeTabs.setMaximumHeight(520)
 
@@ -1507,12 +1521,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 column,
                 self._scene_node_selector(["vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"]),
             )
+        self.sceneTimepointTable.setCellWidget(
+            row,
+            6,
+            self._scene_node_selector(["vtkMRMLTransformNode"]),
+        )
         if timepoint is not None:
             self._set_scene_row_node(row, 1, timepoint.image_node_id)
             self._set_scene_row_node(row, 2, timepoint.full_mask_node_id)
             self._set_scene_row_node(row, 3, timepoint.trab_mask_node_id)
             self._set_scene_row_node(row, 4, timepoint.cort_mask_node_id)
             self._set_scene_row_node(row, 5, timepoint.seg_mask_node_id)
+            self._set_scene_row_node(row, 6, timepoint.transform_node_id)
         self._resize_scene_timepoint_table()
 
     def _set_scene_row_node(self, row, column, node_id):
@@ -1556,6 +1576,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 node.IsA("vtkMRMLScalarVolumeNode")
                 or node.IsA("vtkMRMLLabelMapVolumeNode")
                 or node.IsA("vtkMRMLSegmentationNode")
+                or node.IsA("vtkMRMLTransformNode")
             ):
                 continue
             attributes = {}
@@ -1613,6 +1634,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     trab_mask_node_id=self._scene_selected_node_id(row, 3),
                     cort_mask_node_id=self._scene_selected_node_id(row, 4),
                     seg_mask_node_id=self._scene_selected_node_id(row, 5),
+                    transform_node_id=self._scene_selected_node_id(row, 6),
                 )
             )
         return timepoints
@@ -1677,6 +1699,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     (timepoint.trab_mask_node_id, timepoint.trab_mask_path),
                     (timepoint.cort_mask_node_id, timepoint.cort_mask_path),
                     (timepoint.seg_mask_node_id, timepoint.seg_mask_path),
+                    (timepoint.transform_node_id, timepoint.transform_path),
                 ]:
                     if node_id and path is not None:
                         self._export_scene_node(
@@ -1697,6 +1720,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._is_full_pipeline_run = True
         self._run_skips_mask_generation = not self._scene_generate_missing_masks()
         self._run_includes_analysis = True
+        self._last_scene_plan = plan
         self._run(
             timelapsed_scene_run_args(
                 plan,
@@ -3585,6 +3609,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._is_full_pipeline_run = False
             self._run_skips_mask_generation = False
             self._run_includes_analysis = False
+            self._last_scene_plan = None
             self._refresh_patient_list()
             return
         if self._queued_commands and exit_code == 0:
@@ -3603,11 +3628,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             for s in ("dataset", "parse", "masks", "registration", "analysis"):
                 self._set_stage_status(s, "done")
         self._active_stage = None
+        scene_plan = self._last_scene_plan
         self._is_full_pipeline_run = False
         self._run_skips_mask_generation = False
         self._run_includes_analysis = False
+        self._last_scene_plan = None
         self.logic.cleanup_temp_files(remove_fallback=False)
-        self._refresh_patient_list()
+        if scene_plan is not None:
+            self._adopt_scene_run_as_current_dataset(scene_plan)
+            self._load_scene_run_outputs(scene_plan)
+        else:
+            self._refresh_patient_list()
         self._set_user_message("success", "Completed", "Requested step(s) finished successfully.")
 
     def _on_install_pipeline(self):
@@ -5835,6 +5866,92 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if isinstance(loaded, bool):
             return loaded, None
         return loaded is not None, loaded
+
+    def _load_transform_node(self, path):
+        loaded = slicer.util.loadTransform(str(path))
+        if isinstance(loaded, tuple):
+            ok, node = loaded
+            return bool(ok), node
+        if isinstance(loaded, bool):
+            return loaded, None
+        return loaded is not None, loaded
+
+    def _set_path_without_immediate_reset(self, widget, path):
+        previous = widget.blockSignals(True)
+        try:
+            widget.setCurrentPath(str(path))
+        finally:
+            widget.blockSignals(previous)
+
+    def _adopt_scene_run_as_current_dataset(self, plan):
+        self._set_path_without_immediate_reset(self.inputPath, plan.input_root)
+        if hasattr(self, "resultsRootPath"):
+            self._set_path_without_immediate_reset(self.resultsRootPath, plan.output_root)
+        self._reset_progress_for_dataset_root()
+        if hasattr(self, "loadTypeCombo"):
+            idx = self.loadTypeCombo.findText("remodelling image (full)")
+            if idx >= 0:
+                self.loadTypeCombo.setCurrentIndex(idx)
+        self._show(
+            "[scene] current dataset set to scene run "
+            f"input={plan.input_root} output={plan.output_root}"
+        )
+
+    def _load_scene_run_outputs(self, plan):
+        output_root = Path(plan.output_root)
+        if not output_root.exists():
+            self._show(f"[scene] output folder not found for load-back: {output_root}")
+            return
+
+        folder_item_id = self._ensure_load_folder(plan.subject_id, plan.site)
+        loaded_transforms = 0
+        loaded_remodelling = 0
+
+        transform_paths = sorted(
+            path
+            for pattern in ("*.tfm", "*.h5")
+            for path in output_root.rglob(pattern)
+            if path.is_file()
+        )
+        for path in transform_paths:
+            try:
+                ok, node = self._load_transform_node(path)
+                if ok and node is not None:
+                    self._place_node_in_folder(node, folder_item_id)
+                    loaded_transforms += 1
+            except Exception as exc:
+                self._show(f"[scene] could not load transform {path.name}: {exc}")
+
+        remodelling_paths = sorted(
+            {
+                path
+                for pattern in ("*_remodelling.nii.gz", "*_remodelling.mha")
+                for path in output_root.rglob(pattern)
+                if path.is_file()
+            }
+        )
+        for path in remodelling_paths:
+            try:
+                seg_name = f"{path.stem}_segmentation"
+                if self._load_remodelling_as_segmentation(
+                    seg_name,
+                    path,
+                    folder_item_id=folder_item_id,
+                    create_full=True,
+                ):
+                    loaded_remodelling += 1
+            except Exception as exc:
+                self._show(f"[scene] could not load remodelling output {path.name}: {exc}")
+
+        self.sceneStatusLabel.text = (
+            f"Loaded {loaded_transforms} transform(s) and {loaded_remodelling} "
+            "remodelling output(s) from the scene run."
+        )
+        self._show(
+            f"[scene] loaded {loaded_transforms} transform(s), "
+            f"{loaded_remodelling} remodelling output(s) from {output_root}"
+        )
+        self._refresh_remodelling_full_selector()
 
     def _maybe_apply_raw_stack_offset(self, node, record):
         """If imported raw stacks have zero origin, offset by metadata z_start."""

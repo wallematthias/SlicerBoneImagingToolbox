@@ -27,6 +27,16 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "build_timelapsed_scene_plan" in source
     assert "Discover Loaded Timepoints" in source
     assert "Append to table" in source
+    assert "Initial transform" in source
+    assert "vtkMRMLTransformNode" in source
+    assert "transform_node_id" in source
+    assert "_load_scene_run_outputs" in source
+    assert "_adopt_scene_run_as_current_dataset" in source
+    assert "_set_path_without_immediate_reset" in source
+    assert "current dataset set to scene run" in source
+    assert "remodelling image (full)" in source
+    assert "_last_scene_plan" in source
+    assert "loadTransform" in source
     assert "self.sceneProfileCombo" in source
     assert "self.sceneMaskPolicyCombo" in source
     assert "Missing masks" in source
@@ -69,7 +79,12 @@ def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
         site="tibia",
         timepoints=[
             TimelapsedSceneTimepoint(session_id="ses-1", image_node_id="v1", full_mask_node_id="f1"),
-            TimelapsedSceneTimepoint(session_id="ses-2", image_node_id="v2", full_mask_node_id="f2"),
+            TimelapsedSceneTimepoint(
+                session_id="ses-2",
+                image_node_id="v2",
+                full_mask_node_id="f2",
+                transform_node_id="t2",
+            ),
         ],
         run_id="scene-test",
     )
@@ -77,6 +92,7 @@ def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
     assert plan.input_root == tmp_path / "derivatives" / "Timelapsed" / "scene_runs" / "scene-test" / "input"
     assert plan.timepoints[0].image_path.name == "sub-SAMPLE001_ses-1_site-tibia_image.nii.gz"
     assert plan.timepoints[1].full_mask_path.name == "sub-SAMPLE001_ses-2_site-tibia_mask-full.nii.gz"
+    assert plan.timepoints[1].transform_path.name == "sub-SAMPLE001_ses-2_site-tibia_transform.tfm"
 
 
 def test_timelapsed_scene_plan_defaults_identifiers_for_loaded_scene_runs(tmp_path: Path) -> None:
@@ -190,6 +206,7 @@ def test_timelapsed_scene_discovery_groups_loaded_images_and_optional_masks() ->
             TimelapsedSceneNodeCandidate("trab1", "sub-SAMPLE001_ses-1_site-tibia_mask-trab", "vtkMRMLSegmentationNode"),
             TimelapsedSceneNodeCandidate("cort2", "sub-SAMPLE001_ses-2_site-tibia_mask-cort", "vtkMRMLLabelMapVolumeNode"),
             TimelapsedSceneNodeCandidate("seg2", "sub-SAMPLE001_ses-2_site-tibia_mask-seg", "vtkMRMLLabelMapVolumeNode"),
+            TimelapsedSceneNodeCandidate("tfm2", "sub-SAMPLE001_ses-2_site-tibia_transform", "vtkMRMLTransformNode"),
         ]
     )
 
@@ -203,6 +220,7 @@ def test_timelapsed_scene_discovery_groups_loaded_images_and_optional_masks() ->
     assert discovery.timepoints[1].image_node_id == "img2"
     assert discovery.timepoints[1].cort_mask_node_id == "cort2"
     assert discovery.timepoints[1].seg_mask_node_id == "seg2"
+    assert discovery.timepoints[1].transform_node_id == "tfm2"
 
 
 def test_timelapsed_scene_discovery_ignores_masks_without_matching_loaded_image() -> None:

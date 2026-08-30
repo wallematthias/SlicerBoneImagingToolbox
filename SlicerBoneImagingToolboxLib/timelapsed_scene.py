@@ -24,11 +24,13 @@ class TimelapsedSceneTimepoint:
     trab_mask_node_id: str = ""
     cort_mask_node_id: str = ""
     seg_mask_node_id: str = ""
+    transform_node_id: str = ""
     image_path: Path | None = None
     full_mask_path: Path | None = None
     trab_mask_path: Path | None = None
     cort_mask_path: Path | None = None
     seg_mask_path: Path | None = None
+    transform_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ def discover_timelapsed_scene_timepoints(
         role = _infer_scene_role(candidate)
         if role == "image":
             scalar_candidates.append(candidate)
-        elif role:
+        elif role and role != "transform":
             mask_count += 1
         session_id = _infer_scene_session(candidate)
         if not role or not session_id:
@@ -96,6 +98,7 @@ def discover_timelapsed_scene_timepoints(
                 trab_mask_node_id=group.get("trab", ""),
                 cort_mask_node_id=group.get("cort", ""),
                 seg_mask_node_id=group.get("seg", ""),
+                transform_node_id=group.get("transform", ""),
             )
         )
     if not timepoints and scalar_candidates:
@@ -194,11 +197,12 @@ def _plan_timepoint(
         trab_mask_path=_optional_path(directory, stem, "mask-trab", timepoint.trab_mask_node_id),
         cort_mask_path=_optional_path(directory, stem, "mask-cort", timepoint.cort_mask_node_id),
         seg_mask_path=_optional_path(directory, stem, "mask-seg", timepoint.seg_mask_node_id),
+        transform_path=_optional_path(directory, stem, "transform", timepoint.transform_node_id, suffix_ext=".tfm"),
     )
 
 
-def _optional_path(directory: Path, stem: str, suffix: str, node_id: str) -> Path | None:
-    return directory / f"{stem}_{suffix}.nii.gz" if node_id.strip() else None
+def _optional_path(directory: Path, stem: str, suffix: str, node_id: str, *, suffix_ext: str = ".nii.gz") -> Path | None:
+    return directory / f"{stem}_{suffix}{suffix_ext}" if node_id.strip() else None
 
 
 def _clean_token(value: str, prefix: str) -> str:
@@ -224,6 +228,8 @@ def _infer_scene_role(candidate: TimelapsedSceneNodeCandidate) -> str:
     node_class = str(candidate.node_class or "")
     is_scalar = "ScalarVolume" in node_class
     is_mask_node = "LabelMapVolume" in node_class or "Segmentation" in node_class
+    if "Transform" in node_class:
+        return "transform"
     if is_mask_node:
         if any(token in text for token in ("mask-full", "full-mask", "periosteal", "peri", "mask_full")):
             return "full"
