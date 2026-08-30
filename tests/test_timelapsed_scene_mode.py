@@ -94,6 +94,12 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self.layout.addWidget(statusBox)" in source
     assert "self.layout.addWidget(self.logText)" in source
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
+    assert 'self._set_stage_status("dataset", "done")' in source
+    assert 'self._set_stage_status("parse", "done")' in source
+    assert 'for stage in ("masks", "registration", "analysis")' in source
+    assert 'order = ["dataset", "parse", "masks", "registration", "analysis"]' in source
+    assert 'self._set_scene_stage_message(text)' in source
+    assert "def _set_scene_stage_message" in source
     assert "except Exception as exc" in source
     assert "self._resize_scene_timepoint_table()" in source
     assert "_scene_timepoint_visible_rows" in source

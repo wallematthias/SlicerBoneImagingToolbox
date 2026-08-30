@@ -1786,11 +1786,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay(str(exc))
             return
 
-        self._active_stage = "masks"
         self._is_full_pipeline_run = True
         self._run_skips_mask_generation = not self._scene_generate_missing_masks()
         self._run_includes_analysis = True
         self._last_scene_plan = plan
+        self._set_stage_status("dataset", "done")
+        self._set_stage_status("parse", "done")
+        for stage in ("masks", "registration", "analysis"):
+            self._set_stage_status(stage, "pending")
+        if self._run_skips_mask_generation:
+            self._set_stage_status("masks", "done")
+            self._active_stage = "registration"
+        else:
+            self._active_stage = "masks"
         self._run(
             timelapsed_scene_run_args(
                 plan,
@@ -1843,15 +1851,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         def mark_running(stage):
-            order = ["masks", "registration", "analysis"]
+            order = ["dataset", "parse", "masks", "registration", "analysis"]
             if stage not in order:
                 return
             for previous in order[: order.index(stage)]:
                 if self._stage_states.get(previous) not in {"done", "error"}:
                     self._set_stage_status(previous, "done")
-            if self._stage_states.get(stage) != "error":
+            if self._stage_states.get(stage) not in {"done", "error"}:
                 self._set_stage_status(stage, "running")
                 self._active_stage = stage
+
+        if "discovered" in text or "scene run from loaded nodes" in text or "import" in text:
+            mark_running("parse")
+            return
 
         if (
             "mask generation for" in text
@@ -1876,6 +1888,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         if "[analysis]" in text or "analyse:" in text:
             mark_running("analysis")
+
+    def _set_scene_stage_message(self, text):
+        if not getattr(self, "_last_scene_plan", None):
+            return
+        if hasattr(self, "sceneStatusLabel") and self.sceneStatusLabel is not None:
+            self.sceneStatusLabel.text = str(text)
 
     def _set_user_message(self, level, title, body):
         palette = {
@@ -1939,6 +1957,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
         if hasattr(self, "currentStepLabel") and self.currentStepLabel is not None:
             self.currentStepLabel.text = text
+        self._set_scene_stage_message(text)
 
     def _connect_path_changed(self, widget, callback):
         for signal_name in ("currentPathChanged", "pathChanged"):
