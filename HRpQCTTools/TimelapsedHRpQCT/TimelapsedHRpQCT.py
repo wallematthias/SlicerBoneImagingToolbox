@@ -1451,7 +1451,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addWidget(sceneResultsBox)
 
     def _resize_scene_timepoint_table(self):
-        visible_rows = max(2, min(int(self.sceneTimepointTable.rowCount), 4))
+        visible_rows = self._scene_timepoint_visible_rows()
         try:
             header_height = int(self.sceneTimepointTable.horizontalHeader().height())
             row_height = int(self.sceneTimepointTable.verticalHeader().defaultSectionSize())
@@ -1464,6 +1464,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneTimepointTable.setMaximumHeight(height)
         self._resize_timelapsed_mode_tabs()
 
+    def _scene_timepoint_visible_rows(self):
+        row_count = int(self.sceneTimepointTable.rowCount)
+        return max(2, min(row_count, 8))
+
     def _resize_timelapsed_mode_tabs(self):
         if not hasattr(self, "timelapsedModeTabs"):
             return
@@ -1472,7 +1476,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             current_index = current_index()
         if int(current_index) == 0 and hasattr(self, "sceneTimepointTable"):
             height = int(getattr(self, "_scene_timepoint_table_height", 100))
-            self.timelapsedModeTabs.setMaximumHeight(min(430, height + 170))
+            self.timelapsedModeTabs.setMaximumHeight(min(560, height + 220))
         else:
             self.timelapsedModeTabs.setMaximumHeight(520)
 

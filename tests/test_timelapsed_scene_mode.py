@@ -83,8 +83,11 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
     assert "except Exception as exc" in source
     assert "self._resize_scene_timepoint_table()" in source
+    assert "_scene_timepoint_visible_rows" in source
+    assert "min(row_count, 8)" in source
+    assert "max(2, min(row_count, 8))" in source
     assert "ScrollBarAsNeeded" in source
-    assert "setMaximumHeight(min(430" in source
+    assert "setMaximumHeight(min(560" in source
     assert "layout.setContentsMargins(0, 0, 0, 0)" in source
     assert 'env.insert("PYTHONPATH", os.environ["PYTHONPATH"])' in source
     assert "_resolve_local_pipeline_paths" in source
