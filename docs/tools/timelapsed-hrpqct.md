@@ -25,6 +25,17 @@ https://github.com/wallematthias/TimelapsedHRpQCT
 
 ## Basic Workflow
 
+The module has two modes:
+
+- `Scene` uses volumes and masks already loaded in Slicer for a small explicit longitudinal series.
+- `Batch` discovers scans from a dataset folder and writes reproducible cohort outputs.
+
+## Scene Mode
+
+Use `Scene` when the timepoints are already loaded in Slicer. Add one row per session, select the image node and any available masks, choose a results folder, then run the scene pipeline. The module exports those selected nodes into a scoped scene-run folder and launches the same Timelapsed workflow in the background.
+
+## Batch Mode
+
 1. Select the AIM dataset root.
 2. Click `Parse input`.
 3. Review the parse table and correct site/session values if needed.

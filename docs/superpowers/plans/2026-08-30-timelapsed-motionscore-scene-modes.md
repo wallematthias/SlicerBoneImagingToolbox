@@ -368,4 +368,3 @@ Run:
 git add docs/tools/timelapsed-hrpqct.md docs/tools/motion-scoring.md
 git commit -m "docs: describe Timelapsed and MotionScore scene modes"
 ```
-

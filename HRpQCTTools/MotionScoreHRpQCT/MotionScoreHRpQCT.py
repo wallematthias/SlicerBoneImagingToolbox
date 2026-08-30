@@ -60,6 +60,7 @@ DEFAULT_CACHE_AHEAD_COUNT = 5
 MAX_CACHE_AHEAD_COUNT = 20
 CACHE_WARM_IDLE_DELAY_MS = 2000
 CACHE_WARM_CONTINUE_DELAY_MS = 500
+_QT_OBJECT_BASE = getattr(qt, "QObject", object)
 
 
 def read_tsv(path):
@@ -196,7 +197,7 @@ class MotionScoreHRpQCTLogic(ScriptedLoadableModuleLogic):
         return True
 
 
-class _ProfileWheelEventFilter(qt.QObject):
+class _ProfileWheelEventFilter(_QT_OBJECT_BASE):
     def __init__(self, owner_widget):
         super().__init__()
         self._owner_widget = owner_widget
@@ -208,7 +209,7 @@ class _ProfileWheelEventFilter(qt.QObject):
         return bool(owner._handle_profile_wheel_event(obj, event))
 
 
-class _GradingShortcutEventFilter(qt.QObject):
+class _GradingShortcutEventFilter(_QT_OBJECT_BASE):
     def __init__(self, owner_widget):
         super().__init__()
         self._owner_widget = owner_widget

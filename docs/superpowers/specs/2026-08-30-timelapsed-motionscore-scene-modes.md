@@ -76,4 +76,3 @@ Testing should cover:
 - command construction for background scene runs
 - Slicer Python import smoke for both modules
 - existing focused toolbox tests
-
