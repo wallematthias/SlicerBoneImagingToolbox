@@ -515,7 +515,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._last_results_root_text = ""
         self._slice_scale_bars = {}
         self._suppress_interactive_preview_updates = False
-        self._updating_scene_controls = False
+        self._scene_subject_id = ""
+        self._scene_site = ""
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -1315,14 +1316,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.batchLayout.addWidget(quickBox)
         self.batchLayout.addWidget(parseBox)
         self.batchLayout.addWidget(actionBox)
-        self.batchLayout.addWidget(statusBox)
         self.seriesSummaryBox.visible = False
         self.batchLayout.addWidget(loadBox)
-        self.batchLayout.addWidget(analysisSectionBox)
         self.batchLayout.addWidget(metricsBox)
-        self.batchLayout.addWidget(settingsBox)
-        self.batchLayout.addWidget(self.logText)
         self.batchLayout.addStretch(1)
+        self.layout.addWidget(statusBox)
+        self.layout.addWidget(analysisSectionBox)
+        self.layout.addWidget(settingsBox)
+        self.layout.addWidget(self.logText)
         self._update_dependency_ui()
         self._set_stage_status("dataset", "pending")
         self._set_stage_status("parse", "pending")
@@ -1330,7 +1331,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("registration", "pending")
         self._set_stage_status("analysis", "pending")
         self._update_progress_ui()
-        self._sync_scene_controls_from_batch_controls()
 
     def _build_scene_ui(self, parent):
         def _cap_width(widget, width=220):
@@ -1344,15 +1344,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             label.toolTip = str(help_text)
             return label
 
-        def _slider_spin_row(slider, spin):
-            row = qt.QWidget()
-            row_layout = qt.QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(8)
-            row_layout.addWidget(slider, 1)
-            row_layout.addWidget(spin)
-            return row
-
         layout = qt.QVBoxLayout(parent)
         form = qt.QFormLayout()
         self.sceneProfileCombo = qt.QComboBox()
@@ -1360,13 +1351,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneProfileCombo.currentIndexChanged.connect(self._on_scene_profile_changed)
         self.sceneProfileCombo.toolTip = "Study defaults applied to scene runs."
         _cap_width(self.sceneProfileCombo)
-        self.sceneSubjectEdit = qt.QLineEdit()
-        self.sceneSiteEdit = qt.QLineEdit()
         self.sceneResultsRootPath = ctk.ctkPathLineEdit()
         self.sceneResultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.sceneResultsRootPath.setCurrentPath(str(self._default_scene_results_root()))
-        self.sceneSubjectEdit.toolTip = "Subject label used for this scene run."
-        self.sceneSiteEdit.toolTip = "Site label used for this scene run."
         self.sceneResultsRootPath.toolTip = "Folder that will contain this scene run's derivatives."
         _cap_width(self.sceneResultsRootPath, 360)
         self.sceneMaskPolicyCombo = qt.QComboBox()
@@ -1379,118 +1366,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         form.addRow(_label("Profile", "Study defaults used for registration, mask generation, and remodelling analysis."), self.sceneProfileCombo)
         form.addRow(_label("Results folder", "Folder that will contain this scene run's derivatives."), self.sceneResultsRootPath)
         form.addRow(_label("Missing masks", "Generate missing masks, or leave absent masks unused."), self.sceneMaskPolicyCombo)
-        layout.addLayout(form)
-
-        identifiersBox = ctk.ctkCollapsibleButton()
-        identifiersBox.text = "Identifiers"
-        identifiersBox.collapsed = True
-        identifiersForm = qt.QFormLayout(identifiersBox)
-        identifiersForm.addRow(_label("Subject", "Optional subject label. Blank uses SceneSubject."), self.sceneSubjectEdit)
-        identifiersForm.addRow(_label("Site", "Optional site label. Blank uses scene."), self.sceneSiteEdit)
         self.sceneAppendDiscoveryCheck = qt.QCheckBox("Append to table")
         self.sceneAppendDiscoveryCheck.checked = False
         self.sceneAppendDiscoveryCheck.toolTip = "Append discovered loaded timepoints instead of replacing the current table."
-        identifiersForm.addRow(_label("Discovery", "Append discovered loaded timepoints instead of replacing the table."), self.sceneAppendDiscoveryCheck)
-        layout.addWidget(identifiersBox)
-
-        sceneMaskBox = ctk.ctkCollapsibleButton()
-        sceneMaskBox.text = "Mask Generation"
-        sceneMaskBox.collapsed = True
-        sceneMaskForm = qt.QFormLayout(sceneMaskBox)
-        self.sceneMaskLowerSlider = qt.QSlider(qt.Qt.Horizontal)
-        self.sceneMaskLowerSlider.minimum = -1000
-        self.sceneMaskLowerSlider.maximum = 5000
-        self.sceneMaskLowerSlider.singleStep = 5
-        self.sceneMaskLowerSlider.pageStep = 25
-        self.sceneMaskLower = ctk.ctkDoubleSpinBox()
-        self.sceneMaskLower.minimum = -1000.0
-        self.sceneMaskLower.maximum = 5000.0
-        self.sceneMaskLower.decimals = 0
-        self.sceneMaskLower.singleStep = 5.0
-        self.sceneMaskLower.value = 100.0
-        self.sceneMaskUpperSlider = qt.QSlider(qt.Qt.Horizontal)
-        self.sceneMaskUpperSlider.minimum = -1000
-        self.sceneMaskUpperSlider.maximum = 5000
-        self.sceneMaskUpperSlider.singleStep = 5
-        self.sceneMaskUpperSlider.pageStep = 25
-        self.sceneMaskUpper = ctk.ctkDoubleSpinBox()
-        self.sceneMaskUpper.minimum = -1000.0
-        self.sceneMaskUpper.maximum = 5000.0
-        self.sceneMaskUpper.decimals = 0
-        self.sceneMaskUpper.singleStep = 5.0
-        self.sceneMaskUpper.value = 300.0
-        for widget in (self.sceneMaskLower, self.sceneMaskUpper):
-            _cap_width(widget, 90)
-        self.sceneMaskLowerSlider.valueChanged.connect(
-            lambda value: self._set_scene_mask_threshold_value("lower", value, from_slider=True)
-        )
-        self.sceneMaskLower.editingFinished.connect(
-            lambda: self._set_scene_mask_threshold_value("lower", self.sceneMaskLower.value)
-        )
-        self.sceneMaskUpperSlider.valueChanged.connect(
-            lambda value: self._set_scene_mask_threshold_value("upper", value, from_slider=True)
-        )
-        self.sceneMaskUpper.editingFinished.connect(
-            lambda: self._set_scene_mask_threshold_value("upper", self.sceneMaskUpper.value)
-        )
-        sceneMaskForm.addRow(
-            _label("Lower threshold", "Lower segmentation threshold used when missing masks are generated."),
-            _slider_spin_row(self.sceneMaskLowerSlider, self.sceneMaskLower),
-        )
-        sceneMaskForm.addRow(
-            _label("Upper threshold", "Upper segmentation threshold used when missing masks are generated."),
-            _slider_spin_row(self.sceneMaskUpperSlider, self.sceneMaskUpper),
-        )
-        layout.addWidget(sceneMaskBox)
-
-        sceneAnalysisBox = ctk.ctkCollapsibleButton()
-        sceneAnalysisBox.text = "Analysis Options"
-        sceneAnalysisBox.collapsed = True
-        sceneAnalysisForm = qt.QFormLayout(sceneAnalysisBox)
-        self.sceneAnalysisThresholdSlider = qt.QSlider(qt.Qt.Horizontal)
-        self.sceneAnalysisThresholdSlider.minimum = 0
-        self.sceneAnalysisThresholdSlider.maximum = 1000
-        self.sceneAnalysisThresholdSlider.singleStep = 5
-        self.sceneAnalysisThresholdSlider.pageStep = 25
-        self.sceneAnalysisThreshold = ctk.ctkDoubleSpinBox()
-        self.sceneAnalysisThreshold.minimum = 0.0
-        self.sceneAnalysisThreshold.maximum = 1000.0
-        self.sceneAnalysisThreshold.decimals = 0
-        self.sceneAnalysisThreshold.singleStep = 5.0
-        self.sceneAnalysisThreshold.value = 225.0
-        self.sceneAnalysisClusterSlider = qt.QSlider(qt.Qt.Horizontal)
-        self.sceneAnalysisClusterSlider.minimum = 0
-        self.sceneAnalysisClusterSlider.maximum = 30
-        self.sceneAnalysisClusterSlider.singleStep = 1
-        self.sceneAnalysisClusterSlider.pageStep = 5
-        self.sceneAnalysisCluster = qt.QSpinBox()
-        self.sceneAnalysisCluster.minimum = 0
-        self.sceneAnalysisCluster.maximum = 30
-        self.sceneAnalysisCluster.singleStep = 1
-        self.sceneAnalysisCluster.value = 12
-        for widget in (self.sceneAnalysisThreshold, self.sceneAnalysisCluster):
-            _cap_width(widget, 90)
-        self.sceneAnalysisThresholdSlider.valueChanged.connect(
-            lambda value: self._set_scene_analysis_threshold_value(value, from_slider=True)
-        )
-        self.sceneAnalysisThreshold.editingFinished.connect(
-            lambda: self._set_scene_analysis_threshold_value(self.sceneAnalysisThreshold.value)
-        )
-        self.sceneAnalysisClusterSlider.valueChanged.connect(
-            lambda value: self._set_scene_analysis_cluster_value(value, from_slider=True)
-        )
-        self.sceneAnalysisCluster.editingFinished.connect(
-            lambda: self._set_scene_analysis_cluster_value(self.sceneAnalysisCluster.value)
-        )
-        sceneAnalysisForm.addRow(
-            _label("Threshold", "Absolute density-change threshold for formation/resorption detection."),
-            _slider_spin_row(self.sceneAnalysisThresholdSlider, self.sceneAnalysisThreshold),
-        )
-        sceneAnalysisForm.addRow(
-            _label("Cluster size", "Minimum connected event size retained in remodelling maps."),
-            _slider_spin_row(self.sceneAnalysisClusterSlider, self.sceneAnalysisCluster),
-        )
-        layout.addWidget(sceneAnalysisBox)
+        form.addRow(_label("Discovery", "Append discovered loaded timepoints instead of replacing the table."), self.sceneAppendDiscoveryCheck)
+        layout.addLayout(form)
 
         self.sceneTimepointTable = qt.QTableWidget()
         self.sceneTimepointTable.setColumnCount(6)
@@ -1537,8 +1417,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return str(combo.currentData or "generate") == "generate"
 
     def _on_scene_profile_changed(self, *_args):
-        if self._updating_scene_controls:
-            return
         if hasattr(self, "studyProfileCombo"):
             selected = self.sceneProfileCombo.currentData
             index = self.studyProfileCombo.findData(selected)
@@ -1547,57 +1425,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             else:
                 self._on_apply_study_profile()
 
-    def _sync_scene_controls_from_batch_controls(self):
-        if not hasattr(self, "sceneAnalysisThresholdSlider"):
+    def _sync_scene_profile_from_batch_profile(self):
+        if not hasattr(self, "sceneProfileCombo") or not hasattr(self, "studyProfileCombo"):
             return
-        self._updating_scene_controls = True
+        selected = self.studyProfileCombo.currentData
+        index = self.sceneProfileCombo.findData(selected)
+        if index < 0 or self.sceneProfileCombo.currentIndex == index:
+            return
+        previous = self.sceneProfileCombo.blockSignals(True)
         try:
-            if hasattr(self, "maskLow"):
-                self._set_scene_mask_threshold_value("lower", self.maskLow.value, update_batch=False)
-            if hasattr(self, "maskHigh"):
-                self._set_scene_mask_threshold_value("upper", self.maskHigh.value, update_batch=False)
-            if hasattr(self, "analysisThreshold"):
-                self._set_scene_analysis_threshold_value(self.analysisThreshold.value, update_batch=False)
-            if hasattr(self, "analysisCluster"):
-                self._set_scene_analysis_cluster_value(self.analysisCluster.value, update_batch=False)
-            if hasattr(self, "studyProfileCombo") and hasattr(self, "sceneProfileCombo"):
-                selected = self.studyProfileCombo.currentData
-                index = self.sceneProfileCombo.findData(selected)
-                if index >= 0:
-                    self.sceneProfileCombo.setCurrentIndex(index)
+            self.sceneProfileCombo.setCurrentIndex(index)
         finally:
-            self._updating_scene_controls = False
-
-    def _set_scene_mask_threshold_value(self, role, value, *, from_slider=False, update_batch=True):
-        clamped = max(-1000, min(5000, int(round(float(value) / 5.0) * 5)))
-        slider = self.sceneMaskLowerSlider if role == "lower" else self.sceneMaskUpperSlider
-        spin = self.sceneMaskLower if role == "lower" else self.sceneMaskUpper
-        if int(slider.value) != clamped:
-            slider.value = clamped
-        if float(spin.value) != float(clamped):
-            spin.value = float(clamped)
-        if update_batch and not self._updating_scene_controls:
-            target = getattr(self, "maskLow" if role == "lower" else "maskHigh", None)
-            if target is not None:
-                target.value = float(clamped)
-
-    def _set_scene_analysis_threshold_value(self, value, *, from_slider=False, update_batch=True):
-        clamped = max(0, min(1000, int(round(float(value) / 5.0) * 5)))
-        if int(self.sceneAnalysisThresholdSlider.value) != clamped:
-            self.sceneAnalysisThresholdSlider.value = clamped
-        if float(self.sceneAnalysisThreshold.value) != float(clamped):
-            self.sceneAnalysisThreshold.value = float(clamped)
-        if update_batch and not self._updating_scene_controls and hasattr(self, "analysisThreshold"):
-            self._set_analysis_threshold_value(clamped, from_slider=from_slider, queue_update=False)
-
-    def _set_scene_analysis_cluster_value(self, value, *, from_slider=False, update_batch=True):
-        clamped = max(0, min(30, int(round(float(value)))))
-        if int(self.sceneAnalysisClusterSlider.value) != clamped:
-            self.sceneAnalysisClusterSlider.value = clamped
-        if int(self.sceneAnalysisCluster.value) != clamped:
-            self.sceneAnalysisCluster.value = clamped
-        if update_batch and not self._updating_scene_controls and hasattr(self, "analysisCluster"):
-            self._set_analysis_cluster_value(clamped, from_slider=from_slider, queue_update=False)
+            self.sceneProfileCombo.blockSignals(previous)
 
     def _scene_node_selector(self, node_types):
         selector = slicer.qMRMLNodeComboBox()
@@ -1697,10 +1536,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.sceneTimepointTable.setRowCount(0)
         for timepoint in discovery.timepoints:
             self._add_scene_timepoint(timepoint)
-        if discovery.subject_id and not str(self.sceneSubjectEdit.text or "").strip():
-            self.sceneSubjectEdit.text = discovery.subject_id
-        if discovery.site and not str(self.sceneSiteEdit.text or "").strip():
-            self.sceneSiteEdit.text = discovery.site
+        if discovery.subject_id:
+            self._scene_subject_id = discovery.subject_id
+        if discovery.site:
+            self._scene_site = discovery.site
         count = len(discovery.timepoints)
         self.sceneStatusLabel.text = (
             f"Best guess: {discovery.image_count} image(s), {discovery.matched_mask_count}/"
@@ -1772,10 +1611,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             results_root = str(self._default_scene_results_root())
             self.sceneResultsRootPath.setCurrentPath(results_root)
         try:
+            self.sceneStatusLabel.text = "Preparing scene run..."
+            self._show("[timelapsed-slicer] preparing scene run from loaded nodes.")
             plan = build_timelapsed_scene_plan(
                 results_root=results_root,
-                subject_id=self.sceneSubjectEdit.text,
-                site=self.sceneSiteEdit.text,
+                subject_id=self._scene_subject_id,
+                site=self._scene_site,
                 timepoints=self._scene_timepoints(),
                 run_id=datetime.now().strftime("%Y%m%d_%H%M%S_%f"),
             )
@@ -1796,7 +1637,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             cfg = self.logic.create_override_config(
                 self._settings_override(), results_root=plan.output_root
             )
-        except (ValueError, RuntimeError) as exc:
+        except Exception as exc:
+            self.sceneStatusLabel.text = f"Scene run could not start: {exc}"
+            self._show(f"[timelapsed-slicer] scene run could not start: {exc}")
             slicer.util.errorDisplay(str(exc))
             return
 
@@ -2313,7 +2156,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         self._on_mask_method_changed(self.maskMethod.currentText)
         self._on_analysis_method_changed()
-        self._sync_scene_controls_from_batch_controls()
+        self._sync_scene_profile_from_batch_profile()
         if source_label and hasattr(self, "userMessageLabel"):
             self._set_user_message("info", "Profile applied", source_label)
 

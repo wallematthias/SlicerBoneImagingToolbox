@@ -32,11 +32,19 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Missing masks" in source
     assert 'addItem("Generate", "generate")' in source
     assert 'addItem("None", "none")' in source
-    assert "Identifiers" in source
-    assert "Mask Generation" in source
+    assert "identifiersBox" not in source
+    assert "sceneSubjectEdit" not in source
+    assert "sceneSiteEdit" not in source
+    assert "sceneAnalysisThresholdSlider" not in source
+    assert "sceneMaskLowerSlider" not in source
     assert "Analysis Options" in source
-    assert "sceneAnalysisThresholdSlider" in source
-    assert "sceneAnalysisClusterSlider" in source
+    assert "Advanced Settings" in source
+    assert "self.layout.addWidget(analysisSectionBox)" in source
+    assert "self.layout.addWidget(settingsBox)" in source
+    assert "self.layout.addWidget(statusBox)" in source
+    assert "self.layout.addWidget(self.logText)" in source
+    assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
+    assert "except Exception as exc" in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source
