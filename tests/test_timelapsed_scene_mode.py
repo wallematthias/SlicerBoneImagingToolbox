@@ -37,8 +37,10 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "actions.addWidget(self.sceneRunButton)" not in source
     assert "layout.addWidget(self.sceneRunButton)" in source
     assert "self.sceneStageLabels = {}" in source
+    assert "stageLayout = qt.QVBoxLayout(stageRow)" in source
     assert 'for key, title in [("dataset", "Dataset"), ("parse", "Parse"), ("masks", "Masks"), ("registration", "Registration"), ("analysis", "Analysis")]' in source
     assert "self.sceneStageLabels[stage_key].setText" in source
+    assert "f\"<b>{title}</b>: <span style='color:{color}; font-weight:700'>{dot}</span> {label}\"" in source
     assert 'qt.QGroupBox("Scene Results")' not in source
     assert "self.sceneResultsTable" not in source
     assert "_load_scene_results_table" in source

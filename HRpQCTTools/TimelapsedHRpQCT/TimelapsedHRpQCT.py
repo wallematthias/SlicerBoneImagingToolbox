@@ -1441,16 +1441,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addLayout(actions)
         layout.addWidget(self.sceneRunButton)
         stageRow = qt.QWidget()
-        stageLayout = qt.QHBoxLayout(stageRow)
+        stageLayout = qt.QVBoxLayout(stageRow)
         stageLayout.setContentsMargins(0, 0, 0, 0)
-        stageLayout.setSpacing(8)
+        stageLayout.setSpacing(2)
         self.sceneStageLabels = {}
         for key, title in [("dataset", "Dataset"), ("parse", "Parse"), ("masks", "Masks"), ("registration", "Registration"), ("analysis", "Analysis")]:
-            label = qt.QLabel(f"<span style='color:#888888; font-weight:700'>●</span> {title}")
+            label = qt.QLabel(f"<b>{title}</b>: <span style='color:#888888; font-weight:700'>●</span> Pending")
             label.toolTip = f"Scene pipeline status for {title.lower()}."
             self.sceneStageLabels[key] = label
             stageLayout.addWidget(label)
-        stageLayout.addStretch(1)
         layout.addWidget(stageRow)
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
@@ -1955,7 +1954,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "analysis": "Analysis",
             }.get(stage_key, stage_key)
             self.sceneStageLabels[stage_key].setText(
-                f"<span style='color:{color}; font-weight:700'>{dot}</span> {title}"
+                f"<b>{title}</b>: <span style='color:{color}; font-weight:700'>{dot}</span> {label}"
             )
         self._update_progress_ui()
 
