@@ -4469,11 +4469,39 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         cache_key = str(Path(source_path).resolve())
         cached = self._interactive_preview_cache.get(cache_key)
         if cached is not None:
-            return cached.get("valid_mask")
+            return self._display_valid_mask_for_preview_inputs(cached)
         try:
-            return self._get_interactive_preview_inputs(source_path).get("valid_mask")
+            preview_inputs = self._get_interactive_preview_inputs(source_path)
+            return self._display_valid_mask_for_preview_inputs(preview_inputs)
         except Exception:
             return None
+
+    def _display_valid_mask_for_preview_inputs(self, preview_inputs):
+        valid_mask = preview_inputs.get("valid_mask")
+        if str(preview_inputs.get("context", {}).get("compartment", "")) != "full":
+            return valid_mask
+
+        support0 = preview_inputs.get("support_mask_t0")
+        support1 = preview_inputs.get("support_mask_t1")
+        if support0 is None or support1 is None:
+            return valid_mask
+
+        try:
+            from timelapsedhrpqct.analysis import dilate_mask_xy, erode_mask
+
+            support0 = np.asarray(support0, dtype=bool)
+            support1 = np.asarray(support1, dtype=bool)
+            if valid_mask is not None and (
+                support0.shape != np.asarray(valid_mask).shape
+                or support1.shape != np.asarray(valid_mask).shape
+            ):
+                return valid_mask
+            if int(self.analysisFullMaskDilation.value) > 0:
+                support0 = dilate_mask_xy(support0, int(self.analysisFullMaskDilation.value))
+                support1 = dilate_mask_xy(support1, int(self.analysisFullMaskDilation.value))
+            return erode_mask(support0 & support1, int(self._analysis_erosion_voxels))
+        except Exception:
+            return valid_mask
 
     def _infer_results_root_from_path(self, path_obj):
         p = Path(path_obj).resolve()
@@ -4952,16 +4980,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_interactive_preview_busy(True, "Updating remodelling preview...")
         try:
             preview_inputs = self._get_interactive_preview_inputs(source_path)
-            from timelapsedhrpqct.analysis import compute_pair_remodelling_preview, dilate_mask_xy, erode_mask
+            from timelapsedhrpqct.analysis import compute_pair_remodelling_preview
 
-            valid_mask = preview_inputs["valid_mask"]
-            if str(preview_inputs.get("context", {}).get("compartment", "")) == "full":
-                support0 = np.asarray(preview_inputs.get("support_mask_t0"), dtype=bool)
-                support1 = np.asarray(preview_inputs.get("support_mask_t1"), dtype=bool)
-                if int(self.analysisFullMaskDilation.value) > 0:
-                    support0 = dilate_mask_xy(support0, int(self.analysisFullMaskDilation.value))
-                    support1 = dilate_mask_xy(support1, int(self.analysisFullMaskDilation.value))
-                valid_mask = erode_mask(support0 & support1, int(self._analysis_erosion_voxels))
+            valid_mask = self._display_valid_mask_for_preview_inputs(preview_inputs)
 
             preview = self._compute_pair_remodelling_preview_compat(
                 compute_pair_remodelling_preview,

@@ -167,6 +167,23 @@ def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     assert "_scene_processed_subject_site(plan)" in source
     assert "_seed_scene_transform_registry(plan)" in source
     assert "_select_first_scene_remodelling_output" in source
+
+
+def test_scene_remodelling_loadback_uses_interactive_display_mask() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "def _display_valid_mask_for_preview_inputs" in source
+    valid_mask_lookup = source.split("    def _get_valid_mask_for_source", 1)[1].split("\n    def ", 1)[0]
+    assert "self._display_valid_mask_for_preview_inputs(preview_inputs)" in valid_mask_lookup
+    interactive_update = source.split("    def _on_apply_interactive_remodelling", 1)[1].split("\n    def ", 1)[0]
+    assert "valid_mask = self._display_valid_mask_for_preview_inputs(preview_inputs)" in interactive_update
+    assert 'str(preview_inputs.get("context", {}).get("compartment", "")) == "full"' not in interactive_update
     assert "_refresh_pair_metrics_for_current_selection()" in source
 
 
