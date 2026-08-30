@@ -1442,14 +1442,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         layout.addWidget(self.sceneRunButton)
         stageRow = qt.QWidget()
         stageLayout = qt.QVBoxLayout(stageRow)
-        stageLayout.setContentsMargins(0, 0, 0, 0)
-        stageLayout.setSpacing(2)
+        stageLayout.setContentsMargins(4, 4, 4, 4)
+        stageLayout.setSpacing(4)
         self.sceneStageLabels = {}
         for key, title in [("dataset", "Dataset"), ("parse", "Parse"), ("masks", "Masks"), ("registration", "Registration"), ("analysis", "Analysis")]:
-            label = qt.QLabel(f"<b>{title}</b>: <span style='color:#888888; font-weight:700'>●</span> Pending")
-            label.toolTip = f"Scene pipeline status for {title.lower()}."
-            self.sceneStageLabels[key] = label
-            stageLayout.addWidget(label)
+            row = qt.QWidget()
+            row_layout = qt.QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(10)
+            name_label = qt.QLabel(f"{title}:")
+            name_label.setMinimumWidth(92)
+            status_label = qt.QLabel("<span style='color:#888888; font-weight:700'>●</span> Pending")
+            status_label.toolTip = f"Scene pipeline status for {title.lower()}."
+            self.sceneStageLabels[key] = status_label
+            row_layout.addWidget(name_label)
+            row_layout.addWidget(status_label)
+            row_layout.addStretch(1)
+            stageLayout.addWidget(row)
         layout.addWidget(stageRow)
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
@@ -1946,15 +1955,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         dot, color, label = style.get(status, style["pending"])
         self.stageLabels[stage_key].setText(f"<span style='color:{color}; font-weight:700'>{dot}</span> {label}")
         if hasattr(self, "sceneStageLabels") and stage_key in self.sceneStageLabels:
-            title = {
-                "dataset": "Dataset",
-                "parse": "Parse",
-                "masks": "Masks",
-                "registration": "Registration",
-                "analysis": "Analysis",
-            }.get(stage_key, stage_key)
             self.sceneStageLabels[stage_key].setText(
-                f"<b>{title}</b>: <span style='color:{color}; font-weight:700'>{dot}</span> {label}"
+                f"<span style='color:{color}; font-weight:700'>{dot}</span> {label}"
             )
         self._update_progress_ui()
 
