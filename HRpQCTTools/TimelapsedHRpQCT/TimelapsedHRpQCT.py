@@ -568,7 +568,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.timelapsedModeTabs = qt.QTabWidget()
         self.timelapsedModeTabs.setMaximumHeight(520)
         self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)
-        self.timelapsedModeTabs.currentChanged.connect(lambda *_args: self._resize_timelapsed_mode_tabs())
+        self.timelapsedModeTabs.currentChanged.connect(self._on_timelapsed_mode_changed)
         scenePage = qt.QWidget()
         batchPage = qt.QWidget()
         self.timelapsedModeTabs.addTab(scenePage, "Scene")
@@ -1354,6 +1354,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("registration", "pending")
         self._set_stage_status("analysis", "pending")
         self._update_progress_ui()
+        self._on_timelapsed_mode_changed()
 
     def _build_scene_ui(self, parent):
         def _cap_width(widget, width=220):
@@ -1433,23 +1434,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
 
-        sceneResultsBox = qt.QGroupBox("Scene Results")
-        sceneResultsLayout = qt.QVBoxLayout(sceneResultsBox)
-        sceneResultsLayout.setContentsMargins(6, 6, 6, 6)
-        sceneResultsLayout.setSpacing(4)
-        self.sceneResultsTable = qt.QTableWidget()
-        self.sceneResultsTable.setColumnCount(6)
-        self.sceneResultsTable.setHorizontalHeaderLabels(["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"])
-        self.sceneResultsTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
-        self.sceneResultsTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
-        self.sceneResultsTable.verticalHeader().setVisible(False)
-        self.sceneResultsTable.horizontalHeader().setStretchLastSection(True)
-        self.sceneResultsTable.setMinimumHeight(90)
-        self.sceneResultsTable.setMaximumHeight(160)
-        self.sceneResultsTable.toolTip = "Saved pairwise formation, resorption, activity, and net-change fractions for the scene run."
-        sceneResultsLayout.addWidget(self.sceneResultsTable)
-        layout.addWidget(sceneResultsBox)
-
     def _resize_scene_timepoint_table(self):
         visible_rows = self._scene_timepoint_visible_rows()
         try:
@@ -1475,6 +1459,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _scene_timepoint_visible_rows(self):
         row_count = int(self.sceneTimepointTable.rowCount)
         return max(2, min(row_count, 8))
+
+    def _on_timelapsed_mode_changed(self, *_args):
+        self._resize_timelapsed_mode_tabs()
+        if not hasattr(self, "timelapsedModeTabs"):
+            return
+        current_index = self.timelapsedModeTabs.currentIndex
+        if callable(current_index):
+            current_index = current_index()
+        scene_mode = int(current_index) == 0
+        if hasattr(self, "runAnalysisBtn"):
+            self.runAnalysisBtn.visible = not scene_mode
+        if hasattr(self, "seriesSummaryBox"):
+            self.seriesSummaryBox.visible = not scene_mode
 
     def _resize_timelapsed_mode_tabs(self):
         if not hasattr(self, "timelapsedModeTabs"):
@@ -6228,19 +6225,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._show(f"[scene] could not show scene results table in Slicer table view: {exc}")
 
     def _load_scene_results_table(self, plan):
-        if hasattr(self, "sceneResultsTable"):
-            self.sceneResultsTable.setRowCount(0)
         rows = self._scene_result_rows(plan)
         if not rows:
             return 0
 
-        if hasattr(self, "sceneResultsTable"):
-            self.sceneResultsTable.setRowCount(len(rows))
-            for row_idx, values in enumerate(rows):
-                for col_idx, value in enumerate(values):
-                    item = qt.QTableWidgetItem(str(value))
-                    self.sceneResultsTable.setItem(row_idx, col_idx, item)
-            self.sceneResultsTable.resizeColumnsToContents()
         self._load_scene_results_table_node(rows, plan)
         self._show(f"[scene] Loaded scene results table with {len(rows)} row(s).")
         return len(rows)

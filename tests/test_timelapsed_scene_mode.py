@@ -28,8 +28,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Discover Loaded Timepoints" in source
     assert "Append to table" in source
     assert "Initial transform" in source
-    assert "Scene Results" in source
-    assert "self.sceneResultsTable" in source
+    assert 'qt.QGroupBox("Scene Results")' not in source
+    assert "self.sceneResultsTable" not in source
     assert "_load_scene_results_table" in source
     assert "_load_scene_results_table_node" in source
     assert "_show_scene_results_table_node" in source
@@ -37,6 +37,9 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "SetActiveTableID" in source
     assert "PropagateTableSelection" in source
     assert "GetLayoutWithTable" in source
+    assert "currentChanged.connect(self._on_timelapsed_mode_changed)" in source
+    assert "def _on_timelapsed_mode_changed" in source
+    assert "self.runAnalysisBtn.visible = not scene_mode" in source
     assert "_clear_loaded_review_nodes()" in source
     assert "_scene_processed_subject_site" in source
     assert "candidate.parent.name == \"derivatives\"" in source
@@ -123,7 +126,6 @@ def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     )
     source = module_path.read_text(encoding="utf-8")
 
-    assert 'setHorizontalHeaderLabels(["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"])' in source
     assert "TimelapsedHRpQCT Scene Results" in source
     assert "formation_frac_bv0" in source
     assert "resorption_frac_bv0" in source
