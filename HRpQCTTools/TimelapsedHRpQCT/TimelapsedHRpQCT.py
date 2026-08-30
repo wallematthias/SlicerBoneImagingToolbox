@@ -1419,13 +1419,41 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
         return timepoints
 
-    def _export_scene_node(self, node_id, path):
+    def _export_scene_node(self, node_id, path, reference_node_id=None):
         node = slicer.mrmlScene.GetNodeByID(node_id)
         if node is None:
             raise ValueError(f"Selected scene node is no longer available: {node_id}")
+        node_to_save = node
+        temporary_node = None
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not slicer.util.saveNode(node, str(path)):
-            raise RuntimeError(f"Could not export {node.GetName()} to {path}")
+        try:
+            if node.IsA("vtkMRMLSegmentationNode"):
+                reference_node = (
+                    slicer.mrmlScene.GetNodeByID(reference_node_id)
+                    if reference_node_id
+                    else None
+                )
+                if reference_node is None:
+                    raise ValueError(
+                        f"Segmentation export for {node.GetName()} requires a timepoint image geometry."
+                    )
+                temporary_node = slicer.modules.volumes.logic().CreateAndAddLabelVolume(
+                    reference_node,
+                    f"{node.GetName()}_timelapsed_scene_labelmap",
+                )
+                ok = slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
+                    node,
+                    temporary_node,
+                    slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY,
+                )
+                if not ok:
+                    raise RuntimeError(f"Could not convert {node.GetName()} to a labelmap.")
+                node_to_save = temporary_node
+            if not slicer.util.saveNode(node_to_save, str(path)):
+                raise RuntimeError(f"Could not export {node.GetName()} to {path}")
+        finally:
+            if temporary_node is not None:
+                slicer.mrmlScene.RemoveNode(temporary_node)
 
     def _on_run_scene_pipeline(self):
         if not self._require_pipeline_installed():
@@ -1451,7 +1479,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     (timepoint.seg_mask_node_id, timepoint.seg_mask_path),
                 ]:
                     if node_id and path is not None:
-                        self._export_scene_node(node_id, path)
+                        self._export_scene_node(
+                            node_id,
+                            path,
+                            reference_node_id=timepoint.image_node_id,
+                        )
             cfg = self.logic.create_override_config(
                 self._settings_override(), results_root=plan.output_root
             )

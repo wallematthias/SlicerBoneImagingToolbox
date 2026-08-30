@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 import SimpleITK as sitk
 
 from SlicerBoneImagingToolboxLib.derivatives import (
@@ -271,7 +272,7 @@ def test_xtremect_batch_generates_material_labelmap_from_segmentation_and_masks(
     assert commands[0][0] == str(generated)
     assert generated.exists()
     material = sitk.GetArrayFromImage(sitk.ReadImage(str(generated)))
-    assert int(np.count_nonzero(material == 126)) == 16
+    assert int(np.count_nonzero(material == 100)) == 16
     assert int(np.count_nonzero(material == 127)) == 8
 
 
@@ -289,7 +290,28 @@ def test_discovered_role_options_do_not_write_generated_masks(tmp_path: Path) ->
     cases = discover_fea_batch_cases(tmp_path)
 
     assert "generated_material_labelmap" in discovered_role_options(cases, "image")
-    assert not (base / "derived_trab_mask.nii.gz").exists()
+    assert not any(base.glob("*derived_mask-trab.nii.gz"))
+
+
+def test_generated_xtremect_material_labelmap_requires_matching_geometry(tmp_path: Path) -> None:
+    """XtremeCT model label generation must not combine masks in different image spaces."""
+    base = tmp_path / "sub-001" / "ses-1" / "site-radius"
+    base.mkdir(parents=True)
+    seg = base / "sub-001_ses-1_site-radius_mask-seg.nii.gz"
+    full = base / "sub-001_ses-1_site-radius_mask-full.nii.gz"
+    cort = base / "sub-001_ses-1_site-radius_mask-cort.nii.gz"
+    arr = np.ones((2, 3, 4), dtype=np.uint8)
+    seg_image = sitk.GetImageFromArray(arr)
+    full_image = sitk.GetImageFromArray(arr)
+    cort_image = sitk.GetImageFromArray(arr)
+    cort_image.SetSpacing((2.0, 1.0, 1.0))
+    for path, image in ((seg, seg_image), (full, full_image), (cort, cort_image)):
+        sitk.WriteImage(image, str(path))
+
+    cases = discover_fea_batch_cases(tmp_path)
+
+    with pytest.raises(ValueError, match="image geometry do not match"):
+        build_parosol_case_commands(tmp_path, cases, workflow="XtremeCTII", dry_run=True)
 
 
 def test_xtremect_readiness_accepts_generated_material_labelmap_provider(tmp_path: Path) -> None:

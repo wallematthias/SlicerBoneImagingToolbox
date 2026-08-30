@@ -474,7 +474,7 @@ def _generate_material_labelmap_artifact(
     case: FEABatchCase,
     *,
     case_id: str,
-    trab_label: int = 126,
+    trab_label: int = 100,
     cort_label: int = 127,
 ) -> FEAArtifact | None:
     seg = case.first_artifact(("segmentation",))
@@ -492,22 +492,22 @@ def _generate_material_labelmap_artifact(
         / "model_labels.nii.gz"
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if not output_path.exists():
-        seg_image = sitk.ReadImage(seg.path)
-        seg_array = sitk.GetArrayFromImage(seg_image) > 0
-        trab_array = sitk.GetArrayFromImage(sitk.ReadImage(trab.path)) > 0
-        cort_array = sitk.GetArrayFromImage(sitk.ReadImage(cort.path)) > 0
-        if seg_array.shape != trab_array.shape or seg_array.shape != cort_array.shape:
-            raise ValueError(
-                "Cannot generate XtremeCT material labelmap because segmentation, "
-                "trabecular mask, and cortical mask shapes do not match."
-            )
-        material = np.zeros(seg_array.shape, dtype=np.uint8)
-        material[seg_array & trab_array] = int(trab_label)
-        material[seg_array & cort_array] = int(cort_label)
-        output_image = sitk.GetImageFromArray(material)
-        output_image.CopyInformation(seg_image)
-        sitk.WriteImage(output_image, str(output_path))
+    seg_image = sitk.ReadImage(seg.path)
+    trab_image = sitk.ReadImage(trab.path)
+    cort_image = sitk.ReadImage(cort.path)
+    _assert_matching_image_geometry(
+        (("segmentation", seg_image), ("trabecular mask", trab_image), ("cortical mask", cort_image)),
+        operation="generate XtremeCT material labelmap",
+    )
+    seg_array = sitk.GetArrayFromImage(seg_image) > 0
+    trab_array = sitk.GetArrayFromImage(trab_image) > 0
+    cort_array = sitk.GetArrayFromImage(cort_image) > 0
+    material = np.zeros(seg_array.shape, dtype=np.uint8)
+    material[seg_array & trab_array] = int(trab_label)
+    material[seg_array & cort_array] = int(cort_label)
+    output_image = sitk.GetImageFromArray(material)
+    output_image.CopyInformation(seg_image)
+    sitk.WriteImage(output_image, str(output_path))
     return FEAArtifact(
         role="generated_material_labelmap",
         path=str(output_path),
@@ -542,23 +542,51 @@ def _derived_compartment_artifact(
 ) -> FEAArtifact | None:
     if trab is None and cort is not None:
         role = "mask_trab"
-        output_name = "derived_trab_mask.nii.gz"
+        output_name = _derived_compartment_filename(case, "trab")
         subtract = cort
     elif cort is None and trab is not None:
         role = "mask_cort"
-        output_name = "derived_cort_mask.nii.gz"
+        output_name = _derived_compartment_filename(case, "cort")
         subtract = trab
     else:
         return None
     output_path = Path(full.path).parent / output_name
-    if not output_path.exists():
-        full_image = sitk.ReadImage(full.path)
-        full_array = sitk.GetArrayFromImage(full_image) > 0
-        subtract_array = sitk.GetArrayFromImage(sitk.ReadImage(subtract.path)) > 0
-        if full_array.shape != subtract_array.shape:
-            raise ValueError("Cannot derive missing compartment mask because mask shapes do not match.")
-        derived = (full_array & ~subtract_array).astype(np.uint8)
-        output_image = sitk.GetImageFromArray(derived)
-        output_image.CopyInformation(full_image)
-        sitk.WriteImage(output_image, str(output_path))
+    full_image = sitk.ReadImage(full.path)
+    subtract_image = sitk.ReadImage(subtract.path)
+    _assert_matching_image_geometry(
+        (("full mask", full_image), (f"{subtract.role} mask", subtract_image)),
+        operation="derive missing compartment mask",
+    )
+    full_array = sitk.GetArrayFromImage(full_image) > 0
+    subtract_array = sitk.GetArrayFromImage(subtract_image) > 0
+    derived = (full_array & ~subtract_array).astype(np.uint8)
+    output_image = sitk.GetImageFromArray(derived)
+    output_image.CopyInformation(full_image)
+    sitk.WriteImage(output_image, str(output_path))
     return FEAArtifact(role=role, path=str(output_path), source="generated", derivative="FEA", space="native")
+
+
+def _derived_compartment_filename(case: FEABatchCase, compartment: str) -> str:
+    return (
+        f"sub-{_clean_token(case.subject_id)}_"
+        f"ses-{_clean_token(case.session_id)}_"
+        f"site-{_clean_token(case.site)}_"
+        f"derived_mask-{compartment}.nii.gz"
+    )
+
+
+def _assert_matching_image_geometry(images: Iterable[tuple[str, sitk.Image]], *, operation: str) -> None:
+    items = tuple(images)
+    if not items:
+        return
+    reference_name, reference = items[0]
+    for name, image in items[1:]:
+        if (
+            tuple(reference.GetSize()) != tuple(image.GetSize())
+            or not np.allclose(reference.GetSpacing(), image.GetSpacing())
+            or not np.allclose(reference.GetOrigin(), image.GetOrigin())
+            or not np.allclose(reference.GetDirection(), image.GetDirection())
+        ):
+            raise ValueError(
+                f"Cannot {operation} because {reference_name} and {name} image geometry do not match."
+            )

@@ -188,7 +188,7 @@ def test_motionscore_scene_predict_args_can_run_manual_only(tmp_path):
         device="auto",
     )
 
-    assert args[:2] == ["predict", str(plan.input_root)]
+    assert args[0] == str(plan.volume_npz_path)
     assert "--manual-only" in args
     assert "--output-root" in args
 ```
@@ -301,7 +301,7 @@ Create `self.motionScoreModeTabs = qt.QTabWidget()`. Add `Scene` and `Batch` pag
 
 - [ ] **Step 4: Add scene scoring controls**
 
-Add volume selector, scan id, subject id, site, session id, results root, model profile reuse, run mode, reviewer, and run button. Implement `onRunScenePredict` to export the selected volume to the helper plan image path, launch `motionscore predict` through `_run_cli`, then refresh review outputs on completion.
+Add volume selector, scan id, subject id, site, session id, results root, model profile reuse, run mode, reviewer, and run button. Implement `onRunScenePredict` to export the selected volume to the helper plan NPZ path, launch the toolbox scene runner through `_run_cli`, then refresh review outputs on completion.
 
 - [ ] **Step 5: Verify**
 

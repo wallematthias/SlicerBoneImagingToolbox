@@ -115,6 +115,11 @@ class MotionScoreHRpQCTLogic(ScriptedLoadableModuleLogic):
 
         env = qt.QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
+        existing_pythonpath = str(env.value("PYTHONPATH", "") or "")
+        pythonpath_parts = [str(_TOOLBOX_ROOT)]
+        if existing_pythonpath:
+            pythonpath_parts.append(existing_pythonpath)
+        env.insert("PYTHONPATH", os.pathsep.join(pythonpath_parts))
         # Avoid Slicer ITK ImageIO plugin autoloading noise in subprocess logs.
         if env.contains("ITK_AUTOLOAD_PATH"):
             env.remove("ITK_AUTOLOAD_PATH")
@@ -2936,15 +2941,32 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._clear_preload_cache()
 
     def _read_aim_for_preload(self, scan_id, raw_path):
+        raw = Path(raw_path)
+        if raw.suffix.lower() == ".npz":
+            with np.load(raw, allow_pickle=False) as data:
+                if "volume_xyz" not in data:
+                    raise ValueError(f"Scene volume export is missing volume_xyz: {raw}")
+                volume_xyz = np.asarray(data["volume_xyz"])
+                spacing = tuple(float(v) for v in data["spacing"].tolist()) if "spacing" in data else ()
+                origin = tuple(float(v) for v in data["origin"].tolist()) if "origin" in data else ()
+            return {
+                "scan_id": scan_id,
+                "raw_path": str(raw),
+                "node_name": raw.stem,
+                "volume_kji": volume_xyz.transpose(2, 1, 0).copy(),
+                "spacing": spacing,
+                "origin": origin,
+            }
+
         from motionscore.io.aim import read_aim
 
-        aim = read_aim(Path(raw_path), scaling="native")
+        aim = read_aim(raw, scaling="native")
         volume_xyz = aim.data
         volume_kji = volume_xyz.transpose(2, 1, 0).copy()
         return {
             "scan_id": scan_id,
-            "raw_path": str(raw_path),
-            "node_name": Path(raw_path).stem,
+            "raw_path": str(raw),
+            "node_name": raw.stem,
             "volume_kji": volume_kji,
             "spacing": tuple(getattr(aim, "spacing", ()) or ()),
             "origin": tuple(getattr(aim, "origin", ()) or ()),

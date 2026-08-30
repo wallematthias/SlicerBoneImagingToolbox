@@ -59,6 +59,7 @@ def test_timelapsed_scene_run_args_include_existing_pipeline_options(tmp_path: P
     assert args[:2] == ["run", str(plan.input_root)]
     assert "--output-root" in args
     assert str(plan.output_root) in args
+    assert "--allow-scene-images" in args
     assert "--config" in args
 
 
@@ -74,3 +75,31 @@ def test_timelapsed_scene_plan_requires_two_image_timepoints(tmp_path: Path) -> 
             ],
             run_id="scene-test",
         )
+
+
+def test_timelapsed_scene_plan_rejects_duplicate_session_ids(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Duplicate Timelapsed scene session_id"):
+        build_timelapsed_scene_plan(
+            results_root=tmp_path,
+            subject_id="SAMPLE001",
+            site="tibia",
+            timepoints=[
+                TimelapsedSceneTimepoint(session_id="ses-1", image_node_id="v1"),
+                TimelapsedSceneTimepoint(session_id="1", image_node_id="v2"),
+            ],
+            run_id="scene-test",
+        )
+
+
+def test_timelapsed_scene_export_converts_segmentation_nodes_against_reference_geometry() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'node.IsA("vtkMRMLSegmentationNode")' in source
+    assert "ExportAllSegmentsToLabelmapNode" in source
+    assert "EXTENT_REFERENCE_GEOMETRY" in source
+    assert "reference_node_id=timepoint.image_node_id" in source

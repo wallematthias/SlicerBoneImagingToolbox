@@ -41,7 +41,7 @@ Scene mode should support scoring or manual grading of one loaded scalar volume.
 - reviewer
 - run mode: AI prediction or manual review only
 
-The Slicer adapter should use a package-level scene input path whenever available. Until the core package exposes a direct scene-array API, the Slicer module may export the selected volume to a temporary scene-run image and pass that through a small MIDS-like folder to the existing MotionScore CLI. Outputs must be the same prediction/review/index tables used by batch mode so review UI remains shared.
+The Slicer adapter should use a package-level scene input path whenever available. Until the core package exposes a direct scene-array API, the Slicer module exports the selected volume to a compact NPZ scene input and passes it through a small runner that writes the same prediction/review/index tables used by batch mode so review UI remains shared.
 
 ## Derivative Behavior
 

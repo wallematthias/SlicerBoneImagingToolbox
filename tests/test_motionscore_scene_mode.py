@@ -100,3 +100,29 @@ def test_motionscore_scene_predict_args_aliases_runner_args(tmp_path):
     }
 
     assert motionscore_scene_predict_args(plan, **common) == motionscore_scene_runner_args(plan, **common)
+
+
+def test_motionscore_scene_subprocess_can_import_toolbox_runner():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "MotionScoreHRpQCT"
+        / "MotionScoreHRpQCT.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'env.insert("PYTHONPATH"' in source
+    assert "str(_TOOLBOX_ROOT)" in source
+
+
+def test_motionscore_scene_review_loader_accepts_npz_scene_inputs():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "MotionScoreHRpQCT"
+        / "MotionScoreHRpQCT.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'raw.suffix.lower() == ".npz"' in source
+    assert '"volume_xyz" not in data' in source
+    assert 'data["volume_xyz"]' in source
+    assert "volume_xyz.transpose(2, 1, 0).copy()" in source

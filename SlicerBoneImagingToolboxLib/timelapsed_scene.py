@@ -51,6 +51,10 @@ def build_timelapsed_scene_plan(
     selected_timepoints = tuple(timepoints)
     if len(selected_timepoints) < 2 or any(not timepoint.image_node_id.strip() for timepoint in selected_timepoints):
         raise ValueError("Timelapsed scene runs require at least two timepoints with image node ids")
+    session_ids = [_clean_token(timepoint.session_id, "ses") for timepoint in selected_timepoints]
+    duplicate_session_ids = sorted({session_id for session_id in session_ids if session_ids.count(session_id) > 1})
+    if duplicate_session_ids:
+        raise ValueError(f"Duplicate Timelapsed scene session_id: {duplicate_session_ids[0]}")
 
     root = Path(results_root)
     scene_root = root / "derivatives" / "Timelapsed" / "scene_runs" / clean_run_id
@@ -84,6 +88,7 @@ def timelapsed_scene_run_args(
         str(plan.output_root),
         "--mode",
         mode,
+        "--allow-scene-images",
         "--config",
         str(config_path),
     ]

@@ -61,6 +61,16 @@ def test_parosol_module_contains_derivative_output_helpers() -> None:
     assert "_write_parosol_run_derivative_manifest(output_dir, **context)" in load_results_body
 
 
+def test_parosol_fea_manifest_writer_merges_existing_records() -> None:
+    source = PAROSOL_MODULE.read_text(encoding="utf-8")
+    helper_body = source.split("def _write_fea_derivative_manifest", 1)[1].split("\ndef ", 1)[0]
+
+    assert "read_shared_manifest(output_path)" in helper_body
+    assert "if not incoming_records:" in helper_body
+    assert "merged_by_id" in helper_body
+    assert "merged_by_id[record.record_id] = record" in helper_body
+
+
 def test_parosol_derivative_root_helper_uses_bids_like_tokens() -> None:
     source = PAROSOL_MODULE.read_text(encoding="utf-8")
     helper_body = source.split("def _default_fea_derivative_root", 1)[1].split("\ndef ", 1)[0]
