@@ -4263,18 +4263,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         spacing_xyz,
         origin_xyz,
         folder_item_id=None,
+        activate_display=True,
     ):
         node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", name)
         slicer.util.updateVolumeFromArray(node, label_arr_zyx.astype(np.uint8, copy=False))
         node.SetSpacing(float(spacing_xyz[0]), float(spacing_xyz[1]), float(spacing_xyz[2]))
         node.SetOrigin(float(origin_xyz[0]), float(origin_xyz[1]), float(origin_xyz[2]))
         node.CreateDefaultDisplayNodes()
-        self._style_remodelling_labelmap(node)
+        self._style_remodelling_labelmap(node, activate_display=activate_display)
         if folder_item_id is not None:
             self._place_node_in_folder(node, folder_item_id)
         return node
 
-    def _style_remodelling_labelmap(self, label_node):
+    def _style_remodelling_labelmap(self, label_node, *, activate_display=True):
         if label_node is None:
             return
         display = label_node.GetDisplayNode()
@@ -4289,10 +4290,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         display.SetVisibility(True)
         if hasattr(display, "SetOpacity"):
             display.SetOpacity(1.0)
-        try:
-            slicer.util.setSliceViewerLayers(label=label_node, fit=False)
-        except Exception:
-            pass
+        if activate_display:
+            try:
+                slicer.util.setSliceViewerLayers(label=label_node, fit=False)
+            except Exception:
+                pass
 
     def _on_interactive_preview_control_changed(self, *_args):
         if getattr(self, "_suppress_interactive_preview_updates", False):
@@ -4905,7 +4907,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if node is None:
             return False
         try:
-            self._style_remodelling_labelmap(node)
+            scene = slicer.mrmlScene
+            for class_name in ("vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
+                for index in range(scene.GetNumberOfNodesByClass(class_name)):
+                    other_node = scene.GetNthNodeByClass(index, class_name)
+                    if other_node is None:
+                        continue
+                    if str(other_node.GetAttribute("TimelapsedHRpQCT.RemodellingFull") or "") != "1":
+                        continue
+                    display = other_node.GetDisplayNode()
+                    if display is None:
+                        other_node.CreateDefaultDisplayNodes()
+                        display = other_node.GetDisplayNode()
+                    if display is not None:
+                        display.SetVisibility(other_node is node)
+            self._style_remodelling_labelmap(node, activate_display=False)
             slicer.util.setSliceViewerLayers(label=node, fit=False)
             return True
         except Exception as exc:
@@ -4964,6 +4980,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         interactive_cache_key=None,
         valid_mask_zyx=None,
         center_slices=True,
+        activate_display=True,
     ):
         filtered_arr = self._apply_preview_label_filters(label_arr_zyx, valid_mask_zyx=valid_mask_zyx)
         full_seg = None
@@ -4975,6 +4992,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 spacing_xyz=spacing_xyz,
                 origin_xyz=origin_xyz,
                 folder_item_id=folder_item_id,
+                activate_display=activate_display,
             )
             full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingFull", "1")
             if source_path is not None:
@@ -5126,6 +5144,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 idx = self.remodellingFullSegCombo.findData(new_full.GetID())
                 if idx >= 0:
                     self.remodellingFullSegCombo.setCurrentIndex(idx)
+                self._activate_remodelling_display_for_current_selection()
             self._restore_slice_view_state(view_state)
         except Exception as exc:
             self._set_interactive_preview_busy(False, "Update failed")
@@ -5689,6 +5708,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         labelmap_path,
         folder_item_id=None,
         create_full=True,
+        activate_display=True,
     ):
         try:
             remodelling_img = sitk.ReadImage(str(labelmap_path))
@@ -5729,8 +5749,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             source_path=labelmap_path,
             valid_mask_zyx=valid_mask,
             center_slices=False,
+            activate_display=activate_display,
         )
-        if reference_node is not None:
+        if reference_node is not None and activate_display:
             self._center_slices_on_node(reference_node, fit_to_bounds=True)
         return True
 
@@ -6521,6 +6542,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     path,
                     folder_item_id=folder_item_id,
                     create_full=True,
+                    activate_display=False,
                 ):
                     loaded_remodelling += 1
             except Exception as exc:

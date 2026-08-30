@@ -248,6 +248,8 @@ def test_remodelling_selection_drives_visible_label_layer() -> None:
     assert "currentIndexChanged.connect(self._on_remodelling_selection_changed)" in source
     assert "def _activate_remodelling_display_for_current_selection" in source
     assert "slicer.util.setSliceViewerLayers(label=node, fit=False)" in source
+    assert "display.SetVisibility(other_node is node)" in source
+    assert "activate_display=False" in source
     select_first = source.split("    def _select_first_scene_remodelling_output", 1)[1].split("\n    def ", 1)[0]
     assert "self.remodellingFullSegCombo.setCurrentIndex(0)" in select_first
     assert "self._activate_remodelling_display_for_current_selection()" in select_first
