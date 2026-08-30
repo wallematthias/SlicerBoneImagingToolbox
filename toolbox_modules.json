@@ -39,6 +39,18 @@
       "source": "built-in"
     },
     {
+      "path": "HRpQCTTools/ParOSolFEA",
+      "title": "ParOSol FEA",
+      "section": "FEA",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/MechanoregulationHRpQCT",
+      "title": "Bone Mechanoregulation",
+      "section": "Mechanoregulation",
+      "source": "built-in"
+    },
+    {
       "path": "IOTools/ScancoIO",
       "title": "Scanco I/O",
       "section": "I/O",

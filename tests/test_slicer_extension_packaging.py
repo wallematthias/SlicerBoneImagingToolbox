@@ -38,6 +38,21 @@ def test_bone_microarchitecture_module_is_registered_with_extension_packaging() 
     assert '"section": "HR-pQCT"' in manifest
 
 
+def test_public_fea_and_mechanoregulation_modules_are_registered_with_extension_packaging() -> None:
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
+
+    assert "add_subdirectory(HRpQCTTools/ParOSolFEA)" in cmake
+    assert '"path": "HRpQCTTools/ParOSolFEA"' in manifest
+    assert '"title": "ParOSol FEA"' in manifest
+    assert '"section": "FEA"' in manifest
+
+    assert "add_subdirectory(HRpQCTTools/MechanoregulationHRpQCT)" in cmake
+    assert '"path": "HRpQCTTools/MechanoregulationHRpQCT"' in manifest
+    assert '"title": "Bone Mechanoregulation"' in manifest
+    assert '"section": "Mechanoregulation"' in manifest
+
+
 def test_python_unittest_scripts_define_matching_test_classes() -> None:
     for cmake_path in [*ROOT.glob("*Tools/*/CMakeLists.txt"), *ROOT.glob("Setup/*/CMakeLists.txt")]:
         cmake = cmake_path.read_text(encoding="utf-8")

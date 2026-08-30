@@ -38,7 +38,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Imaging Derivative Contract",
         package_name="bone-imaging-derivatives",
         import_name="bone_imaging_derivatives",
-        minimum_version="0.1.1",
+        minimum_version="0.1.2",
         notes="Shared derivative manifests, discovery, and prerequisite planning.",
     ),
     PackageSpec(
@@ -94,6 +94,20 @@ DEFAULT_RUNTIME_PACKAGES = (
         ),
         required_imports=("plate_rod_thinning._c_backend",),
         notes="Plate/rod thinning and morphometry core package with compiled backend.",
+    ),
+    PackageSpec(
+        display_name="ParOSol FEA",
+        package_name="parosol-py",
+        import_name="parosol_py",
+        minimum_version="0.1.22",
+        notes="ParOSol finite-element analysis backend and Python workflow package.",
+    ),
+    PackageSpec(
+        display_name="Bone Mechanoregulation",
+        package_name="bone-mechanoregulation",
+        import_name="bonemechreg",
+        minimum_version="0.1.3",
+        notes="Bone mechanoregulation analysis package using Timelapsed, FEA, and remodelling derivatives.",
     ),
 )
 
@@ -280,6 +294,7 @@ _LOCAL_WORKTREE_NAMES = {
 _LOCAL_REPOSITORY_NAMES = {
     "timelapsed-hrpqct": "TimelapsedHRpQCT",
     "plate-rod-thinning": "bone-plate-rod-thinning",
+    "bone-mechanoregulation": "BoneMechanoregulation",
 }
 
 
@@ -305,7 +320,10 @@ def resolve_local_editable_repo(toolbox_root: Path, package_name: str) -> Path |
 
 def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
     if spec.package_name in {
-        "bone-imaging-derivatives", "timelapsed-hrpqct", "bone-microarchitecture", "plate-rod-thinning",
+        "bone-imaging-derivatives",
+        "timelapsed-hrpqct",
+        "bone-microarchitecture",
+        "plate-rod-thinning",
     }:
         upgrade = ["--upgrade"] if installed else []
         toolbox_root = Path(__file__).resolve().parents[1]

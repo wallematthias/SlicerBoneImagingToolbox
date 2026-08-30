@@ -142,6 +142,8 @@ def test_default_runtime_packages_include_public_tool_cores() -> None:
     assert "spine-segment" in package_names
     assert "bone-microarchitecture" in package_names
     assert "plate-rod-thinning" in package_names
+    assert "parosol-py" in package_names
+    assert "bone-mechanoregulation" in package_names
     assert ("or" + "mir-xct") not in package_names
 
 
@@ -181,6 +183,27 @@ def test_plate_rod_install_commands_do_not_emit_empty_dependency_install() -> No
     assert commands[0].startswith("--no-deps -e ")
     assert commands[0].endswith("/bone-plate-rod-thinning/.worktrees/derivative-batch")
     assert "--prefer-binary" not in commands[0]
+
+
+def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    assert specs["parosol-py"].display_name == "ParOSol FEA"
+    assert specs["parosol-py"].import_name == "parosol_py"
+    assert "ParOSol" in specs["parosol-py"].notes
+
+    assert specs["bone-mechanoregulation"].display_name == "Bone Mechanoregulation"
+    assert specs["bone-mechanoregulation"].import_name == "bonemechreg"
+    assert "mechanoregulation" in specs["bone-mechanoregulation"].notes.lower()
+
+
+def test_public_fea_packages_do_not_install_from_adjacent_editable_checkouts() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    for package_name in ("parosol-py", "bone-mechanoregulation"):
+        command_text = "\n".join(install_commands(specs[package_name], installed=False))
+        assert " -e " not in command_text
+        assert "/active/" not in command_text
 
 
 def test_package_status_marks_invalid_runtime_import_as_update_needed() -> None:
