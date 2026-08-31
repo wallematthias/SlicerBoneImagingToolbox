@@ -30,12 +30,21 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Initial transform" in source
     assert "def _style_primary_run_button" in source
     assert 'self.sceneRunButton = qt.QPushButton("Run")' in source
+    assert 'self.sceneInterruptButton = qt.QPushButton("✕ Cancel")' in source
+    assert 'self.sceneExportCsvButton = qt.QPushButton("Export CSV")' in source
+    assert "self.sceneInterruptButton.clicked.connect(self._on_cancel_run)" in source
+    assert "self.sceneExportCsvButton.clicked.connect(self._on_export_scene_comparison_csv)" in source
     assert "self._style_primary_run_button(self.runTimelapseBtn)" in source
     assert "self._style_primary_run_button(self.sceneRunButton)" in source
     assert "button.setMinimumHeight(34)" in source
     assert "QPushButton { background:#1f6feb; color:white;" in source
     assert "actions.addWidget(self.sceneRunButton)" not in source
     assert "sceneActionLayout.addWidget(self.sceneRunButton)" in source
+    assert "sceneSecondaryActionLayout.addWidget(self.sceneExportCsvButton)" in source
+    assert "sceneSecondaryActionLayout.addWidget(self.sceneInterruptButton)" in source
+    assert "self.sceneInterruptButton.enabled = running" in source
+    assert "def _on_export_scene_comparison_csv" in source
+    assert 'default_export_filename("timelapsed_scene_comparisons")' in source
     assert "self.sceneStageItems = {}" in source
     assert "self.sceneStageRows = {}" in source
     assert "rowWidget.setFixedHeight(22)" in source

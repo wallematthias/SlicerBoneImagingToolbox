@@ -1456,21 +1456,48 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneMoveUpButton = qt.QPushButton("Move up")
         self.sceneMoveDownButton = qt.QPushButton("Move down")
         self.sceneRunButton = qt.QPushButton("Run")
+        self.sceneInterruptButton = qt.QPushButton("✕ Cancel")
+        self.sceneExportCsvButton = qt.QPushButton("Export CSV")
         self._style_primary_run_button(self.sceneRunButton)
+        self.sceneInterruptButton.enabled = False
+        self.sceneInterruptButton.toolTip = "Interrupt the currently running scene pipeline."
+        self.sceneExportCsvButton.toolTip = "Export the current scene comparison rows to CSV."
+        self.sceneExportCsvButton.setStyleSheet(
+            "QPushButton { background:#f5f7fa; color:#222; border:1px solid #b8c0ca; "
+            "border-radius:4px; padding:5px 8px; } "
+            "QPushButton:hover { background:#edf2f7; }"
+        )
+        self.sceneInterruptButton.setStyleSheet(
+            "QPushButton { background:#fff5f5; color:#9b1c1c; border:1px solid #e0b4b4; "
+            "border-radius:4px; padding:5px 8px; } "
+            "QPushButton:disabled { background:#eeeeee; color:#9a9a9a; border-color:#d0d0d0; }"
+        )
         self.sceneDiscoverButton.clicked.connect(self._on_discover_scene_timepoints)
         self.sceneAddTimepointButton.clicked.connect(self._add_scene_timepoint)
         self.sceneRemoveTimepointButton.clicked.connect(self._remove_scene_timepoint)
         self.sceneMoveUpButton.clicked.connect(lambda _checked=False: self._move_scene_timepoint(-1))
         self.sceneMoveDownButton.clicked.connect(lambda _checked=False: self._move_scene_timepoint(1))
         self.sceneRunButton.clicked.connect(self._on_run_scene_pipeline)
+        self.sceneInterruptButton.clicked.connect(self._on_cancel_run)
+        self.sceneExportCsvButton.clicked.connect(self._on_export_scene_comparison_csv)
         actions.addWidget(self.sceneDiscoverButton)
         actions.addWidget(self.sceneAddTimepointButton)
         actions.addWidget(self.sceneRemoveTimepointButton)
         actions.addWidget(self.sceneMoveUpButton)
         actions.addWidget(self.sceneMoveDownButton)
         actions.addStretch(1)
+        sceneSecondaryActionRow = qt.QWidget()
+        sceneSecondaryActionLayout = qt.QHBoxLayout(sceneSecondaryActionRow)
+        sceneSecondaryActionLayout.setContentsMargins(0, 0, 0, 0)
+        sceneSecondaryActionLayout.setSpacing(6)
+        sceneSecondaryActionLayout.addWidget(self.sceneExportCsvButton)
+        sceneSecondaryActionLayout.addWidget(self.sceneInterruptButton)
+        sceneSecondaryActionLayout.addStretch(1)
+        _cap_width(self.sceneExportCsvButton, 96)
+        _cap_width(self.sceneInterruptButton, 92)
         sceneActionLayout.addLayout(actions)
         sceneActionLayout.addWidget(self.sceneRunButton)
+        sceneActionLayout.addWidget(sceneSecondaryActionRow)
         layout.addWidget(sceneActionBox)
 
         self.sceneComparisonBox = qt.QGroupBox("Current Comparisons")
@@ -2908,12 +2935,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.applyAnalysisSettingsBtn,
             self.runAnalysisBtn,
             self.seriesSummaryExportBtn,
+            self.sceneExportCsvButton,
             self.saveAnalysisScenarioBtn,
         ]:
-            btn.enabled = not running
+            if btn is not None:
+                btn.enabled = not running
         if hasattr(self, "doNotGenerateMasksCheck"):
             self.doNotGenerateMasksCheck.enabled = not running
         self.cancelRunBtn.enabled = running
+        if hasattr(self, "sceneInterruptButton"):
+            self.sceneInterruptButton.enabled = running
 
     def _set_interactive_preview_busy(self, is_busy, message=None):
         busy = bool(is_busy)
@@ -5861,6 +5892,56 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._show(f"[export] study cohort rows CSV written to {csv_path}")
         if selected_path.suffix.lower() == ".xlsx" and xlsx_message.startswith(" XLSX:"):
             self._show(f"[export] study cohort rows XLSX written to {selected_path}")
+
+    def _scene_comparison_table_rows(self):
+        if not hasattr(self, "sceneComparisonTable"):
+            return []
+        table = self.sceneComparisonTable
+        headers = [
+            str(table.horizontalHeaderItem(col_idx).text())
+            for col_idx in range(int(table.columnCount))
+        ]
+        rows = []
+        for row_idx in range(int(table.rowCount)):
+            row = {}
+            for col_idx, header in enumerate(headers):
+                item = table.item(row_idx, col_idx)
+                row[header] = str(item.text()) if item is not None else ""
+            if row.get("Pair") == "N/A" and row.get("Mask") == "N/A":
+                continue
+            rows.append(row)
+        return rows
+
+    def _on_export_scene_comparison_csv(self):
+        rows = self._scene_comparison_table_rows()
+        if not rows:
+            self.sceneStatusLabel.text = "No scene comparison rows available to export."
+            self._show("[scene] no scene comparison rows available to export.")
+            return
+        default_dir = Path(str(self.sceneResultsRootPath.currentPath or "")).expanduser()
+        if not default_dir.exists():
+            default_dir = Path.home()
+        default_path = default_dir / default_export_filename("timelapsed_scene_comparisons")
+        result = qt.QFileDialog.getSaveFileName(
+            slicer.util.mainWindow(),
+            "Export Scene Timelapsed Results",
+            str(default_path),
+            "CSV files (*.csv)",
+        )
+        selected = result[0] if isinstance(result, tuple) else result
+        if not selected:
+            return
+        csv_path = Path(str(selected))
+        if csv_path.suffix.lower() != ".csv":
+            csv_path = csv_path.with_suffix(".csv")
+        try:
+            self._write_csv_rows(csv_path, rows)
+        except Exception as exc:
+            self.sceneStatusLabel.text = f"Scene CSV export failed: {exc}"
+            slicer.util.warningDisplay(f"Scene CSV export failed:\n{exc}")
+            return
+        self.sceneStatusLabel.text = f"Exported scene comparison CSV: {csv_path}"
+        self._show(f"[scene] scene comparison CSV written to {csv_path}")
 
     def _on_save_analysis_scenario(self):
         patient_key = self._current_patient_key()
