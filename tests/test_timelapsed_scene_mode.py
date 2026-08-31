@@ -217,6 +217,10 @@ def test_timelapsed_batch_manual_fallback_supports_strambo_aim_names() -> None:
     assert "tibia_right" in source
     assert 'subject_id=metadata.get("subject_id", "MANUAL")' in source
     assert 'session_id=metadata.get("session_id", f"T{idx}")' in source
+    assert "def _prefer_manual_aim_candidate" in source
+    assert "existing = entry.get(\"image\")" in source
+    assert "entry[\"image\"] = self._prefer_manual_aim_candidate(existing, path)" in source
+    assert "grouped[str(path.stem)" not in source
 
 
 def test_timelapsed_scene_loads_pairwise_results_table() -> None:

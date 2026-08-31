@@ -2846,6 +2846,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _strip_manual_aim_suffix(self, name):
         return re.sub(r"(?i)\.aim(?:;\d+)?$", "", str(name))
 
+    def _manual_aim_version(self, path):
+        match = re.search(r"(?i)\.aim(?:;(\d+))?$", Path(path).name)
+        if not match or match.group(1) is None:
+            return 0
+        try:
+            return int(match.group(1))
+        except Exception:
+            return 0
+
+    def _prefer_manual_aim_candidate(self, current, candidate):
+        if current is None:
+            return candidate
+        current_version = self._manual_aim_version(current)
+        candidate_version = self._manual_aim_version(candidate)
+        return candidate if candidate_version > current_version else current
+
     def _manual_site_from_token(self, token):
         site_aliases = {
             "DR": "radius",
@@ -2916,14 +2932,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 entry["seg"] = path
             elif role:
                 entry["masks"][role] = path
-            elif entry["image"] is None:
-                entry["image"] = path
             else:
-                grouped[str(path.stem) + "_" + str(len(grouped))] = {
-                    "image": path,
-                    "masks": {},
-                    "seg": None,
-                }
+                existing = entry.get("image")
+                entry["image"] = self._prefer_manual_aim_candidate(existing, path)
 
         sessions = []
         for idx, (base, entry) in enumerate(sorted(grouped.items()), start=1):
