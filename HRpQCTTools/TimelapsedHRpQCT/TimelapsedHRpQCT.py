@@ -1840,6 +1840,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         masks_cfg = dict(settings.get("masks") or {})
         masks_cfg["roles"] = self._scene_requested_mask_roles()
         masks_cfg["generate_segmentation"] = self._scene_segmentation_requested()
+        if not any(role in masks_cfg["roles"] for role in ("trab", "cort")):
+            inner_cfg = dict(masks_cfg.get("inner") or {})
+            inner_cfg["contour_method"] = "none"
+            masks_cfg["inner"] = inner_cfg
         settings["masks"] = masks_cfg
 
         analysis_cfg = dict(settings.get("analysis") or {})

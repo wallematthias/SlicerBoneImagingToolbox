@@ -102,6 +102,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "def _scene_settings_override" in source
     assert 'masks_cfg["roles"] = self._scene_requested_mask_roles()' in source
     assert 'masks_cfg["generate_segmentation"] = self._scene_segmentation_requested()' in source
+    assert 'inner_cfg["contour_method"] = "none"' in source
     assert 'analysis_cfg["compartments"] = self._scene_analysis_compartments()' in source
     assert 'addItem("Generate", "__generate__")' in source
     assert 'addItem("None", "__none__")' in source
@@ -438,6 +439,8 @@ def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
     assert "def _scene_analysis_compartments" in source
     assert 'value == "__none__"' in source
     assert 'return "none"' in source
+    assert 'not any(role in masks_cfg["roles"] for role in ("trab", "cort"))' in source
+    assert 'masks_cfg["inner"] = inner_cfg' in source
     assert "sceneMaskPolicyCombo" not in source
 
 
