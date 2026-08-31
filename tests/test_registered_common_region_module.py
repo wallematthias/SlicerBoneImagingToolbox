@@ -14,7 +14,7 @@ def test_registered_common_region_module_is_registered_with_manifest_and_cmake()
     assert "add_subdirectory(HRpQCTTools/RegisteredCommonRegion)" in cmake
     assert '"path": "HRpQCTTools/RegisteredCommonRegion"' in manifest
     assert '"title": "Registered Common Region"' in manifest
-    assert '"section": "HR-pQCT"' in manifest
+    assert '"section": "Timelapsed Methods"' in manifest
     assert '"HRpQCTTools/RegisteredCommonRegion"' in link_script
     assert '"RegisteredCommonRegion"' in link_script
 
@@ -27,7 +27,7 @@ def test_registered_common_region_module_defines_slicer_classes():
     assert "class RegisteredCommonRegionWidget(ScriptedLoadableModuleWidget):" in source
     assert "class RegisteredCommonRegionTest(ScriptedLoadableModuleTest):" in source
     assert 'parent.title = "Registered Common Region"' in source
-    assert 'parent.categories = ["Bone Imaging.HR-pQCT"]' in source
+    assert 'parent.categories = ["Bone Imaging.Timelapsed Methods"]' in source
 
 
 def test_registered_common_region_widget_has_scene_and_batch_tabs():

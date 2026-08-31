@@ -3,51 +3,9 @@
   "display_name": "Bone Imaging Toolbox",
   "modules": [
     {
-      "path": "HRpQCTTools/TimelapsedHRpQCT",
-      "title": "Timelapsed HR-pQCT",
-      "section": "HR-pQCT",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/MotionScoreHRpQCT",
-      "title": "Motion Scoring",
-      "section": "HR-pQCT",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/SegmentationHRpQCT",
-      "title": "Segmentation and Contours",
-      "section": "HR-pQCT",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/RegisteredCommonRegion",
-      "title": "Registered Common Region",
-      "section": "HR-pQCT",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/BoneMicroarchitecture",
-      "title": "Bone Microarchitecture",
-      "section": "HR-pQCT",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/PlateRodMorphometryHRpQCT",
-      "title": "Plate/Rod Morphometry",
-      "section": "HR-pQCT",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/ParOSolFEA",
-      "title": "ParOSol FEA",
-      "section": "FEA",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/MechanoregulationHRpQCT",
-      "title": "Bone Mechanoregulation",
-      "section": "Mechanoregulation",
+      "path": "Setup/BoneImagingToolboxSetup",
+      "title": "Toolbox Setup",
+      "section": "Setup",
       "source": "built-in"
     },
     {
@@ -57,15 +15,63 @@
       "source": "built-in"
     },
     {
-      "path": "CTTools/SpineSegmentationCT",
-      "title": "Spine Segmentation",
-      "section": "CT",
+      "path": "HRpQCTTools/MotionScoreHRpQCT",
+      "title": "Motion Scoring",
+      "section": "Quality Control",
       "source": "built-in"
     },
     {
-      "path": "Setup/BoneImagingToolboxSetup",
-      "title": "Toolbox Setup",
-      "section": "Setup",
+      "path": "HRpQCTTools/SegmentationHRpQCT",
+      "title": "Bone Contours",
+      "section": "Segmentation Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/DeriveLabelsHRpQCT",
+      "title": "Mask and Label Algebra",
+      "section": "Segmentation Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "CTTools/SpineSegmentationCT",
+      "title": "Spine Segmentation",
+      "section": "Segmentation Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/TimelapsedHRpQCT",
+      "title": "Timelapsed Remodelling",
+      "section": "Timelapsed Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/MechanoregulationHRpQCT",
+      "title": "Bone Mechanoregulation",
+      "section": "Timelapsed Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/RegisteredCommonRegion",
+      "title": "Registered Common Region",
+      "section": "Timelapsed Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/BoneMicroarchitecture",
+      "title": "Bone Microarchitecture",
+      "section": "Analysis Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/PlateRodMorphometryHRpQCT",
+      "title": "Plate/Rod Morphometry",
+      "section": "Analysis Methods",
+      "source": "built-in"
+    },
+    {
+      "path": "HRpQCTTools/ParOSolFEA",
+      "title": "ParOSol FEA",
+      "section": "Analysis Methods",
       "source": "built-in"
     }
   ],

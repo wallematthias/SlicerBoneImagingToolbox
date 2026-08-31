@@ -18,6 +18,13 @@ GITHUB_BRANCH = "main"
 GITHUB_API_COMMIT_URL = f"https://api.github.com/repos/{GITHUB_REPO}/commits/{GITHUB_BRANCH}"
 GITHUB_ZIP_URL = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{GITHUB_BRANCH}.zip"
 HTTP_HEADERS = {"User-Agent": "SlicerBoneImagingToolbox-Updater/1.0"}
+TOOLBOX_ROOT_ANCHORS = (
+    "HRpQCTTools/TimelapsedHRpQCT",
+    "HRpQCTTools/MotionScoreHRpQCT",
+    "HRpQCTTools/SegmentationHRpQCT",
+    "IOTools/ScancoIO",
+    "CTTools/SpineSegmentationCT",
+)
 
 
 @dataclass(frozen=True)
@@ -45,7 +52,9 @@ class ToolboxUpdateResult:
 
 
 def _has_toolbox_modules(path: Path) -> bool:
-    return all((path / name).is_dir() for name in builtin_module_dirs(path))
+    manifest_modules = builtin_module_dirs(path)
+    anchors = TOOLBOX_ROOT_ANCHORS if not (path / "toolbox_modules.json").exists() else manifest_modules
+    return all((path / name).is_dir() for name in anchors)
 
 
 def find_toolbox_root(start_path: str | Path) -> Path:
@@ -246,4 +255,3 @@ def update_toolbox(start_path: str | Path, *, latest_revision: str | None = None
     if context.strategy == "git":
         return update_git_checkout(context)
     return update_manual_download(context, revision=latest_revision)
-

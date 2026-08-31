@@ -159,7 +159,7 @@ class SpineSegmentationCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Spine Segmentation"
-        parent.categories = ["Bone Imaging.CT"]
+        parent.categories = ["Bone Imaging.Segmentation Methods"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

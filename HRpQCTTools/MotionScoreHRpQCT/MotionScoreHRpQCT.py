@@ -72,7 +72,7 @@ class MotionScoreHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Motion Scoring"
-        parent.categories = ["Bone Imaging.HR-pQCT"]
+        parent.categories = ["Bone Imaging.Quality Control"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

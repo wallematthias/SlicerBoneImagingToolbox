@@ -440,7 +440,7 @@ class ParOSolFEA(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "ParOSol FEA"
-        parent.categories = ["Bone Imaging.FEA"]
+        parent.categories = ["Bone Imaging.Analysis Methods"]
         parent.dependencies = ["Segmentations"]
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

@@ -123,8 +123,8 @@ def _suppress_simpleitk_warnings():
 class TimelapsedHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "Timelapsed HR-pQCT"
-        parent.categories = ["Bone Imaging.HR-pQCT"]
+        parent.title = "Timelapsed Remodelling"
+        parent.categories = ["Bone Imaging.Timelapsed Methods"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -529,9 +529,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._mask_method_defaults = {
             "adaptive": (100.0, 300.0),
             "seg_gauss": (320.0, 450.0),
-            "laplace_hamming": (15564.0, 70.0),
+            "laplace_hamming": (320.0, 70.0),
         }
         self._seg_gauss_sigma = 0.8
+        self._contour_gaussian_sigma = 1.5
+        self._lh_cort_support_threshold = 450.0
         self._analysis_method = "grayscale_and_binary"
         self._analysis_erosion_voxels = 1
         self._interactive_preview_cache = {}
@@ -546,6 +548,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._scene_subject_id = ""
         self._scene_site = ""
         self._last_scene_plan = None
+        self._last_missing_scene_baseline_pairs = []
+        self._syncing_scene_mask_policy = False
 
         self._build_ui()
         self._interactivePreviewTimer = qt.QTimer()
@@ -703,7 +707,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
-        analysisSectionBox.collapsed = True
+        analysisSectionBox.collapsed = False
         analysisSectionBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         analysisSectionLayout = qt.QVBoxLayout(analysisSectionBox)
 
@@ -715,19 +719,33 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         settingsLayout = qt.QVBoxLayout(settingsBox)
         settingsLayout.setSpacing(10)
 
+        discoveryBox = ctk.ctkCollapsibleButton()
+        discoveryBox.text = "Discovery / Import"
+        discoveryBox.collapsed = True
+        discoveryBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
+        discoveryLayout = qt.QFormLayout(discoveryBox)
+        discoveryLayout.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
+
         maskBox = qt.QGroupBox("Mask generation")
         maskForm = qt.QFormLayout(maskBox)
 
         self.maskMethod = qt.QComboBox()
         self.maskMethod.addItems(["adaptive", "seg_gauss", "laplace_hamming"])
         self.maskMethod.currentTextChanged.connect(self._on_mask_method_changed)
-        _tip(self.maskMethod, "Segmentation support method used during automatic mask generation.")
+        _tip(self.maskMethod, "Bone segmentation method used during automatic mask generation.")
         _cap_width(self.maskMethod, 220)
         self.maskPeriostealContour = qt.QComboBox()
         self.maskPeriostealContour.addItem("standard", "standard")
         self.maskPeriostealContour.addItem("geodesic_fracture", "geodesic_fracture")
-        _tip(self.maskPeriostealContour, "Outer/full-mask contour method used during automatic mask generation.")
+        self.maskPeriostealContour.currentIndexChanged.connect(self._on_periosteal_contour_method_changed)
+        _tip(self.maskPeriostealContour, "Full/periosteal contour method used during automatic mask generation.")
         _cap_width(self.maskPeriostealContour, 220)
+        self.maskEndostealContour = qt.QComboBox()
+        self.maskEndostealContour.addItem("standard", "standard")
+        self.maskEndostealContour.addItem("none", "none")
+        self.maskEndostealContour.currentIndexChanged.connect(self._on_periosteal_contour_method_changed)
+        _tip(self.maskEndostealContour, "Endosteal/trab-cort contour method used when trabecular or cortical masks are generated.")
+        _cap_width(self.maskEndostealContour, 220)
         self.maskLow = ctk.ctkDoubleSpinBox()
         self.maskLow.minimum = -10000.0
         self.maskLow.maximum = 10000.0
@@ -746,48 +764,165 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.maskHigh, 220)
         self.maskLowLabel = _label("Mask lower threshold", "Lower method-specific threshold used when generating masks.")
         self.maskHighLabel = _label("Mask higher threshold", "Upper method-specific threshold or smoothing parameter used when generating masks.")
+        self.maskContourSupportThreshold = ctk.ctkDoubleSpinBox()
+        self.maskContourSupportThreshold.minimum = 0.0
+        self.maskContourSupportThreshold.maximum = 5000.0
+        self.maskContourSupportThreshold.decimals = 1
+        self.maskContourSupportThreshold.singleStep = 5.0
+        self.maskContourSupportThreshold.value = 320.0
+        self.maskContourSupportThresholdLabel = _label("Contour support threshold", "Density threshold used to build Gaussian support for full/endosteal contours.")
+        _tip(self.maskContourSupportThreshold, "Density threshold used to build Gaussian support for full/endosteal contours.")
+        _cap_width(self.maskContourSupportThreshold, 220)
+        self.maskEndostealThreshold = ctk.ctkDoubleSpinBox()
+        self.maskEndostealThreshold.minimum = 0.0
+        self.maskEndostealThreshold.maximum = 5000.0
+        self.maskEndostealThreshold.decimals = 1
+        self.maskEndostealThreshold.singleStep = 5.0
+        self.maskEndostealThreshold.value = 500.0
+        self.maskEndostealThresholdLabel = _label("Endosteal threshold", "Density threshold used by the standard endosteal/trab-cort contour.")
+        _tip(self.maskEndostealThreshold, "Density threshold used by the standard endosteal/trab-cort contour.")
+        _cap_width(self.maskEndostealThreshold, 220)
+        self.maskEndostealKernel = qt.QSpinBox()
+        self.maskEndostealKernel.minimum = 1
+        self.maskEndostealKernel.maximum = 101
+        self.maskEndostealKernel.singleStep = 2
+        self.maskEndostealKernel.value = 3
+        self.maskEndostealKernelLabel = _label("Endosteal kernel", "Kernel size used when building the standard endosteal/trab-cort contour.")
+        _tip(self.maskEndostealKernel, "Kernel size used when building the standard endosteal/trab-cort contour.")
+        _cap_width(self.maskEndostealKernel, 220)
+        self.maskSigma = ctk.ctkDoubleSpinBox()
+        self.maskSigma.minimum = 0.0
+        self.maskSigma.maximum = 10.0
+        self.maskSigma.decimals = 2
+        self.maskSigma.singleStep = 0.05
+        self.maskSigma.value = 0.8
+        self.maskSigmaLabel = _label("Segmentation Gaussian sigma", "Smoothing sigma in voxels used by Gaussian bone segmentation.")
+        _tip(self.maskSigma, "Smoothing sigma in voxels used by Gaussian bone segmentation.")
+        _cap_width(self.maskSigma, 220)
+        self.maskContourSigma = ctk.ctkDoubleSpinBox()
+        self.maskContourSigma.minimum = 0.0
+        self.maskContourSigma.maximum = 10.0
+        self.maskContourSigma.decimals = 2
+        self.maskContourSigma.singleStep = 0.05
+        self.maskContourSigma.value = 1.5
+        self.maskContourSigmaLabel = _label("Contour Gaussian sigma", "Smoothing sigma in voxels used by Gaussian contour support.")
+        _tip(self.maskContourSigma, "Smoothing sigma in voxels used by Gaussian contour support.")
+        _cap_width(self.maskContourSigma, 220)
+        self.maskLaplaceThreshold = ctk.ctkDoubleSpinBox()
+        self.maskLaplaceThreshold.minimum = 0.0
+        self.maskLaplaceThreshold.maximum = 100000.0
+        self.maskLaplaceThreshold.decimals = 1
+        self.maskLaplaceThreshold.singleStep = 50.0
+        self.maskLaplaceThreshold.value = 15564.0
+        self.maskLaplaceThresholdLabel = _label("LH threshold", "Laplace-Hamming threshold used for bone segmentation.")
+        _tip(self.maskLaplaceThreshold, "Laplace-Hamming threshold used for bone segmentation.")
+        _cap_width(self.maskLaplaceThreshold, 220)
+        self.maskLaplaceLowPass = ctk.ctkDoubleSpinBox()
+        self.maskLaplaceLowPass.minimum = 0.0
+        self.maskLaplaceLowPass.maximum = 1.0
+        self.maskLaplaceLowPass.decimals = 3
+        self.maskLaplaceLowPass.singleStep = 0.01
+        self.maskLaplaceLowPass.value = 0.3
+        self.maskLaplaceLowPassLabel = _label("LH low-pass cutoff", "Low-pass cutoff for Laplace-Hamming filtering.")
+        _tip(self.maskLaplaceLowPass, "Low-pass cutoff for Laplace-Hamming filtering.")
+        _cap_width(self.maskLaplaceLowPass, 220)
+        self.maskLaplaceHighPass = ctk.ctkDoubleSpinBox()
+        self.maskLaplaceHighPass.minimum = 0.0
+        self.maskLaplaceHighPass.maximum = 1.0
+        self.maskLaplaceHighPass.decimals = 3
+        self.maskLaplaceHighPass.singleStep = 0.01
+        self.maskLaplaceHighPass.value = 0.0
+        self.maskLaplaceHighPassLabel = _label("LH high-pass cutoff", "High-pass cutoff for Laplace-Hamming filtering.")
+        _tip(self.maskLaplaceHighPass, "High-pass cutoff for Laplace-Hamming filtering.")
+        _cap_width(self.maskLaplaceHighPass, 220)
+        self.maskLaplaceEpsilon = ctk.ctkDoubleSpinBox()
+        self.maskLaplaceEpsilon.minimum = 0.0
+        self.maskLaplaceEpsilon.maximum = 5.0
+        self.maskLaplaceEpsilon.decimals = 3
+        self.maskLaplaceEpsilon.singleStep = 0.01
+        self.maskLaplaceEpsilon.value = 0.45
+        self.maskLaplaceEpsilonLabel = _label("LH epsilon", "Epsilon used in Laplace-Hamming filtering.")
+        _tip(self.maskLaplaceEpsilon, "Epsilon used in Laplace-Hamming filtering.")
+        _cap_width(self.maskLaplaceEpsilon, 220)
+        self.maskOuterKernel = qt.QSpinBox()
+        self.maskOuterKernel.minimum = 1
+        self.maskOuterKernel.maximum = 101
+        self.maskOuterKernel.singleStep = 2
+        self.maskOuterKernel.value = 5
+        self.maskOuterKernelLabel = _label("Outer kernel", "Kernel size used when smoothing/building the full periosteal mask.")
+        _tip(self.maskOuterKernel, "Kernel size used when smoothing/building the full periosteal mask.")
+        _cap_width(self.maskOuterKernel, 220)
+        self.maskOuterOpen = qt.QSpinBox()
+        self.maskOuterOpen.minimum = 0
+        self.maskOuterOpen.maximum = 50
+        self.maskOuterOpen.singleStep = 1
+        self.maskOuterOpen.value = 2
+        self.maskOuterOpenLabel = _label("Outer opening radius", "Morphological opening radius used for the full periosteal mask.")
+        _tip(self.maskOuterOpen, "Morphological opening radius used for the full periosteal mask.")
+        _cap_width(self.maskOuterOpen, 220)
         self.maskGeodesicThreshold = ctk.ctkDoubleSpinBox()
         self.maskGeodesicThreshold.minimum = 0.0
         self.maskGeodesicThreshold.maximum = 5000.0
         self.maskGeodesicThreshold.decimals = 1
         self.maskGeodesicThreshold.singleStep = 5.0
         self.maskGeodesicThreshold.value = 250.0
+        self.maskGeodesicThresholdLabel = _label("Geodesic bone threshold", "Bone threshold passed to the geodesic fracture periosteal contour method.")
         _tip(self.maskGeodesicThreshold, "Bone threshold passed to the geodesic fracture periosteal contour.")
         _cap_width(self.maskGeodesicThreshold, 220)
         self.maskGeodesicFillHoles = qt.QCheckBox()
         self.maskGeodesicFillHoles.checked = True
-        _tip(self.maskGeodesicFillHoles, "Fill internal holes in the geodesic fracture periosteal mask.")
+        self.maskGeodesicFillHolesLabel = _label("Fill full mask holes", "Fill internal holes in generated full/periosteal masks.")
+        _tip(self.maskGeodesicFillHoles, "Fill internal holes in generated full/periosteal masks.")
         _cap_width(self.maskGeodesicFillHoles, 220)
         self.maskAlignedContourSupport = qt.QCheckBox()
         self.maskAlignedContourSupport.checked = False
+        self.maskAlignedContourSupportLabel = _label(
+            "Aligned contour support",
+            "Let contour-support binarization follow the selected segmentation method. Leave off for more stable full/trab/cort masks.",
+        )
         _tip(
             self.maskAlignedContourSupport,
             "When enabled, contour-support binarization follows the selected segmentation method. "
             "Leave this off to keep full/trab/cort masks more stable across sessions.",
         )
         _cap_width(self.maskAlignedContourSupport, 220)
-        maskForm.addRow(_label("Mask method", "Method used when automatic mask/segmentation generation is enabled."), self.maskMethod)
-        maskForm.addRow(
-            _label("Periosteal contour", "Outer/full mask contour method used during automatic mask generation."),
-            self.maskPeriostealContour,
-        )
+        self.maskSegmentationSectionLabel = qt.QLabel("<b>Bone Segmentation</b>")
+        self.maskPeriostealSectionLabel = qt.QLabel("<b>Full / Periosteal Contour</b>")
+        self.maskEndostealSectionLabel = qt.QLabel("<b>Endosteal / Trab-Cort Contour</b>")
+        maskForm.addRow(self.maskSegmentationSectionLabel)
+        maskForm.addRow(_label("Bone segmentation method", "Method used when automatic bone segmentation is enabled."), self.maskMethod)
         maskForm.addRow(self.maskLowLabel, self.maskLow)
         maskForm.addRow(self.maskHighLabel, self.maskHigh)
+        maskForm.addRow(self.maskSigmaLabel, self.maskSigma)
+        maskForm.addRow(self.maskLaplaceThresholdLabel, self.maskLaplaceThreshold)
+        maskForm.addRow(self.maskLaplaceLowPassLabel, self.maskLaplaceLowPass)
+        maskForm.addRow(self.maskLaplaceHighPassLabel, self.maskLaplaceHighPass)
+        maskForm.addRow(self.maskLaplaceEpsilonLabel, self.maskLaplaceEpsilon)
+        maskForm.addRow(self.maskAlignedContourSupportLabel, self.maskAlignedContourSupport)
+        maskForm.addRow(self.maskPeriostealSectionLabel)
         maskForm.addRow(
-            _label("Geodesic bone threshold", "Bone threshold passed to the geodesic fracture periosteal contour method."),
+            _label("Full/periosteal contour", "Full/periosteal mask contour method used during automatic mask generation."),
+            self.maskPeriostealContour,
+        )
+        maskForm.addRow(self.maskContourSupportThresholdLabel, self.maskContourSupportThreshold)
+        maskForm.addRow(self.maskContourSigmaLabel, self.maskContourSigma)
+        maskForm.addRow(self.maskOuterKernelLabel, self.maskOuterKernel)
+        maskForm.addRow(self.maskOuterOpenLabel, self.maskOuterOpen)
+        maskForm.addRow(
+            self.maskGeodesicThresholdLabel,
             self.maskGeodesicThreshold,
         )
         maskForm.addRow(
-            _label("Geodesic fill holes", "Fill internal holes in the geodesic fracture periosteal mask."),
+            self.maskGeodesicFillHolesLabel,
             self.maskGeodesicFillHoles,
         )
+        maskForm.addRow(self.maskEndostealSectionLabel)
         maskForm.addRow(
-            _label(
-                "Aligned contour support",
-                "Let contour-support binarization follow the selected segmentation method. Leave off for more stable full/trab/cort masks.",
-            ),
-            self.maskAlignedContourSupport,
+            _label("Endosteal/trab-cort contour", "Endosteal contour method used when trabecular or cortical masks are generated."),
+            self.maskEndostealContour,
         )
+        maskForm.addRow(self.maskEndostealThresholdLabel, self.maskEndostealThreshold)
+        maskForm.addRow(self.maskEndostealKernelLabel, self.maskEndostealKernel)
         self.doNotGenerateMasksCheck = qt.QCheckBox()
         self.doNotGenerateMasksCheck.checked = False
         skip_masks_tip = (
@@ -797,14 +932,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         self.doNotGenerateMasksCheck.toolTip = skip_masks_tip
         _cap_width(self.doNotGenerateMasksCheck, 220)
-        maskForm.addRow(_label("Do not generate masks", skip_masks_tip), self.doNotGenerateMasksCheck)
+        self.doNotGenerateMasksLabel = _label("Do not generate masks", skip_masks_tip)
+        maskForm.addRow(self.doNotGenerateMasksLabel, self.doNotGenerateMasksCheck)
 
         self.resultsRootPath = ctk.ctkPathLineEdit()
         self.resultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.resultsRootPath.setCurrentPath("")
         _tip(self.resultsRootPath, "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root.")
         _cap_width(self.resultsRootPath, 360)
-        maskForm.addRow(_label("Results folder (optional)", "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root."), self.resultsRootPath)
+        discoveryLayout.addRow(_label("Results folder (optional)", "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root."), self.resultsRootPath)
         self._connect_path_changed(self.resultsRootPath, self._on_dataset_or_results_root_changed)
 
         self.copyRawInputsCheck = qt.QCheckBox()
@@ -836,10 +972,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         _cap_width(self.restructureRawCheck, 220)
         _cap_width(self.parseModeCombo, 220)
         _cap_width(self.storageModeCombo, 220)
-        maskForm.addRow(_label("Copy raw inputs", "Copy raw AIM files into sourcedata/hrpqct during import."), self.copyRawInputsCheck)
-        maskForm.addRow(_label("Restructure raw inputs", "Move raw AIM files into the results root sub-*/site-*/ses-* layout during import."), self.restructureRawCheck)
-        maskForm.addRow(_label("Parse mode", "Input parsing mode. Auto tries filenames first, then AIM headers."), self.parseModeCombo)
-        maskForm.addRow(_label("Storage mode", "Minimal avoids copied imported stack images; full debug writes them for inspection."), self.storageModeCombo)
+        discoveryLayout.addRow(_label("Copy raw inputs", "Copy raw AIM files into sourcedata/hrpqct during import."), self.copyRawInputsCheck)
+        discoveryLayout.addRow(_label("Restructure raw inputs", "Move raw AIM files into the results root sub-*/site-*/ses-* layout during import."), self.restructureRawCheck)
+        discoveryLayout.addRow(_label("Parse mode", "Input parsing mode. Auto tries filenames first, then AIM headers."), self.parseModeCombo)
+        discoveryLayout.addRow(_label("Storage mode", "Minimal avoids copied imported stack images; full debug writes them for inspection."), self.storageModeCombo)
 
         registrationBox = qt.QGroupBox("Registration")
         registrationForm = qt.QFormLayout(registrationBox)
@@ -1133,6 +1269,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             lambda: self._set_analysis_cluster_value(self.analysisCluster.value, queue_update=True)
         )
         self.analysisMethodCombo.currentIndexChanged.connect(self._on_analysis_method_changed)
+        self.analysisPairModeCombo.currentIndexChanged.connect(self._on_analysis_pair_mode_changed)
         self.analysisRestrictBoneSupportCheck.toggled.connect(self._on_analysis_option_changed)
         self.analysisBinaryReclassificationCheck.toggled.connect(self._on_analysis_option_changed)
         self.analysisFullMaskDilation.valueChanged.connect(self._on_interactive_preview_control_changed)
@@ -1307,34 +1444,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         loadForm.addRow(_label("Comparison", "Pairwise remodelling comparison to load when loading remodelling images."), self.remodellingComparisonCombo)
         loadForm.addRow(self.loadDataBtn)
 
-        previewBox = qt.QGroupBox("Interactive Preview")
-        previewForm = qt.QFormLayout(previewBox)
-        previewForm.setVerticalSpacing(8)
+        # Internal controls used by legacy result-refresh helpers; these are not shown.
         self.remodellingFullSegCombo = qt.QComboBox()
-        self.remodellingRefreshBtn = qt.QPushButton("Refresh list")
-        _tip(self.remodellingFullSegCombo, "Loaded remodelling segmentation used for interactive preview updates.")
+        self.remodellingRefreshBtn = qt.QPushButton("")
         _tip(self.remodellingRefreshBtn, "Refresh the list of loaded remodelling segmentations.")
-        _cap_width(self.remodellingFullSegCombo, 260)
-        _cap_width(self.remodellingRefreshBtn, 120)
         self.remodellingRefreshBtn.clicked.connect(self._refresh_remodelling_full_selector)
         self.remodellingFullSegCombo.currentIndexChanged.connect(self._on_remodelling_selection_changed)
-        segRow = qt.QWidget()
-        segRowLayout = qt.QHBoxLayout(segRow)
-        segRowLayout.setContentsMargins(0, 0, 0, 0)
-        segRowLayout.addWidget(self.remodellingFullSegCombo, 1)
-        segRowLayout.addWidget(self.remodellingRefreshBtn)
         self.remodellingAutoUpdateCheck = qt.QCheckBox()
         self.remodellingAutoUpdateCheck.checked = False
-        self.remodellingApplyInteractiveBtn = qt.QPushButton("Update remodelling image")
-        _tip(self.remodellingAutoUpdateCheck, "Automatically update the loaded remodelling image when analysis controls change.")
-        _tip(self.remodellingApplyInteractiveBtn, "Apply current analysis options to the selected loaded remodelling image.")
-        _cap_width(self.remodellingAutoUpdateCheck, 180)
-        _cap_width(self.remodellingApplyInteractiveBtn, 220)
+        self.remodellingApplyInteractiveBtn = qt.QPushButton("")
         self.remodellingApplyInteractiveBtn.clicked.connect(self._on_apply_interactive_remodelling)
-        previewForm.addRow(_label("Full segmentation", "Loaded remodelling segmentation used for interactive preview updates."), segRow)
-        previewForm.addRow(_label("Auto update", "Automatically update the loaded remodelling image when analysis controls change."), self.remodellingAutoUpdateCheck)
-        previewForm.addRow(self.remodellingApplyInteractiveBtn)
-        settingsLayout.addWidget(previewBox)
 
         self.logText = qt.QPlainTextEdit()
         self.logText.readOnly = True
@@ -1345,6 +1464,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.batchLayout.addLayout(form)
         self.batchLayout.addWidget(quickBox)
         self.batchLayout.addWidget(parseBox)
+        self.batchLayout.addWidget(discoveryBox)
         self.batchLayout.addWidget(actionBox)
         self.seriesSummaryBox.visible = False
         self.batchLayout.addWidget(loadBox)
@@ -1355,6 +1475,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(settingsBox)
         self.layout.addWidget(self.logText)
         self.layout.addStretch(1)
+        self._on_mask_method_changed(self.maskMethod.currentText)
+        self._on_periosteal_contour_method_changed()
         self._update_dependency_ui()
         self._set_stage_status("dataset", "pending")
         self._set_stage_status("parse", "pending")
@@ -1555,15 +1677,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
 
-        sceneAdvancedBox = ctk.ctkCollapsibleButton()
-        sceneAdvancedBox.text = "Advanced Settings"
-        sceneAdvancedBox.collapsed = True
-        sceneAdvancedLayout = qt.QFormLayout(sceneAdvancedBox)
-        sceneAdvancedLayout.addRow(
+        sceneWorkspaceBox = ctk.ctkCollapsibleButton()
+        sceneWorkspaceBox.text = "Processing Workspace"
+        sceneWorkspaceBox.collapsed = True
+        sceneWorkspaceLayout = qt.QFormLayout(sceneWorkspaceBox)
+        sceneWorkspaceLayout.addRow(
             _label("Processing workspace", "Folder used for standardized scene-run inputs and outputs."),
             self.sceneResultsRootPath,
         )
-        layout.addWidget(sceneAdvancedBox)
+        layout.addWidget(sceneWorkspaceBox)
 
     def _resize_scene_timepoint_table(self):
         visible_rows = self._scene_timepoint_visible_rows()
@@ -1607,6 +1729,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.statusBox.visible = not scene_mode
         if hasattr(self, "sceneStatusBox"):
             self.sceneStatusBox.visible = scene_mode
+        if hasattr(self, "doNotGenerateMasksCheck"):
+            self.doNotGenerateMasksCheck.visible = not scene_mode
+        if hasattr(self, "doNotGenerateMasksLabel"):
+            self.doNotGenerateMasksLabel.visible = not scene_mode
 
     def _resize_timelapsed_mode_tabs(self):
         if not hasattr(self, "timelapsedModeTabs"):
@@ -1681,11 +1807,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         image_selector = self._scene_node_selector(["vtkMRMLScalarVolumeNode"])
         self.sceneTimepointTable.setCellWidget(row, 1, image_selector)
         for column in range(2, 6):
-            self.sceneTimepointTable.setCellWidget(
-                row,
-                column,
-                self._scene_mask_selector(),
+            selector = self._scene_mask_selector()
+            selector.currentIndexChanged.connect(
+                lambda _index, selector=selector, column=column: self._on_scene_mask_policy_changed(selector, column)
             )
+            self.sceneTimepointTable.setCellWidget(row, column, selector)
         self.sceneTimepointTable.setCellWidget(
             row,
             6,
@@ -1730,10 +1856,38 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if selector is None:
             return
         normalized = str(policy or "").strip().lower()
+        policy_value = ""
         if normalized == "none":
-            index = selector.findData("__none__")
+            policy_value = "__none__"
+        elif normalized == "generate":
+            policy_value = "__generate__"
+        if policy_value:
+            index = selector.findData(policy_value)
             if index >= 0:
-                selector.setCurrentIndex(index)
+                previous = self._syncing_scene_mask_policy
+                self._syncing_scene_mask_policy = True
+                try:
+                    selector.setCurrentIndex(index)
+                finally:
+                    self._syncing_scene_mask_policy = previous
+
+    def _on_scene_mask_policy_changed(self, selector, column):
+        if self._syncing_scene_mask_policy:
+            return
+        value = str(selector.currentData or "") if selector is not None else ""
+        if value not in {"__generate__", "__none__"}:
+            return
+        self._syncing_scene_mask_policy = True
+        try:
+            for row in range(self.sceneTimepointTable.rowCount):
+                other = self.sceneTimepointTable.cellWidget(row, column)
+                if other is None or other is selector:
+                    continue
+                index = other.findData(value)
+                if index >= 0:
+                    other.setCurrentIndex(index)
+        finally:
+            self._syncing_scene_mask_policy = False
 
     def _remove_scene_timepoint(self):
         row = self.sceneTimepointTable.currentRow()
@@ -1782,6 +1936,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         attributes[str(name)] = str(value)
             except Exception:
                 attributes = {}
+            try:
+                storage_node = node.GetStorageNode()
+                if storage_node is not None and storage_node.GetFileName():
+                    attributes["StorageFileName"] = str(storage_node.GetFileName())
+            except Exception:
+                pass
             candidates.append(
                 TimelapsedSceneNodeCandidate(
                     node_id=str(node.GetID()),
@@ -1862,6 +2022,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return True
         return False
 
+    def _scene_segmentation_generation_requested(self):
+        if not hasattr(self, "sceneTimepointTable"):
+            return True
+        for row in range(self.sceneTimepointTable.rowCount):
+            selector = self.sceneTimepointTable.cellWidget(row, 5)
+            if selector is not None and str(selector.currentData or "") == "__generate__":
+                return True
+        return False
+
     def _scene_analysis_compartments(self):
         roles = self._scene_requested_mask_roles()
         return [role for role in ("trab", "cort", "full") if role in roles] or ["full"]
@@ -1869,8 +2038,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _scene_settings_override(self):
         settings = self._settings_override()
         masks_cfg = dict(settings.get("masks") or {})
+        scene_generates_masks = self._scene_mask_generation_requested()
+        masks_cfg["generate"] = scene_generates_masks
+        masks_cfg["overwrite"] = scene_generates_masks
         masks_cfg["roles"] = self._scene_requested_mask_roles()
-        masks_cfg["generate_segmentation"] = self._scene_segmentation_requested()
+        masks_cfg["generate_segmentation"] = self._scene_segmentation_generation_requested()
         if not any(role in masks_cfg["roles"] for role in ("trab", "cort")):
             inner_cfg = dict(masks_cfg.get("inner") or {})
             inner_cfg["contour_method"] = "none"
@@ -1985,9 +2157,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             seeded_transforms = self._seed_scene_transform_registry(plan)
             if seeded_transforms:
                 self._show(f"[timelapsed-slicer] seeded {seeded_transforms} scene transform(s) for registration reuse.")
-            cfg = self.logic.create_override_config(
-                self._scene_settings_override(), results_root=plan.output_root
+            scene_settings = self._scene_settings_override()
+            scene_masks_cfg = dict(scene_settings.get("masks") or {})
+            scene_outer_cfg = dict(scene_masks_cfg.get("outer") or {})
+            self._show(
+                "[timelapsed-slicer] Scene mask request: "
+                f"generate={bool(scene_masks_cfg.get('generate', False))}, "
+                f"roles={scene_masks_cfg.get('roles', [])}, "
+                f"segmentation={bool(scene_masks_cfg.get('generate_segmentation', False))}, "
+                f"overwrite={bool(scene_masks_cfg.get('overwrite', False))}, "
+                f"outer_kernel={scene_outer_cfg.get('periosteal_kernelsize', 'default')}, "
+                f"outer_open={scene_outer_cfg.get('periosteal_open_radius', 'default')}."
             )
+            cfg = self.logic.create_override_config(scene_settings, results_root=plan.output_root)
         except Exception as exc:
             self.sceneStatusLabel.text = f"Scene run could not start: {exc}"
             self._show(f"[timelapsed-slicer] scene run could not start: {exc}")
@@ -2428,37 +2610,60 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _apply_config_dict_to_controls(self, cfg, *, source_label):
         seg_cfg = ((cfg.get("masks") or {}).get("segmentation") or {})
         outer_cfg = ((cfg.get("masks") or {}).get("outer") or {})
+        inner_cfg = ((cfg.get("masks") or {}).get("inner") or {})
         method = str(seg_cfg.get("method", self.maskMethod.currentText) or self.maskMethod.currentText)
         if method == "global":
             method = "seg_gauss"
         mask_idx = self.maskMethod.findText(method)
         if mask_idx < 0 and method == "seg_gauss":
             mask_idx = self.maskMethod.findText("seg_gauss")
-        if mask_idx >= 0:
-            self.maskMethod.setCurrentIndex(mask_idx)
 
         adaptive_low = float(seg_cfg.get("adaptive_low_threshold", 100.0))
         adaptive_high = float(seg_cfg.get("adaptive_high_threshold", 300.0))
         seg_gauss_threshold = float(seg_cfg.get("seg_gauss_threshold", seg_cfg.get("trab_threshold", 320.0)))
         seg_gauss_cort_threshold = float(seg_cfg.get("cort_threshold", 450.0))
+        self._lh_cort_support_threshold = seg_gauss_cort_threshold
+        self.maskContourSupportThreshold.value = float(outer_cfg.get("periosteal_threshold", seg_gauss_threshold))
         self._seg_gauss_sigma = float(seg_cfg.get("gaussian_sigma", seg_cfg.get("seg_gauss_sigma", 0.8)))
+        self.maskSigma.value = self._seg_gauss_sigma
+        self._contour_gaussian_sigma = float(outer_cfg.get("gaussian_sigma", self._contour_gaussian_sigma))
+        self.maskContourSigma.value = self._contour_gaussian_sigma
         laplace_hamming_min_size = float(seg_cfg.get("laplace_hamming_min_size_voxels", 70.0))
+        self.maskLaplaceThreshold.value = float(seg_cfg.get("laplace_hamming_threshold", 15564.0))
+        self.maskLaplaceLowPass.value = float(seg_cfg.get("laplace_hamming_low_pass_cutoff", 0.3))
+        self.maskLaplaceHighPass.value = float(seg_cfg.get("laplace_hamming_high_pass_cutoff", 0.0))
+        self.maskLaplaceEpsilon.value = float(seg_cfg.get("laplace_hamming_epsilon", 0.45))
         self._mask_method_defaults = {
             "adaptive": (adaptive_low, adaptive_high),
             "seg_gauss": (seg_gauss_threshold, seg_gauss_cort_threshold),
-            "laplace_hamming": (15564.0, laplace_hamming_min_size),
+            "laplace_hamming": (seg_gauss_threshold, laplace_hamming_min_size),
         }
+        if mask_idx >= 0:
+            self.maskMethod.setCurrentIndex(mask_idx)
         periosteal_method = str(outer_cfg.get("contour_method", "standard") or "standard")
         periosteal_idx = self.maskPeriostealContour.findData(periosteal_method)
         if periosteal_idx < 0:
             periosteal_idx = self.maskPeriostealContour.findText(periosteal_method)
         if periosteal_idx >= 0:
             self.maskPeriostealContour.setCurrentIndex(periosteal_idx)
+        endosteal_method = str(inner_cfg.get("contour_method", "standard") or "standard")
+        endosteal_idx = self.maskEndostealContour.findData(endosteal_method)
+        if endosteal_idx < 0:
+            endosteal_idx = self.maskEndostealContour.findText(endosteal_method)
+        if endosteal_idx >= 0:
+            self.maskEndostealContour.setCurrentIndex(endosteal_idx)
+        self.maskEndostealThreshold.value = float(inner_cfg.get("endosteal_threshold", seg_gauss_cort_threshold))
+        self.maskEndostealKernel.value = int(inner_cfg.get("endosteal_kernelsize", int(self.maskEndostealKernel.value)))
+        self.maskOuterKernel.value = int(outer_cfg.get("periosteal_kernelsize", int(self.maskOuterKernel.value)))
+        self.maskOuterOpen.value = int(outer_cfg.get("periosteal_open_radius", int(self.maskOuterOpen.value)))
         self.maskGeodesicThreshold.value = float(outer_cfg.get("geodesic_bone_threshold", 250.0))
-        self.maskGeodesicFillHoles.checked = bool(outer_cfg.get("geodesic_fill_holes", True))
+        self.maskGeodesicFillHoles.checked = bool(
+            outer_cfg.get("fill_holes", outer_cfg.get("geodesic_fill_holes", True))
+        )
         self.maskAlignedContourSupport.checked = bool(
             seg_cfg.get("use_segmentation_aligned_contour_support", False)
         )
+        self._on_mask_method_changed(self.maskMethod.currentText)
 
         tl_cfg = cfg.get("timelapsed_registration") or {}
         ms_cfg = cfg.get("multistack_correction") or {}
@@ -2529,6 +2734,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             ((analysis_cfg.get("valid_region") or {}).get("erosion_voxels", self._analysis_erosion_voxels))
         )
         self._on_mask_method_changed(self.maskMethod.currentText)
+        self._on_periosteal_contour_method_changed()
         self._on_analysis_method_changed()
         self._sync_scene_profile_from_batch_profile()
         if source_label and hasattr(self, "userMessageLabel"):
@@ -2671,6 +2877,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         method = str(method_name).strip().lower()
         if method not in self._mask_method_defaults:
             return
+        is_lh = method == "laplace_hamming"
+        for label, widget in [
+            (self.maskLaplaceThresholdLabel, self.maskLaplaceThreshold),
+            (self.maskLaplaceLowPassLabel, self.maskLaplaceLowPass),
+            (self.maskLaplaceHighPassLabel, self.maskLaplaceHighPass),
+            (self.maskLaplaceEpsilonLabel, self.maskLaplaceEpsilon),
+        ]:
+            label.visible = is_lh
+            widget.visible = is_lh
+        self.maskSigmaLabel.visible = method == "seg_gauss"
+        self.maskSigma.visible = method == "seg_gauss"
+        self.maskAlignedContourSupportLabel.visible = method in {"adaptive", "laplace_hamming"}
+        self.maskAlignedContourSupport.visible = method in {"adaptive", "laplace_hamming"}
         if method == "laplace_hamming":
             self.maskLowLabel.visible = False
             self.maskLow.visible = False
@@ -2713,6 +2932,32 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         low, high = self._mask_method_defaults[method]
         self.maskLow.value = float(low)
         self.maskHigh.value = float(high)
+        self._on_periosteal_contour_method_changed()
+
+    def _on_periosteal_contour_method_changed(self, *_args):
+        method = str(self.maskPeriostealContour.currentData or self.maskPeriostealContour.currentText or "standard")
+        is_geodesic = method == "geodesic_fracture"
+        endosteal_method = str(self.maskEndostealContour.currentData or self.maskEndostealContour.currentText or "standard")
+        any_standard_contour = (not is_geodesic) or endosteal_method != "none"
+        contour_support_visible = any_standard_contour
+        for label, widget in [
+            (self.maskOuterKernelLabel, self.maskOuterKernel),
+            (self.maskOuterOpenLabel, self.maskOuterOpen),
+        ]:
+            label.visible = not is_geodesic
+            widget.visible = not is_geodesic
+        self.maskGeodesicThresholdLabel.visible = is_geodesic
+        self.maskGeodesicThreshold.visible = is_geodesic
+        self.maskContourSupportThresholdLabel.visible = contour_support_visible
+        self.maskContourSupportThreshold.visible = contour_support_visible
+        self.maskContourSigmaLabel.visible = contour_support_visible
+        self.maskContourSigma.visible = contour_support_visible
+        self.maskEndostealThresholdLabel.visible = endosteal_method != "none"
+        self.maskEndostealThreshold.visible = endosteal_method != "none"
+        self.maskEndostealKernelLabel.visible = endosteal_method != "none"
+        self.maskEndostealKernel.visible = endosteal_method != "none"
+        self.maskGeodesicFillHolesLabel.visible = True
+        self.maskGeodesicFillHoles.visible = True
 
     def _queue_interactive_preview_update(self):
         if self.logic.is_running():
@@ -2788,49 +3033,40 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             (profile_cfg.get("multistack_correction") or {}) if isinstance(profile_cfg, dict) else {}
         )
 
-        profile_segmentation_cfg = profile_masks_cfg.get("segmentation") or {}
         mask_method = str(self.maskMethod.currentText or "adaptive")
-        if isinstance(profile_segmentation_cfg, dict) and profile_segmentation_cfg.get("method"):
-            mask_method = str(profile_segmentation_cfg.get("method") or mask_method)
         if mask_method == "global":
-            mask_method = "seg_gauss"
-        if selected_profile == "ped-fx":
             mask_method = "seg_gauss"
         mask_low = float(self.maskLow.value)
         mask_high = float(self.maskHigh.value)
+        contour_support_threshold = float(self.maskContourSupportThreshold.value)
         segmentation_cfg = {"method": mask_method}
-        segmentation_cfg["use_segmentation_aligned_contour_support"] = bool(
-            profile_segmentation_cfg.get(
-                "use_segmentation_aligned_contour_support",
-                bool(self.maskAlignedContourSupport.checked),
-            )
-        )
+        segmentation_cfg["use_segmentation_aligned_contour_support"] = bool(self.maskAlignedContourSupport.checked)
         if mask_method == "seg_gauss":
             segmentation_cfg.update(
                 {
-                    "trab_threshold": float(profile_segmentation_cfg.get("trab_threshold", mask_low)),
-                    "cort_threshold": float(profile_segmentation_cfg.get("cort_threshold", mask_high)),
-                    "gaussian_sigma": float(
-                        profile_segmentation_cfg.get(
-                            "gaussian_sigma",
-                            profile_segmentation_cfg.get("seg_gauss_sigma", getattr(self, "_seg_gauss_sigma", 0.8)),
-                        )
-                    ),
+                    "trab_threshold": mask_low,
+                    "cort_threshold": mask_high,
+                    "gaussian_sigma": float(self.maskSigma.value),
                 }
             )
         elif mask_method == "laplace_hamming":
             segmentation_cfg.update(
                 {
-                    "laplace_hamming_min_size_voxels": int(
-                        profile_segmentation_cfg.get("laplace_hamming_min_size_voxels", mask_high)
-                    ),
+                    "trab_threshold": contour_support_threshold,
+                    "cort_threshold": float(getattr(self, "_lh_cort_support_threshold", 450.0)),
+                    "gaussian_sigma": float(self.maskContourSigma.value),
+                    "laplace_hamming_threshold": float(self.maskLaplaceThreshold.value),
+                    "laplace_hamming_low_pass_cutoff": float(self.maskLaplaceLowPass.value),
+                    "laplace_hamming_high_pass_cutoff": float(self.maskLaplaceHighPass.value),
+                    "laplace_hamming_epsilon": float(self.maskLaplaceEpsilon.value),
+                    "laplace_hamming_min_size_voxels": int(mask_high),
                 }
             )
         else:
             segmentation_cfg.update(
                 {
-                    "adaptive_low_threshold": float(profile_segmentation_cfg.get("adaptive_low_threshold", mask_low)),
-                    "adaptive_high_threshold": float(profile_segmentation_cfg.get("adaptive_high_threshold", mask_high)),
+                    "adaptive_low_threshold": mask_low,
+                    "adaptive_high_threshold": mask_high,
                 }
             )
         periosteal_contour_method = str(self.maskPeriostealContour.currentData or "standard")
@@ -2838,18 +3074,28 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             periosteal_contour_method = "geodesic_fracture"
         outer_cfg = {
             "contour_method": periosteal_contour_method,
+            "fill_holes": bool(self.maskGeodesicFillHoles.checked),
+            "periosteal_threshold": contour_support_threshold,
             "geodesic_bone_threshold": float(self.maskGeodesicThreshold.value),
             "geodesic_fill_holes": bool(self.maskGeodesicFillHoles.checked),
+            "periosteal_kernelsize": int(self.maskOuterKernel.value),
+            "periosteal_open_radius": int(self.maskOuterOpen.value),
+            "gaussian_sigma": float(self.maskContourSigma.value),
         }
         masks_override = {
             "outer": outer_cfg,
             "segmentation": segmentation_cfg,
+            "overwrite": not bool(getattr(self, "doNotGenerateMasksCheck", None) and self.doNotGenerateMasksCheck.checked),
         }
         if isinstance(profile_masks_cfg.get("roles"), list):
             masks_override["roles"] = list(profile_masks_cfg["roles"])
-        profile_inner_cfg = profile_masks_cfg.get("inner") or {}
-        if isinstance(profile_inner_cfg, dict) and profile_inner_cfg.get("contour_method"):
-            masks_override["inner"] = {"contour_method": str(profile_inner_cfg["contour_method"])}
+        endosteal_contour_method = str(self.maskEndostealContour.currentData or "standard")
+        masks_override["inner"] = {
+            "contour_method": endosteal_contour_method,
+            "endosteal_threshold": float(self.maskEndostealThreshold.value),
+            "endosteal_kernelsize": int(self.maskEndostealKernel.value),
+            "gaussian_sigma": float(self.maskContourSigma.value),
+        }
         if selected_profile == "ped-fx":
             masks_override["roles"] = ["full"]
             masks_override["inner"] = {"contour_method": "none"}
@@ -4598,6 +4844,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         self._interactivePreviewTimer.start()
 
+    def _current_analysis_pair_mode(self):
+        pair_mode = str(self.analysisPairModeCombo.currentData or "adjacent")
+        return pair_mode if pair_mode in {"adjacent", "baseline", "all_pairs"} else "adjacent"
+
+    def _on_analysis_pair_mode_changed(self, *_args):
+        if getattr(self, "_suppress_interactive_preview_updates", False):
+            return
+        self._mark_analysis_settings_dirty()
+
     def _interactive_preview_label_map(self):
         return {
             "resorption": 1,
@@ -4629,10 +4884,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _update_current_comparison_table(self, rows=None):
         if not hasattr(self, "currentComparisonTable"):
             return
-        normalized_rows = list(rows or [])
+        seen_row_keys = set()
+        normalized_rows = []
+        for row in list(rows or []):
+            row_key = str(row.get("compartment", "")) if isinstance(row, dict) else str(row)
+            if row_key in seen_row_keys:
+                continue
+            seen_row_keys.add(row_key)
+            normalized_rows.append(row)
         display_rows = [self._current_comparison_table_row(row) for row in normalized_rows]
         if not display_rows:
             display_rows = [["N/A", "N/A", "N/A", "N/A", "N/A"]]
+        self.currentComparisonTable.clearContents()
         self.currentComparisonTable.setRowCount(len(display_rows))
         for row_idx, values in enumerate(display_rows):
             for col_idx, value in enumerate(values):
@@ -4921,12 +5184,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return None
 
     def _read_seg_array_for_preview(self, session, reference_image):
-        seg_path = getattr(session, "seg_path", None)
-        if seg_path is not None and Path(seg_path).exists():
-            seg_img = sitk.ReadImage(str(seg_path))
-            return (sitk.GetArrayFromImage(seg_img) > 0).astype(bool, copy=False)
+        def _read_nonempty_seg(path):
+            if path is None or not Path(path).exists():
+                return None
+            seg_img = sitk.ReadImage(str(path))
+            seg_arr = (sitk.GetArrayFromImage(seg_img) > 0).astype(bool, copy=False)
+            if np.any(seg_arr):
+                return seg_arr
+            return None
 
-        metadata_path = self._fused_metadata_path_from_image_path(getattr(session, "image_path", ""))
+        seg_path = getattr(session, "seg_path", None)
+        direct_seg = _read_nonempty_seg(seg_path)
+        if direct_seg is not None:
+            return direct_seg
+
+        metadata_path = getattr(session, "metadata_path", None)
+        if metadata_path is None or not Path(metadata_path).exists():
+            metadata_path = self._fused_metadata_path_from_image_path(getattr(session, "image_path", ""))
         if metadata_path is None:
             return None
         try:
@@ -5345,6 +5619,114 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             str(source_path),
         )
 
+    def _warn_missing_scene_baseline_pairs(self, pairs, session_ids):
+        self._last_missing_scene_baseline_pairs = []
+        if self._current_analysis_pair_mode() != "baseline" or len(session_ids) < 3:
+            return
+        baseline_session = session_ids[0]
+        expected_pairs = {
+            (baseline_session, session_id)
+            for session_id in session_ids[1:]
+        }
+        missing_pairs = sorted(
+            expected_pairs.difference(set(pairs)),
+            key=lambda pair: (
+                self._remodelling_session_sort_key(pair[0]),
+                self._remodelling_session_sort_key(pair[1]),
+            ),
+        )
+        if not missing_pairs:
+            return
+        self._last_missing_scene_baseline_pairs = list(missing_pairs)
+        missing_text = ", ".join(f"{t0} -> {t1}" for t0, t1 in missing_pairs)
+        message = (
+            f"[scene] baseline comparison(s) not yet computed: {missing_text}. "
+            "Running analysis with Pair mode = Baseline to compute the actual baseline comparisons."
+        )
+        self._show(message)
+        if hasattr(self, "sceneStatusLabel") and self.sceneStatusLabel is not None:
+            self.sceneStatusLabel.text = message.replace("[scene] ", "")
+
+    def _detect_missing_scene_baseline_pairs(self, rows):
+        row_list = list(rows or [])
+        pairs = []
+        for row in row_list:
+            try:
+                t0, t1 = [part.strip() for part in str(row[0]).split("->", 1)]
+            except Exception:
+                continue
+            pairs.append((t0, t1))
+        session_ids = sorted(
+            {session for pair in pairs for session in pair},
+            key=self._remodelling_session_sort_key,
+        )
+        self._warn_missing_scene_baseline_pairs(pairs, session_ids)
+        return row_list
+
+    def _clear_scene_analysis_outputs_for_refresh(self, plan):
+        output_root = Path(plan.output_root)
+        patterns = [
+            "*_remodelling.nii.gz",
+            "*_remodelling.mha",
+            "*_pairwise_remodelling.csv",
+            "*_trajectory_metrics.csv",
+        ]
+        removed = 0
+        for pattern in patterns:
+            for path in output_root.rglob(pattern):
+                if not path.is_file():
+                    continue
+                try:
+                    path.unlink()
+                    removed += 1
+                except Exception as exc:
+                    self._show(f"[scene] could not remove stale analysis output {path}: {exc}")
+        if removed:
+            self._show(f"[scene] removed {removed} stale analysis output(s) before scene analysis refresh.")
+
+    def _run_scene_analysis_for_missing_pair_mode(self):
+        missing_pairs = list(getattr(self, "_last_missing_scene_baseline_pairs", []) or [])
+        if not missing_pairs or self.logic.is_running():
+            return False
+        plan = getattr(self, "_last_scene_results_plan", None)
+        if plan is None:
+            return False
+        if not self._require_pipeline_installed():
+            return False
+        self._last_missing_scene_baseline_pairs = []
+        self._clear_scene_analysis_outputs_for_refresh(plan)
+        cfg = self.logic.create_override_config(
+            self._scene_settings_override(),
+            results_root=plan.output_root,
+        )
+        pair_mode_label = str(self.analysisPairModeCombo.currentText or self._current_analysis_pair_mode())
+        missing_text = ", ".join(f"{t0} -> {t1}" for t0, t1 in missing_pairs)
+        self.sceneStatusLabel.text = (
+            f"Running analysis refresh for {missing_text} with Pair mode = {pair_mode_label}..."
+        )
+        self._show(
+            f"[scene] running analysis refresh for missing comparison(s) {missing_text} "
+            f"with Pair mode = {pair_mode_label}."
+        )
+        self._set_stage_status("analysis", "pending")
+        self._active_stage = "analysis"
+        self._is_full_pipeline_run = False
+        self._run_skips_mask_generation = False
+        self._run_includes_analysis = True
+        self._last_scene_plan = plan
+        self._run([
+            "analyse",
+            str(plan.output_root),
+            "--thr",
+            str(float(self.analysisThreshold.value)),
+            "--clusters",
+            str(int(self.analysisCluster.value)),
+            *self._profile_cli_args(),
+            "--config",
+            cfg,
+        ])
+        return True
+
     def _refresh_remodelling_full_selector(self):
         selected_source_path = self._selected_remodelling_source_path()
         self.remodellingFullSegCombo.clear()
@@ -5369,6 +5751,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if self.logic.is_running():
             self._show("[preview] interactive remodelling update skipped while pipeline is running.")
             return
+        if getattr(self, "_last_scene_results_plan", None) is not None:
+            self._refresh_scene_results_table_from_loaded_remodelling()
+            if self._run_scene_analysis_for_missing_pair_mode():
+                return
 
         node_id = self.remodellingFullSegCombo.currentData
         if node_id is None:
@@ -6625,6 +7011,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return False
         try:
             node.SetName(str(name))
+            node.SetAttribute("TimelapsedHRpQCT.GeneratedMask", "1")
+            node.SetAttribute("TimelapsedHRpQCT.GeneratedMaskSourcePath", str(Path(path).resolve()))
         except Exception:
             pass
         try:
@@ -6747,7 +7135,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._show(f"[scene] could not read scene results table: {exc}")
             return []
-        return rows
+        return self._detect_missing_scene_baseline_pairs(rows)
 
     def _scene_result_rows_from_loaded_remodelling(self):
         source_paths = []
@@ -6771,17 +7159,26 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 if str(ctx.get("compartment", "")) != "full":
                     continue
                 for metric_row in self._compute_pair_metric_rows(preview_inputs):
-                    rows.append(self._scene_result_row_from_metric(ctx, metric_row))
+                    row = self._scene_result_row_from_metric(ctx, metric_row)
+                    rows.append(row)
             except Exception as exc:
                 self._show(f"[scene] could not refresh preview table rows for {Path(source_path).name}: {exc}")
-        return rows
+        return self._detect_missing_scene_baseline_pairs(rows)
 
     def _set_scene_comparison_rows(self, rows=None):
         if not hasattr(self, "sceneComparisonTable"):
             return
-        display_rows = list(rows or [])
+        seen_row_keys = set()
+        display_rows = []
+        for row in list(rows or []):
+            row_key = (row[0], row[1]) if len(row) >= 2 else tuple(row)
+            if row_key in seen_row_keys:
+                continue
+            seen_row_keys.add(row_key)
+            display_rows.append(row)
         if not display_rows:
             display_rows = [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]]
+        self.sceneComparisonTable.clearContents()
         self.sceneComparisonTable.setRowCount(len(display_rows))
         for row_idx, row_values in enumerate(display_rows):
             for col_idx, value in enumerate(row_values):
@@ -6837,10 +7234,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._show(f"[scene] could not show scene results table in Slicer table view: {exc}")
 
-    def _load_scene_results_table(self, plan, *, show=False):
-        rows = self._scene_result_rows_from_loaded_remodelling()
-        rows_source = "current scene display"
+    def _load_scene_results_table(self, plan, *, show=False, prefer_saved=False):
+        rows = []
+        rows_source = "saved CSV"
+        if prefer_saved:
+            rows = self._scene_result_rows(plan)
         if not rows:
+            rows = self._scene_result_rows_from_loaded_remodelling()
+            rows_source = "current scene display"
+        if not rows and not prefer_saved:
             rows = self._scene_result_rows(plan)
             rows_source = "saved CSV"
         self._set_scene_comparison_rows(rows)
@@ -6919,7 +7321,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception as exc:
                 self._show(f"[scene] could not load remodelling output {path.name}: {exc}")
 
-        loaded_result_rows = self._load_scene_results_table(plan)
+        loaded_result_rows = self._load_scene_results_table(plan, prefer_saved=True)
         self.sceneStatusLabel.text = (
             f"Loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
             f"{loaded_remodelling} remodelling output(s), and "

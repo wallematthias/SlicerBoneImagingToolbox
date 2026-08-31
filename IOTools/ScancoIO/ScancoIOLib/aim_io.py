@@ -350,7 +350,7 @@ def _aim_position_from_origin(
         if spacing_value == 0:
             position.append(0)
         else:
-            position.append(int(round((origin_value / spacing_value) - offset_value - 0.5)))
+            position.append(int(round((origin_value / spacing_value) - offset_value)))
     return tuple(position)
 
 
@@ -365,11 +365,11 @@ def _refresh_position_from_image_geometry(meta: dict[str, Any], image: sitk.Imag
 def _prepare_aim_metadata_for_write(meta: dict[str, Any], image: sitk.Image, *, mask: bool = False) -> None:
     if mask:
         meta["unit"] = "native"
-    meta.setdefault("dimensions", tuple(int(v) for v in image.GetSize()))
-    meta.setdefault("spacing", tuple(float(v) for v in image.GetSpacing()))
-    meta.setdefault("element_size", tuple(float(v) for v in image.GetSpacing()))
-    meta.setdefault("origin", tuple(float(v) for v in image.GetOrigin()))
-    meta.setdefault("direction", tuple(float(v) for v in image.GetDirection()))
+    meta["dimensions"] = tuple(int(v) for v in image.GetSize())
+    meta["spacing"] = tuple(float(v) for v in image.GetSpacing())
+    meta["element_size"] = tuple(float(v) for v in image.GetSpacing())
+    meta["origin"] = tuple(float(v) for v in image.GetOrigin())
+    meta["direction"] = tuple(float(v) for v in image.GetDirection())
     _refresh_position_from_image_geometry(meta, image)
 
 

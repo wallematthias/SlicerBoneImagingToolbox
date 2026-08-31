@@ -15,6 +15,7 @@ include(${Slicer_USE_FILE})
 
 set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/__init__.py
+  SlicerBoneImagingToolboxLib/bone_contour_batch_worker.py
   SlicerBoneImagingToolboxLib/common_region.py
   SlicerBoneImagingToolboxLib/derivatives.py
   SlicerBoneImagingToolboxLib/image_io.py
@@ -42,6 +43,7 @@ ctkMacroCompilePythonScript(
 add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
 add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
 add_subdirectory(HRpQCTTools/SegmentationHRpQCT)
+add_subdirectory(HRpQCTTools/DeriveLabelsHRpQCT)
 add_subdirectory(HRpQCTTools/RegisteredCommonRegion)
 add_subdirectory(HRpQCTTools/BoneMicroarchitecture)
 add_subdirectory(HRpQCTTools/PlateRodMorphometryHRpQCT)

@@ -15,7 +15,7 @@ def test_plate_rod_module_is_registered_with_toolbox_manifest_and_cmake() -> Non
     assert "add_subdirectory(HRpQCTTools/PlateRodMorphometryHRpQCT)" in cmake
     assert '"path": "HRpQCTTools/PlateRodMorphometryHRpQCT"' in manifest
     assert '"title": "Plate/Rod Morphometry"' in manifest
-    assert '"section": "HR-pQCT"' in manifest
+    assert '"section": "Analysis Methods"' in manifest
 
 
 def test_plate_rod_module_keeps_algorithm_logic_in_core_package() -> None:

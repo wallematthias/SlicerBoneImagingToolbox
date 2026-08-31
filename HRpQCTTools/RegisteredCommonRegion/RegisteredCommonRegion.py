@@ -37,7 +37,7 @@ class RegisteredCommonRegion(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Registered Common Region"
-        parent.categories = ["Bone Imaging.HR-pQCT"]
+        parent.categories = ["Bone Imaging.Timelapsed Methods"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (

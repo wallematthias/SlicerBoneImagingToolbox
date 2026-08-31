@@ -16,11 +16,11 @@ class MethodDescriptor:
 
 BONE_SEGMENTATION_METHODS = {
     "seg_gauss": MethodDescriptor(
-        label="XCT2 Gaussian",
+        label="Gaussian",
         parameters=("gaussian_sigma", "trab_threshold", "cort_threshold"),
     ),
     "laplace_hamming": MethodDescriptor(
-        label="XCT2 Laplace-Hamming",
+        label="Laplace-Hamming",
         parameters=(
             "laplace_hamming_threshold",
             "laplace_hamming_low_pass_cutoff",
@@ -30,7 +30,7 @@ BONE_SEGMENTATION_METHODS = {
         ),
     ),
     "adaptive": MethodDescriptor(
-        label="XCT2 Adaptive",
+        label="Adaptive",
         parameters=(
             "gaussian_sigma",
             "adaptive_low_threshold",
@@ -49,14 +49,16 @@ PERIOSTEAL_CONTOUR_METHODS = {
         label="Standard",
         parameters=(
             "periosteal_threshold",
+            "outer_gaussian_sigma",
             "periosteal_kernelsize",
             "periosteal_open_radius",
+            "fill_holes",
             "segmentation_aligned_contour_support",
         ),
     ),
     "geodesic_fracture": MethodDescriptor(
         label="Geodesic Fracture",
-        parameters=("geodesic_bone_threshold", "geodesic_fill_holes"),
+        parameters=("geodesic_bone_threshold", "fill_holes"),
     ),
     "none": MethodDescriptor(label="None"),
 }
@@ -67,6 +69,7 @@ ENDOSTEAL_CONTOUR_METHODS = {
         label="Standard",
         parameters=(
             "endosteal_threshold",
+            "inner_gaussian_sigma",
             "endosteal_kernelsize",
             "peel",
             "trabecular_close_radius",

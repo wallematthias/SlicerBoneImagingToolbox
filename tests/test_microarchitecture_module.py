@@ -15,7 +15,7 @@ def test_microarchitecture_module_is_registered_with_toolbox_manifest_and_cmake(
     assert "add_subdirectory(HRpQCTTools/BoneMicroarchitecture)" in cmake
     assert '"path": "HRpQCTTools/BoneMicroarchitecture"' in manifest
     assert '"title": "Bone Microarchitecture"' in manifest
-    assert '"section": "HR-pQCT"' in manifest
+    assert '"section": "Analysis Methods"' in manifest
 
 
 def test_microarchitecture_module_wraps_toolbox_microarchitecture_api() -> None:
@@ -233,7 +233,7 @@ def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
     assert "class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):" in source
     assert "class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):" in source
     assert "class BoneMicroarchitectureTest(ScriptedLoadableModuleTest):" in source
-    assert 'parent.categories = ["Bone Imaging.HR-pQCT"]' in source
+    assert 'parent.categories = ["Bone Imaging.Analysis Methods"]' in source
 
     assert "self.modeTabs = qt.QTabWidget()" in widget_setup
     assert 'self.modeTabs.addTab(single_tab, "Scene")' in widget_setup

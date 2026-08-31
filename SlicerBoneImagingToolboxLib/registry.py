@@ -9,11 +9,18 @@ TOOLBOX_NAME = "BoneImagingToolbox"
 TOOLBOX_DISPLAY_NAME = "Bone Imaging Toolbox"
 MANIFEST_NAME = "toolbox_modules.json"
 DEFAULT_BUILTIN_MODULE_DIRS = (
-    "HRpQCTTools/TimelapsedHRpQCT",
+    "Setup/BoneImagingToolboxSetup",
+    "IOTools/ScancoIO",
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
-    "IOTools/ScancoIO",
+    "HRpQCTTools/DeriveLabelsHRpQCT",
     "CTTools/SpineSegmentationCT",
+    "HRpQCTTools/TimelapsedHRpQCT",
+    "HRpQCTTools/MechanoregulationHRpQCT",
+    "HRpQCTTools/RegisteredCommonRegion",
+    "HRpQCTTools/BoneMicroarchitecture",
+    "HRpQCTTools/PlateRodMorphometryHRpQCT",
+    "HRpQCTTools/ParOSolFEA",
 )
 DEFAULT_EXTERNAL_MODULE_ROOTS = ("ExternalModules",)
 

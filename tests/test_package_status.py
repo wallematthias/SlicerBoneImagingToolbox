@@ -139,6 +139,7 @@ def test_default_runtime_packages_include_public_tool_cores() -> None:
     assert "timelapsed-hrpqct" in package_names
     assert "motionscorehrpqct" in package_names
     assert "aimio-py" in package_names
+    assert "bone-contouring" in package_names
     assert "spine-segment" in package_names
     assert "bone-microarchitecture" in package_names
     assert "plate-rod-thinning" in package_names
@@ -152,6 +153,14 @@ def test_timelapsed_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["timelapsed-hrpqct"].display_name == "Timelapsed HR-pQCT"
     assert "timelapsed-hrpqct" in specs["timelapsed-hrpqct"].notes
+
+
+def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    assert specs["bone-contouring"].display_name == "Bone Contouring"
+    assert specs["bone-contouring"].import_name == "bone_contouring"
+    assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 
 def test_microarchitecture_runtime_package_has_user_facing_setup_name() -> None:

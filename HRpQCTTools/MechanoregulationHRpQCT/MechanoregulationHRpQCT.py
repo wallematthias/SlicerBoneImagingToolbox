@@ -7,8 +7,10 @@ import os
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 import ctk
@@ -245,7 +247,7 @@ class MechanoregulationHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Bone Mechanoregulation"
-        parent.categories = ["Bone Imaging.Mechanoregulation"]
+        parent.categories = ["Bone Imaging.Timelapsed Methods"]
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -429,6 +431,8 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._runThread = None
         self._runTotal = 0
         self._runCaseIds = []
+        self._sceneCases = []
+        self._sceneRunRows = []
         self._cancelEvent = threading.Event()
         self._runPollTimer = qt.QTimer()
         self._runPollTimer.setInterval(150)
@@ -441,13 +445,17 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._build_runtime_section()
         self.modeTabs = qt.QTabWidget()
         batch_tab = qt.QWidget()
+        scene_tab = qt.QWidget()
         review_tab = qt.QWidget()
         batch_layout = qt.QVBoxLayout(batch_tab)
+        scene_layout = qt.QVBoxLayout(scene_tab)
         review_layout = qt.QVBoxLayout(review_tab)
         self.modeTabs.addTab(batch_tab, "Batch")
+        self.modeTabs.addTab(scene_tab, "Scene")
         self.modeTabs.addTab(review_tab, "Review")
         self.layout.addWidget(self.modeTabs)
         self._build_input_section(batch_layout)
+        self._build_scene_section(scene_layout)
         self._build_review_section(review_layout)
 
         self.layout.addStretch(1)
@@ -475,7 +483,10 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         box = ctk.ctkCollapsibleButton()
         box.text = "Batch"
         (parent_layout or self.layout).addWidget(box)
-        layout = qt.QFormLayout(box)
+        layout = qt.QVBoxLayout(box)
+        self.batchDiscoveryGroup = qt.QGroupBox("Discovery")
+        discovery_form = qt.QFormLayout(self.batchDiscoveryGroup)
+        layout.addWidget(self.batchDiscoveryGroup)
 
         self.datasetRootSelector = ctk.ctkPathLineEdit()
         self.datasetRootSelector.filters = ctk.ctkPathLineEdit.Dirs
@@ -504,15 +515,19 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.caseCombo.addItem("All cases", "all")
         self.caseCombo.currentIndexChanged.connect(self.on_case_combo_changed)
 
-        layout.addRow("Dataset root", self.datasetRootSelector)
-        layout.addRow("Resolved root", self.resolvedRootLabel)
-        layout.addRow("Profile", self.profileCombo)
-        layout.addRow("Bootstraps", self.bootstrapSpinBox)
-        layout.addRow("Cases", self.caseCombo)
-        layout.addRow("", self.overwriteCheckBox)
+        discovery_form.addRow("Dataset root", self.datasetRootSelector)
+        discovery_form.addRow("Resolved root", self.resolvedRootLabel)
+        discovery_form.addRow("Cases", self.caseCombo)
+
+        self.batchWorkflowGroup = qt.QGroupBox("Workflow")
+        workflow_form = qt.QFormLayout(self.batchWorkflowGroup)
+        layout.addWidget(self.batchWorkflowGroup)
+        workflow_form.addRow("Profile", self.profileCombo)
+        workflow_form.addRow("Bootstraps", self.bootstrapSpinBox)
+        workflow_form.addRow("", self.overwriteCheckBox)
 
         action_row = qt.QHBoxLayout()
-        self.runButton = qt.QPushButton("Run Batch")
+        self.runButton = qt.QPushButton("Run")
         self.stopButton = qt.QPushButton("Stop")
         self.stopButton.enabled = False
         self.runButton.clicked.connect(self.run)
@@ -525,13 +540,12 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         action_row.addWidget(self.runButton, 2)
         action_row.addWidget(self.stopButton, 1)
-        layout.addRow(action_row)
 
         self.statusLabel = qt.QLabel("Idle")
         self.statusLabel.wordWrap = True
         self.statusLabel.setMinimumWidth(0)
         self.statusLabel.setSizePolicy(qt.QSizePolicy.Ignored, qt.QSizePolicy.Preferred)
-        layout.addRow("Status", self.statusLabel)
+        layout.addWidget(self.statusLabel)
         self.progressBar = qt.QProgressBar()
         self.progressBar.minimum = 0
         self.progressBar.maximum = 1
@@ -543,10 +557,91 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.currentStepLabel.setMinimumWidth(0)
         self.currentStepLabel.setSizePolicy(qt.QSizePolicy.Ignored, qt.QSizePolicy.Preferred)
         self.currentStepLabel.toolTip = "Currently running mechanoregulation step."
-        layout.addRow("Progress", self.progressBar)
-        layout.addRow("Current", self.currentStepLabel)
+        layout.addWidget(self.progressBar)
+        layout.addWidget(self.currentStepLabel)
+        layout.addLayout(action_row)
         if parent_layout is not None:
             parent_layout.addStretch(1)
+
+    def _build_scene_section(self, parent_layout):
+        box = ctk.ctkCollapsibleButton()
+        box.text = "Scene"
+        parent_layout.addWidget(box)
+        layout = qt.QVBoxLayout(box)
+
+        self.sceneDiscoveryGroup = qt.QGroupBox("Discovery")
+        discovery_layout = qt.QVBoxLayout(self.sceneDiscoveryGroup)
+        layout.addWidget(self.sceneDiscoveryGroup)
+
+        discover_row = qt.QHBoxLayout()
+        self.sceneDiscoverButton = qt.QPushButton("Discover")
+        discover_row.addWidget(self.sceneDiscoverButton)
+        discover_row.addStretch(1)
+        discovery_layout.addLayout(discover_row)
+
+        self.sceneCaseTable = qt.QTableWidget()
+        self.sceneCaseTable.setColumnCount(7)
+        self.sceneCaseTable.setHorizontalHeaderLabels(
+            ["Run", "Remodelling", "Baseline SED", "Baseline Seg", "Trab", "Cort", "Full"]
+        )
+        self.sceneCaseTable.minimumHeight = 150
+        self.sceneCaseTable.maximumHeight = 260
+        self.sceneCaseTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
+        try:
+            self.sceneCaseTable.horizontalHeader().setStretchLastSection(True)
+            self.sceneCaseTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        except Exception:
+            pass
+        discovery_layout.addWidget(self.sceneCaseTable)
+
+        self.sceneWorkflowGroup = qt.QGroupBox("Workflow")
+        controls = qt.QFormLayout(self.sceneWorkflowGroup)
+        layout.addWidget(self.sceneWorkflowGroup)
+        self.sceneProfileCombo = qt.QComboBox()
+        self.sceneProfileCombo.addItems(["XtremeCTII", "XtremeCTI"])
+        self.sceneBootstrapSpinBox = qt.QSpinBox()
+        self.sceneBootstrapSpinBox.minimum = 1
+        self.sceneBootstrapSpinBox.maximum = 10000
+        self.sceneBootstrapSpinBox.value = 100
+        self.sceneOverwriteCheckBox = qt.QCheckBox("Overwrite existing outputs")
+        controls.addRow("Profile", self.sceneProfileCombo)
+        controls.addRow("Bootstraps", self.sceneBootstrapSpinBox)
+        controls.addRow("", self.sceneOverwriteCheckBox)
+
+        self.sceneStatusLabel = qt.QLabel("Discover loaded remodelling maps to run mechanoregulation from the scene.")
+        self.sceneStatusLabel.wordWrap = True
+        layout.addWidget(self.sceneStatusLabel)
+        self.sceneProgressBar = qt.QProgressBar()
+        self.sceneProgressBar.minimum = 0
+        self.sceneProgressBar.maximum = 1
+        self.sceneProgressBar.value = 0
+        self.sceneProgressBar.visible = False
+        self.sceneProgressBar.toolTip = "Current scene mechanoregulation progress."
+        self.sceneCurrentStepLabel = qt.QLabel("Current step: idle")
+        self.sceneCurrentStepLabel.wordWrap = True
+        self.sceneCurrentStepLabel.setMinimumWidth(0)
+        self.sceneCurrentStepLabel.setSizePolicy(qt.QSizePolicy.Ignored, qt.QSizePolicy.Preferred)
+        layout.addWidget(self.sceneProgressBar)
+        layout.addWidget(self.sceneCurrentStepLabel)
+
+        button_row = qt.QHBoxLayout()
+        self.sceneRunButton = qt.QPushButton("Run")
+        self.sceneStopButton = qt.QPushButton("Stop")
+        self.sceneStopButton.enabled = False
+        self.sceneRunButton.minimumHeight = 34
+        self.sceneRunButton.setStyleSheet(
+            "QPushButton { font-weight: 700; background-color: #2f7ed8; color: white; "
+            "border: 1px solid #1f5fa8; border-radius: 4px; padding: 6px 10px; }"
+            "QPushButton:disabled { background-color: #9aa9b8; color: #f0f0f0; border-color: #8794a0; }"
+        )
+        button_row.addWidget(self.sceneRunButton, 2)
+        button_row.addWidget(self.sceneStopButton, 1)
+        layout.addLayout(button_row)
+
+        self.sceneDiscoverButton.clicked.connect(self.discover_scene_cases)
+        self.sceneRunButton.clicked.connect(self.run_scene)
+        self.sceneStopButton.clicked.connect(self.request_stop)
+        parent_layout.addStretch(1)
 
     def _build_review_section(self, parent_layout=None):
         box = ctk.ctkCollapsibleButton()
@@ -623,9 +718,15 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _show(self, message):
         text = self._status_text(message)
-        self.statusLabel.text = text
-        if hasattr(self, "currentStepLabel"):
-            self.currentStepLabel.text = text
+        if text.startswith("[scene]"):
+            if hasattr(self, "sceneStatusLabel"):
+                self.sceneStatusLabel.text = text
+            if hasattr(self, "sceneCurrentStepLabel"):
+                self.sceneCurrentStepLabel.text = text
+        else:
+            self.statusLabel.text = text
+            if hasattr(self, "currentStepLabel"):
+                self.currentStepLabel.text = text
         self.logText.appendPlainText(text)
         qt.QApplication.processEvents()
 
@@ -768,6 +869,272 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.roiCombo.enabled = case is not None
         self.roiCombo.blockSignals(False)
 
+    def _scene_volume_nodes(self, node_classes):
+        classes = tuple(str(value) for value in node_classes)
+        nodes = []
+        for index in range(slicer.mrmlScene.GetNumberOfNodes()):
+            node = slicer.mrmlScene.GetNthNode(index)
+            if node is None:
+                continue
+            try:
+                if any(node.IsA(node_class) for node_class in classes):
+                    nodes.append(node)
+            except Exception:
+                continue
+        return nodes
+
+    def _node_name_contains(self, node, tokens, *, exclude=()):
+        name = str(node.GetName() if node is not None else "").lower()
+        if any(str(token).lower() in name for token in exclude):
+            return False
+        return any(str(token).lower() in name for token in tokens)
+
+    def _scene_remodelling_candidates(self):
+        return [
+            node
+            for node in self._scene_volume_nodes(("vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode"))
+            if self._node_name_contains(node, ("remodelling", "remodeling"))
+        ]
+
+    def _scene_sed_candidates(self):
+        return [
+            node
+            for node in self._scene_volume_nodes(("vtkMRMLScalarVolumeNode",))
+            if self._node_name_contains(node, ("sed", "strain", "fea"), exclude=("remodelling", "remodeling"))
+        ]
+
+    def _scene_mask_candidates(self, role):
+        role = str(role).lower()
+        if role == "seg":
+            tokens = ("_seg", " seg", "segmentation", "bone")
+            exclude = ("remodelling", "remodeling", "mask-full", "mask-trab", "mask-cort", "sed", "strain")
+        elif role == "trab":
+            tokens = ("trab", "mask-trab")
+            exclude = ("remodelling", "remodeling", "sed", "strain")
+        elif role == "cort":
+            tokens = ("cort", "mask-cort")
+            exclude = ("remodelling", "remodeling", "sed", "strain")
+        else:
+            tokens = ("full", "mask-full", "common")
+            exclude = ("remodelling", "remodeling", "sed", "strain")
+        return [
+            node
+            for node in self._scene_volume_nodes(("vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode"))
+            if self._node_name_contains(node, tokens, exclude=exclude)
+        ]
+
+    def _node_combo(self, nodes, *, include_generate=False, include_none=True, default_generate=False):
+        combo = qt.QComboBox()
+        if include_generate:
+            combo.addItem("Generate", "generate")
+        if include_none:
+            combo.addItem("None", "none")
+        for node in nodes:
+            combo.addItem(str(node.GetName()), str(node.GetID()))
+        if include_generate and default_generate:
+            combo.setCurrentIndex(0)
+        elif include_generate and nodes:
+            combo.setCurrentIndex(2 if include_none else 1)
+        elif combo.count > 0 and not include_generate:
+            combo.setCurrentIndex(0)
+        return combo
+
+    def discover_scene_cases(self):
+        remodelling_nodes = self._scene_remodelling_candidates()
+        sed_nodes = self._scene_sed_candidates()
+        seg_nodes = self._scene_mask_candidates("seg")
+        trab_nodes = self._scene_mask_candidates("trab")
+        cort_nodes = self._scene_mask_candidates("cort")
+        full_nodes = self._scene_mask_candidates("full")
+        self._sceneCases = [{"remodelling_node": node} for node in remodelling_nodes]
+        table = self.sceneCaseTable
+        table.setRowCount(len(self._sceneCases))
+        for row, case in enumerate(self._sceneCases):
+            run_item = qt.QTableWidgetItem("")
+            run_item.setFlags(run_item.flags() | qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
+            run_item.setCheckState(qt.Qt.Checked)
+            table.setItem(row, 0, run_item)
+            remodelling_item = qt.QTableWidgetItem(str(case["remodelling_node"].GetName()))
+            remodelling_item.setFlags(remodelling_item.flags() & ~qt.Qt.ItemIsEditable)
+            table.setItem(row, 1, remodelling_item)
+            table.setCellWidget(row, 2, self._node_combo(sed_nodes, include_generate=True, default_generate=not sed_nodes))
+            table.setCellWidget(row, 3, self._node_combo(seg_nodes, include_none=True))
+            table.setCellWidget(row, 4, self._node_combo(trab_nodes, include_none=True))
+            table.setCellWidget(row, 5, self._node_combo(cort_nodes, include_none=True))
+            table.setCellWidget(row, 6, self._node_combo(full_nodes, include_none=True))
+        try:
+            table.resizeColumnsToContents()
+        except Exception:
+            pass
+        self.sceneStatusLabel.text = (
+            f"Discovered {len(remodelling_nodes)} remodelling map(s), {len(sed_nodes)} baseline SED candidate(s), "
+            f"and {len(seg_nodes)} baseline segmentation candidate(s)."
+        )
+
+    def _scene_selected_rows(self):
+        rows = []
+        for row in range(self.sceneCaseTable.rowCount):
+            item = self.sceneCaseTable.item(row, 0)
+            if item is None or item.checkState() == qt.Qt.Checked:
+                rows.append(row)
+        return rows
+
+    def _scene_combo_value(self, row, column):
+        widget = self.sceneCaseTable.cellWidget(row, column)
+        if widget is None:
+            return "none"
+        value = widget.currentData
+        return str(value if value is not None else widget.currentText or "none")
+
+    def _scene_node_from_combo(self, row, column):
+        node_id = self._scene_combo_value(row, column)
+        if node_id in {"", "none", "generate"}:
+            return None
+        return slicer.mrmlScene.GetNodeByID(node_id)
+
+    def _scene_run_root(self):
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "MechanoregulationScene" / "scene_runs" / stamp
+
+    def _save_scene_node(self, node, path):
+        if node is None:
+            return None
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not slicer.util.saveNode(node, str(path)):
+            raise RuntimeError(f"Could not save scene node to {path}")
+        return path
+
+    def _stage_scene_case(self, row):
+        case = self._sceneCases[row]
+        remodelling_node = case["remodelling_node"]
+        run_root = self._scene_run_root()
+        input_dir = run_root / "input"
+        output_dir = run_root / "output" / "derivatives" / "Mechanoregulation" / "sub-scene" / "site-scene" / "runs" / f"scene-row-{row + 1:02d}"
+        remodelling_path = self._save_scene_node(remodelling_node, input_dir / f"scene-row-{row + 1:02d}_remodelling.nii.gz")
+        sed_choice = self._scene_combo_value(row, 2)
+        baseline_sed_path = None
+        if sed_choice not in {"generate", "none"}:
+            baseline_sed_path = self._save_scene_node(self._scene_node_from_combo(row, 2), input_dir / f"scene-row-{row + 1:02d}_sed.nii.gz")
+        baseline_segmentation_path = self._save_scene_node(
+            self._scene_node_from_combo(row, 3),
+            input_dir / f"scene-row-{row + 1:02d}_seg.nii.gz",
+        )
+        trab_mask_path = self._save_scene_node(
+            self._scene_node_from_combo(row, 4),
+            input_dir / f"scene-row-{row + 1:02d}_mask-trab.nii.gz",
+        )
+        cort_mask_path = self._save_scene_node(
+            self._scene_node_from_combo(row, 5),
+            input_dir / f"scene-row-{row + 1:02d}_mask-cort.nii.gz",
+        )
+        full_mask_path = self._save_scene_node(
+            self._scene_node_from_combo(row, 6),
+            input_dir / f"scene-row-{row + 1:02d}_mask-full.nii.gz",
+        )
+        if sed_choice == "generate" and baseline_segmentation_path is None:
+            raise ValueError("Generate baseline SED requires a baseline segmentation for each selected scene row.")
+        return {
+            "subject_id": "sub-scene",
+            "case_id": f"scene-row-{row + 1:02d}",
+            "baseline_image_path": remodelling_path,
+            "remodelling_image_path": remodelling_path,
+            "output_dir": output_dir,
+            "baseline_segmentation_path": baseline_segmentation_path,
+            "trab_mask_path": trab_mask_path,
+            "cort_mask_path": cort_mask_path,
+            "full_mask_path": full_mask_path,
+            "baseline_sed_path": baseline_sed_path,
+        }
+
+    def run_scene(self):
+        if self._running:
+            slicer.util.warningDisplay("Mechanoregulation is already running.")
+            return
+        if not self._sceneCases:
+            self.discover_scene_cases()
+        rows = self._scene_selected_rows()
+        if not rows:
+            slicer.util.warningDisplay("Select at least one scene remodelling map.")
+            return
+        try:
+            staged = [self._stage_scene_case(row) for row in rows]
+        except Exception as exc:
+            slicer.util.errorDisplay(str(exc))
+            self.sceneStatusLabel.text = str(exc)
+            return
+        self._running = True
+        self._cancelEvent.clear()
+        self._runTotal = len(staged)
+        self._sceneRunRows = staged
+        self.sceneRunButton.enabled = False
+        self.sceneStopButton.enabled = True
+        self.sceneProgressBar.visible = True
+        self.sceneProgressBar.setRange(0, max(len(staged), 1))
+        self.sceneProgressBar.value = 0
+        profile = self.sceneProfileCombo.currentText
+        overwrite = bool(self.sceneOverwriteCheckBox.checked)
+        n_boot = int(self.sceneBootstrapSpinBox.value)
+        self.sceneStatusLabel.text = f"Running 0/{len(staged)} scene mechanoregulation case(s)..."
+        self.sceneCurrentStepLabel.text = "Current step: preparing"
+        self._runThread = threading.Thread(
+            target=self._run_scene_worker,
+            args=(staged, profile, overwrite, n_boot),
+            daemon=True,
+        )
+        self._runThread.start()
+        self._runPollTimer.start()
+
+    def _run_scene_worker(self, staged_cases, profile, overwrite, n_boot):
+        summary = {
+            "discovered": len(staged_cases),
+            "processed": 0,
+            "skipped": 0,
+            "failed": 0,
+            "cancelled": False,
+            "dry_run": False,
+        }
+        try:
+            _prefer_local_core()
+            from bonemechreg.timelapse import TimelapseCase, case_outputs
+            from bonemechreg.post_timelapse import run_post_timelapse_case
+
+            for index, staged in enumerate(staged_cases, start=1):
+                if self._cancelEvent.is_set():
+                    summary["cancelled"] = True
+                    break
+                self._runQueue.put(("progress", index - 1, f"[scene] {index}/{len(staged_cases)} {staged['case_id']}"))
+                case = TimelapseCase(
+                    subject_id=staged["subject_id"],
+                    case_id=staged["case_id"],
+                    baseline_image_path=Path(staged["baseline_image_path"]),
+                    remodelling_image_path=Path(staged["remodelling_image_path"]),
+                    output_dir=Path(staged["output_dir"]),
+                    baseline_segmentation_path=staged.get("baseline_segmentation_path"),
+                    trab_mask_path=staged.get("trab_mask_path"),
+                    cort_mask_path=staged.get("cort_mask_path"),
+                    full_mask_path=staged.get("full_mask_path"),
+                )
+                baseline_sed_path = staged.get("baseline_sed_path")
+                if baseline_sed_path:
+                    outputs = case_outputs(case)
+                    outputs["sed"].parent.mkdir(parents=True, exist_ok=True)
+                    outputs["sed"].write_bytes(Path(baseline_sed_path).read_bytes())
+                result = run_post_timelapse_case(
+                    case,
+                    profile=profile,
+                    overwrite=bool(overwrite and not baseline_sed_path),
+                    n_boot=int(n_boot),
+                    verbose=True,
+                )
+                summary["processed"] += int(result.get("processed", 0))
+                summary["skipped"] += int(result.get("skipped", 0))
+                summary["failed"] += int(result.get("failed", 0))
+                self._runQueue.put(("progress", index, f"[scene] finished {index}/{len(staged_cases)} {staged['case_id']}"))
+            self._runQueue.put(("scene_finished", summary))
+        except Exception:
+            self._runQueue.put(("scene_error", traceback.format_exc()))
+
     def _case_combo_data(self):
         if not hasattr(self, "caseCombo"):
             return None
@@ -844,6 +1211,8 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         self._cancelEvent.set()
         self.stopButton.enabled = False
+        if hasattr(self, "sceneStopButton"):
+            self.sceneStopButton.enabled = False
         self._show("[run] stop requested; finishing the active case before stopping")
 
     def _run_worker(self, cases, dataset_root, profile, overwrite, n_boot):
@@ -890,7 +1259,12 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             kind = event[0]
             if kind == "progress":
                 _kind, value, message = event
-                self.progressBar.value = int(value)
+                if str(message).startswith("[scene]") and hasattr(self, "sceneProgressBar"):
+                    self.sceneProgressBar.value = int(value)
+                    self.sceneStatusLabel.text = self._status_text(message)
+                    self.sceneCurrentStepLabel.text = self._status_text(message)
+                else:
+                    self.progressBar.value = int(value)
                 self._show(message)
             elif kind == "finished":
                 _kind, summary = event
@@ -899,6 +1273,14 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             elif kind == "error":
                 _kind, details = event
                 self._finish_run(None, error=details)
+                return
+            elif kind == "scene_finished":
+                _kind, summary = event
+                self._finish_scene_run(summary)
+                return
+            elif kind == "scene_error":
+                _kind, details = event
+                self._finish_scene_run(None, error=details)
                 return
 
     def _finish_run(self, summary, error=None):
@@ -932,6 +1314,57 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.statusLabel.text = self._status_text(final_message)
             self.currentStepLabel.text = self._status_text(final_message)
             self.progressBar.visible = False
+
+    def _finish_scene_run(self, summary, error=None):
+        self._runPollTimer.stop()
+        self._running = False
+        self.sceneRunButton.enabled = True
+        self.sceneStopButton.enabled = False
+        self.sceneProgressBar.value = 0 if error else max(self._runTotal, 1)
+        if error:
+            slicer.util.errorDisplay(error)
+            self.sceneStatusLabel.text = self._status_text(f"Scene run failed: {error}")
+            self.sceneCurrentStepLabel.text = "Current step: failed"
+            self._show(f"[scene] failed: {error}")
+            self.sceneProgressBar.visible = False
+            return
+        final_message = f"[scene] finished: {_run_summary_text(summary)}"
+        if summary and summary.get("cancelled"):
+            final_message = f"[scene] stopped: {_run_summary_text(summary)}"
+        self.sceneStatusLabel.text = self._status_text(final_message)
+        self.sceneCurrentStepLabel.text = self._status_text(final_message)
+        self._show(final_message)
+        self._load_scene_mechanoregulation_outputs()
+        self.sceneProgressBar.visible = False
+
+    def _load_scene_mechanoregulation_outputs(self):
+        loaded = 0
+        for staged in list(getattr(self, "_sceneRunRows", []) or []):
+            try:
+                _prefer_local_core()
+                from bonemechreg.timelapse import TimelapseCase, case_outputs
+
+                case = TimelapseCase(
+                    subject_id=staged["subject_id"],
+                    case_id=staged["case_id"],
+                    baseline_image_path=Path(staged["baseline_image_path"]),
+                    remodelling_image_path=Path(staged["remodelling_image_path"]),
+                    output_dir=Path(staged["output_dir"]),
+                    baseline_segmentation_path=staged.get("baseline_segmentation_path"),
+                    trab_mask_path=staged.get("trab_mask_path"),
+                    cort_mask_path=staged.get("cort_mask_path"),
+                    full_mask_path=staged.get("full_mask_path"),
+                )
+                outputs = case_outputs(case)
+                for key in ("sed", "material"):
+                    path = outputs.get(key)
+                    if path is not None and Path(path).exists():
+                        if self._load_volume(path, key) is not None:
+                            loaded += 1
+            except Exception as exc:
+                self._show(f"[scene] could not load outputs: {exc}")
+        if loaded:
+            self.sceneStatusLabel.text = f"{self.sceneStatusLabel.text} Loaded {loaded} output volume(s)."
 
     def _selected_record(self):
         if self._case_combo_data() == "all":

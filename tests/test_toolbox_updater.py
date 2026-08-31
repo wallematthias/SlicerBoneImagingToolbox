@@ -91,13 +91,14 @@ def test_toolbox_module_dirs_include_external_scripted_modules(tmp_path: Path) -
 
 def test_builtin_modules_use_expected_slicer_subcategories() -> None:
     expected = {
-        "HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/BoneMicroarchitecture/BoneMicroarchitecture.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/PlateRodMorphometryHRpQCT/PlateRodMorphometryHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
+        "HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py": 'parent.categories = ["Bone Imaging.Timelapsed Methods"]',
+        "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.Quality Control"]',
+        "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.Segmentation Methods"]',
+        "HRpQCTTools/DeriveLabelsHRpQCT/DeriveLabelsHRpQCT.py": 'parent.categories = ["Bone Imaging.Segmentation Methods"]',
+        "HRpQCTTools/BoneMicroarchitecture/BoneMicroarchitecture.py": 'parent.categories = ["Bone Imaging.Analysis Methods"]',
+        "HRpQCTTools/PlateRodMorphometryHRpQCT/PlateRodMorphometryHRpQCT.py": 'parent.categories = ["Bone Imaging.Analysis Methods"]',
         "IOTools/ScancoIO/ScancoIO.py": 'parent.categories = ["Bone Imaging.I/O"]',
-        "CTTools/SpineSegmentationCT/SpineSegmentationCT.py": 'parent.categories = ["Bone Imaging.CT"]',
+        "CTTools/SpineSegmentationCT/SpineSegmentationCT.py": 'parent.categories = ["Bone Imaging.Segmentation Methods"]',
         "Setup/BoneImagingToolboxSetup/BoneImagingToolboxSetup.py": 'parent.categories = ["Bone Imaging.Setup"]',
     }
     for relative_path, category_line in expected.items():
@@ -107,18 +108,19 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
     segmentation_source = (
         REPO_ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
     ).read_text(encoding="utf-8")
-    assert 'parent.title = "Segmentation and Contours"' in segmentation_source
+    assert 'parent.title = "Bone Contours"' in segmentation_source
 
     manifest = json.loads((REPO_ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
     sections = {module["path"]: module["section"] for module in manifest["modules"]}
     expected_sections = {
-        "HRpQCTTools/TimelapsedHRpQCT": "HR-pQCT",
-        "HRpQCTTools/MotionScoreHRpQCT": "HR-pQCT",
-        "HRpQCTTools/SegmentationHRpQCT": "HR-pQCT",
-        "HRpQCTTools/BoneMicroarchitecture": "HR-pQCT",
-        "HRpQCTTools/PlateRodMorphometryHRpQCT": "HR-pQCT",
+        "HRpQCTTools/TimelapsedHRpQCT": "Timelapsed Methods",
+        "HRpQCTTools/MotionScoreHRpQCT": "Quality Control",
+        "HRpQCTTools/SegmentationHRpQCT": "Segmentation Methods",
+        "HRpQCTTools/DeriveLabelsHRpQCT": "Segmentation Methods",
+        "HRpQCTTools/BoneMicroarchitecture": "Analysis Methods",
+        "HRpQCTTools/PlateRodMorphometryHRpQCT": "Analysis Methods",
         "IOTools/ScancoIO": "I/O",
-        "CTTools/SpineSegmentationCT": "CT",
+        "CTTools/SpineSegmentationCT": "Segmentation Methods",
         "Setup/BoneImagingToolboxSetup": "Setup",
     }
     for path, section in expected_sections.items():
@@ -129,7 +131,9 @@ def test_local_link_helper_fallback_includes_all_builtin_modules() -> None:
     helper = (REPO_ROOT / "scripts" / "link_local_toolbox_modules.py").read_text(encoding="utf-8")
 
     assert '"CTTools/SpineSegmentationCT"' in helper
+    assert '"HRpQCTTools/DeriveLabelsHRpQCT"' in helper
     assert '"HRpQCTTools/PlateRodMorphometryHRpQCT"' in helper
     assert '"Setup/BoneImagingToolboxSetup"' in helper
     assert '"PlateRodMorphometryHRpQCT"' in helper
+    assert '"DeriveLabelsHRpQCT"' in helper
     assert '"BoneImagingToolboxSetup"' in helper

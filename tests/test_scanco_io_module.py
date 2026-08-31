@@ -210,6 +210,18 @@ def test_aim_metadata_position_is_refreshed_from_image_origin() -> None:
     assert metadata["offset"] == (0, 0, 0)
 
 
+def test_aim_metadata_position_preserves_integer_voxel_origins() -> None:
+    image = sitk.Image([4, 5, 6], sitk.sitkUInt8)
+    image.SetSpacing((0.082, 0.082, 0.082))
+    image.SetOrigin((566 * 0.082, 465 * 0.082, 0.0))
+    metadata = {"position": (0, 0, 0), "offset": (0, 0, 0)}
+
+    aim_io._refresh_position_from_image_geometry(metadata, image)
+
+    assert metadata["position"] == (566, 465, 0)
+    assert metadata["offset"] == (0, 0, 0)
+
+
 def test_segmentation_export_can_restore_aim_geometry_from_metadata() -> None:
     image = sitk.Image([290, 253, 335], sitk.sitkUInt8)
     image.SetSpacing((1.0, 1.0, 1.0))
@@ -238,3 +250,26 @@ def test_mask_write_forces_native_unit_even_with_bmd_metadata() -> None:
     aim_io._prepare_aim_metadata_for_write(metadata, image, mask=True)
 
     assert metadata["unit"] == "native"
+
+
+def test_mask_write_overwrites_geometry_with_mask_image_geometry() -> None:
+    image = sitk.Image([4, 5, 6], sitk.sitkUInt8)
+    image.SetSpacing((0.082, 0.083, 0.084))
+    image.SetOrigin((46.412, 38.13, 1.23))
+    image.SetDirection((1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0))
+    metadata = {
+        "dimensions": (1, 1, 1),
+        "spacing": (1.0, 1.0, 1.0),
+        "element_size": (1.0, 1.0, 1.0),
+        "origin": (0.0, 0.0, 0.0),
+        "direction": (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+        "offset": (0, 0, 0),
+    }
+
+    aim_io._prepare_aim_metadata_for_write(metadata, image, mask=True)
+
+    assert metadata["dimensions"] == (4, 5, 6)
+    assert metadata["spacing"] == image.GetSpacing()
+    assert metadata["element_size"] == image.GetSpacing()
+    assert metadata["origin"] == image.GetOrigin()
+    assert metadata["direction"] == image.GetDirection()

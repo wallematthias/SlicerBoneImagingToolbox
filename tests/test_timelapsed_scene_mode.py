@@ -58,6 +58,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert 'qt.QGroupBox("Scene Results")' not in source
     assert "self.sceneResultsTable" not in source
     assert "_load_scene_results_table" in source
+    assert "prefer_saved=False" in source
+    assert "prefer_saved=True" in source
     assert "_load_scene_results_table_node" in source
     assert "_show_scene_results_table_node" in source
     assert "vtkMRMLTableNode" in source
@@ -88,6 +90,10 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "_load_scene_run_outputs" in source
     assert "_load_scene_run_masks" in source
     assert "_load_scene_mask_labelmap" in source
+    assert "def _read_seg_array_for_preview" in source
+    assert "direct_seg = _read_nonempty_seg(seg_path)" in source
+    assert "if np.any(seg_arr):" in source
+    assert 'metadata_path = getattr(session, "metadata_path", None)' in source
     assert "iter_imported_stack_records" in source
     assert "iter_fused_session_records" in source
     assert "Only native/imported masks are loaded back for scene rediscovery." in source
@@ -108,9 +114,10 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "def _scene_selected_mask_node_id" in source
     assert "def _scene_selected_mask_policy" in source
     assert "def _scene_mask_generation_requested" in source
+    assert "def _scene_segmentation_generation_requested" in source
     assert "def _scene_settings_override" in source
     assert 'masks_cfg["roles"] = self._scene_requested_mask_roles()' in source
-    assert 'masks_cfg["generate_segmentation"] = self._scene_segmentation_requested()' in source
+    assert 'masks_cfg["generate_segmentation"] = self._scene_segmentation_generation_requested()' in source
     assert 'inner_cfg["contour_method"] = "none"' in source
     assert 'analysis_cfg["compartments"] = self._scene_analysis_compartments()' in source
     assert 'addItem("Generate", "__generate__")' in source
@@ -123,6 +130,22 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "sceneMaskLowerSlider" not in source
     assert "Analysis Options" in source
     assert "Advanced Settings" in source
+    assert "Discovery / Import" in source
+    assert "self.maskSigma" in source
+    assert "self.maskContourSigma" in source
+    assert "self.maskLaplaceThreshold" in source
+    assert "self.maskLaplaceLowPass" in source
+    assert "self.maskLaplaceHighPass" in source
+    assert "self.maskLaplaceEpsilon" in source
+    assert "self.maskOuterKernel" in source
+    assert "self.maskOuterOpen" in source
+    assert "def _on_periosteal_contour_method_changed" in source
+    assert '"overwrite": not bool(getattr(self, "doNotGenerateMasksCheck", None) and self.doNotGenerateMasksCheck.checked)' in source
+    assert 'masks_cfg["overwrite"] = scene_generates_masks' in source
+    assert "TimelapsedHRpQCT.GeneratedMask" in source
+    assert 'qt.QGroupBox("Interactive Preview")' not in source
+    assert '"Auto update"' not in source
+    assert '"Update remodelling image"' not in source
     assert "analysisSectionBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "settingsBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "self.layout.addWidget(analysisSectionBox)" in source
@@ -186,7 +209,7 @@ def test_timelapsed_batch_series_summary_is_parented_and_collapsed() -> None:
     source = module_path.read_text(encoding="utf-8")
 
     assert 'analysisSectionBox.text = "Analysis Options"' in source
-    assert "analysisSectionBox.collapsed = True" in source
+    assert "analysisSectionBox.collapsed = False" in source
     assert "analysisSectionLayout.addWidget(self.seriesSummaryBox)" in source
     assert "self.seriesSummaryBox.visible = False" in source
     assert 'env.insert("PYTHONPATH", os.environ["PYTHONPATH"])' in source
@@ -261,6 +284,100 @@ def test_timelapsed_batch_structured_fallback_is_success_status() -> None:
     assert '"Parse needs correction"' in source
 
 
+def test_timelapsed_profile_override_preserves_outer_morphology_values() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    override_body = source.split("    def _settings_override", 1)[1].split("\n    def ", 1)[0]
+
+    assert '"periosteal_kernelsize": int(self.maskOuterKernel.value)' in override_body
+    assert '"periosteal_open_radius": int(self.maskOuterOpen.value)' in override_body
+    assert '"use_laplace_hamming_contour_support"' not in override_body
+
+
+def test_timelapsed_mask_settings_are_context_aware() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    build_ui = source.split("    def _build_ui", 1)[1].split("\n    def _style_primary_run_button", 1)[0]
+    mask_method_body = source.split("    def _on_mask_method_changed", 1)[1].split("\n    def ", 1)[0]
+    contour_method_body = source.split("    def _on_periosteal_contour_method_changed", 1)[1].split("\n    def ", 1)[0]
+    override_body = source.split("    def _settings_override", 1)[1].split("\n    def ", 1)[0]
+
+    assert 'discoveryBox.text = "Discovery / Import"' in build_ui
+    assert "self.batchLayout.addWidget(discoveryBox)" in build_ui
+    assert "discoveryLayout.addRow(_label(\"Copy raw inputs\"" in build_ui
+    assert "discoveryLayout.addRow(_label(\"Restructure raw inputs\"" in build_ui
+    assert "discoveryLayout.addRow(_label(\"Parse mode\"" in build_ui
+    assert "discoveryLayout.addRow(_label(\"Storage mode\"" in build_ui
+    assert "maskForm.addRow(_label(\"Copy raw inputs\"" not in build_ui
+    assert "maskForm.addRow(_label(\"Storage mode\"" not in build_ui
+    assert 'maskForm.addRow(_label("Bone segmentation method"' in build_ui
+    assert 'maskForm.addRow(_label("Mask method"' not in build_ui
+    assert 'self.maskSegmentationSectionLabel = qt.QLabel("<b>Bone Segmentation</b>")' in build_ui
+    assert 'self.maskPeriostealSectionLabel = qt.QLabel("<b>Full / Periosteal Contour</b>")' in build_ui
+    assert 'self.maskEndostealSectionLabel = qt.QLabel("<b>Endosteal / Trab-Cort Contour</b>")' in build_ui
+    assert build_ui.find('maskForm.addRow(_label("Bone segmentation method"') < build_ui.find("maskForm.addRow(self.maskLowLabel")
+    assert "self.maskEndostealContour" in build_ui
+    assert "self.maskEndostealThreshold" in build_ui
+    assert "self.maskEndostealKernel" in build_ui
+    periosteal_row = build_ui.find('"Full/periosteal contour"')
+    endosteal_row = build_ui.find('"Endosteal/trab-cort contour"')
+    assert build_ui.find("maskForm.addRow(self.maskLaplaceEpsilonLabel") < periosteal_row
+    assert periosteal_row < build_ui.find("maskForm.addRow(self.maskContourSupportThresholdLabel")
+    assert build_ui.find("maskForm.addRow(self.maskOuterKernelLabel") < endosteal_row
+    assert endosteal_row < build_ui.find("maskForm.addRow(self.maskEndostealThresholdLabel")
+    assert "label.visible = is_lh" in mask_method_body
+    assert 'self.maskSigmaLabel.visible = method == "seg_gauss"' in mask_method_body
+    assert "self.maskContourSigmaLabel.visible = method" not in mask_method_body
+    assert "self.maskContourSupportThresholdLabel.visible = method" not in mask_method_body
+    assert 'self.maskLowLabel.text = "Contour support threshold"' not in mask_method_body
+    assert "is_geodesic = method == \"geodesic_fracture\"" in contour_method_body
+    assert "endosteal_method = str(self.maskEndostealContour.currentData" in contour_method_body
+    assert "contour_support_visible = any_standard_contour" in contour_method_body
+    assert 'method_name in {"seg_gauss", "laplace_hamming"}' not in contour_method_body
+    assert "label.visible = not is_geodesic" in contour_method_body
+    assert "self.maskGeodesicThresholdLabel.visible = is_geodesic" in contour_method_body
+    assert "self.maskEndostealThresholdLabel.visible = endosteal_method != \"none\"" in contour_method_body
+    assert "self.maskEndostealKernelLabel.visible = endosteal_method != \"none\"" in contour_method_body
+    apply_profile_body = source.split("    def _apply_config_dict_to_controls", 1)[1].split("\n    def ", 1)[0]
+    assert "self._on_mask_method_changed(self.maskMethod.currentText)" in apply_profile_body
+    assert '"gaussian_sigma": float(self.maskSigma.value)' in override_body
+    assert '"gaussian_sigma": float(self.maskContourSigma.value)' in override_body
+    assert '"periosteal_threshold": contour_support_threshold' in override_body
+    assert '"endosteal_threshold": float(self.maskEndostealThreshold.value)' in override_body
+    assert '"endosteal_kernelsize": int(self.maskEndostealKernel.value)' in override_body
+    assert '"laplace_hamming_threshold": float(self.maskLaplaceThreshold.value)' in override_body
+    assert '"laplace_hamming_low_pass_cutoff": float(self.maskLaplaceLowPass.value)' in override_body
+    assert '"laplace_hamming_high_pass_cutoff": float(self.maskLaplaceHighPass.value)' in override_body
+    assert '"laplace_hamming_epsilon": float(self.maskLaplaceEpsilon.value)' in override_body
+    assert '"contour_method": endosteal_contour_method' in override_body
+    assert '"cort_threshold": float(getattr(self, "_lh_cort_support_threshold", 450.0))' in override_body
+
+
+def test_timelapsed_scene_hides_batch_skip_mask_generation_control() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    mode_changed = source.split("    def _on_timelapsed_mode_changed", 1)[1].split("\n    def ", 1)[0]
+
+    assert "self.doNotGenerateMasksLabel" in source
+    assert "self.doNotGenerateMasksCheck.visible = not scene_mode" in mode_changed
+    assert "self.doNotGenerateMasksLabel.visible = not scene_mode" in mode_changed
+
+
 def test_timelapsed_batch_processing_scope_has_subject_and_site() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
@@ -299,14 +416,15 @@ def test_timelapsed_scene_layout_matches_batch_concepts() -> None:
     assert 'self.sceneComparisonBox = qt.QGroupBox("Current Comparisons")' in scene_ui
     assert "self.sceneComparisonTable = qt.QTableWidget()" in scene_ui
     assert '["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"]' in scene_ui
-    assert 'sceneAdvancedBox.text = "Advanced Settings"' in scene_ui
-    assert "sceneAdvancedBox.collapsed = True" in scene_ui
+    assert 'sceneWorkspaceBox.text = "Processing Workspace"' in scene_ui
+    assert "sceneWorkspaceBox.collapsed = True" in scene_ui
+    assert 'sceneAdvancedBox.text = "Advanced Settings"' not in scene_ui
     assert 'Processing workspace' in scene_ui
     assert "form.addRow(_label(\"Results folder\"" not in scene_ui
     assert "layout.addWidget(self.sceneComparisonBox)" in scene_ui
     assert "def _set_scene_comparison_rows" in source
     assert "self._set_scene_comparison_rows(rows)" in source
-    assert "def _load_scene_results_table(self, plan, *, show=False):" in source
+    assert "def _load_scene_results_table(self, plan, *, show=False, prefer_saved=False):" in source
 
 
 def test_timelapsed_scene_loads_pairwise_results_table() -> None:
@@ -396,6 +514,106 @@ def test_pair_metrics_use_same_display_mask_as_remodelling_image() -> None:
     assert 'valid_mask=preview_inputs["valid_mask"]' not in refresh_metrics
 
 
+def test_pair_mode_change_marks_analysis_settings_dirty() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "self.analysisPairModeCombo.currentIndexChanged.connect(self._on_analysis_pair_mode_changed)" in source
+    assert "def _on_analysis_pair_mode_changed" in source
+    pair_changed = source.split("    def _on_analysis_pair_mode_changed", 1)[1].split("\n    def ", 1)[0]
+    assert "self._mark_analysis_settings_dirty()" in pair_changed
+    assert "_refresh_scene_results_table_from_loaded_remodelling" not in pair_changed
+    assert "_run_scene_analysis_for_missing_pair_mode" not in pair_changed
+
+
+def test_scene_pair_mode_is_analysis_setting_not_display_filter() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    result_rows = source.split("    def _scene_result_rows_from_loaded_remodelling", 1)[1].split("\n    def ", 1)[0]
+    assert "_filter_remodelling_source_paths_for_pair_mode" not in source
+    assert "return self._detect_missing_scene_baseline_pairs(rows)" in result_rows
+    assert "_compose_scene_baseline_rows_from_adjacent" not in source
+    assert "def _scene_result_row_matches_pair_mode" not in source
+    assert "def _filter_scene_result_rows_for_pair_mode" not in source
+    saved_rows = source.split("    def _scene_result_rows(self, plan)", 1)[1].split("\n    def ", 1)[0]
+    assert "return self._detect_missing_scene_baseline_pairs(rows)" in saved_rows
+
+
+def test_scene_baseline_mode_runs_analysis_when_true_baseline_pairs_are_missing() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "def _warn_missing_scene_baseline_pairs" in source
+    assert "def _run_scene_analysis_for_missing_pair_mode" in source
+    warning = source.split("    def _warn_missing_scene_baseline_pairs", 1)[1].split("\n    def ", 1)[0]
+    assert 'self._current_analysis_pair_mode() != "baseline"' in warning
+    assert "expected_pairs" in warning
+    assert "missing_pairs" in warning
+    assert "self._last_missing_scene_baseline_pairs = list(missing_pairs)" in warning
+    pair_changed = source.split("    def _on_analysis_pair_mode_changed", 1)[1].split("\n    def ", 1)[0]
+    assert "self._mark_analysis_settings_dirty()" in pair_changed
+    assert "self._run_scene_analysis_for_missing_pair_mode()" not in pair_changed
+    assert "self._refresh_scene_results_table_from_loaded_remodelling()" not in pair_changed
+    apply_update = source.split("    def _on_apply_interactive_remodelling", 1)[1].split("\n    def ", 1)[0]
+    assert "self._refresh_scene_results_table_from_loaded_remodelling()" in apply_update
+    assert "if self._run_scene_analysis_for_missing_pair_mode():" in apply_update
+    refresh = source.split("    def _run_scene_analysis_for_missing_pair_mode", 1)[1].split("\n    def ", 1)[0]
+    assert '"analyse"' in refresh
+    assert "self._clear_scene_analysis_outputs_for_refresh(plan)" in refresh
+    assert "self._last_scene_plan = plan" in refresh
+    assert "self._scene_settings_override()" in refresh
+    assert "pair_mode_label" in refresh
+    assert "Pair mode = {pair_mode_label}" in refresh
+
+
+def test_scene_comparison_table_clears_before_repopulate() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    setter = source.split("    def _set_scene_comparison_rows", 1)[1].split("\n    def ", 1)[0]
+    assert "self.sceneComparisonTable.clearContents()" in setter
+    assert "seen_row_keys" in setter
+    current_setter = source.split("    def _update_current_comparison_table", 1)[1].split("\n    def ", 1)[0]
+    assert "self.currentComparisonTable.clearContents()" in current_setter
+    assert "seen_row_keys" in current_setter
+
+
+def test_analysis_options_are_expanded_by_default() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    analysis_setup = source.split('analysisSectionBox.text = "Analysis Options"', 1)[1].split(
+        'settingsBox = ctk.ctkCollapsibleButton()', 1
+    )[0]
+    assert "analysisSectionBox.collapsed = False" in analysis_setup
+
+
 def test_remodelling_selection_drives_visible_label_layer() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
@@ -448,6 +666,7 @@ def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
     assert "def _scene_selected_mask_policy" in source
     assert "def _scene_requested_mask_roles" in source
     assert "def _scene_segmentation_requested" in source
+    assert "def _scene_segmentation_generation_requested" in source
     assert "def _scene_analysis_compartments" in source
     assert "slicer.mrmlScene.GetNodeByID(value) is None" in source
     assert 'value == "__none__"' in source
@@ -455,6 +674,45 @@ def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
     assert 'not any(role in masks_cfg["roles"] for role in ("trab", "cort"))' in source
     assert 'masks_cfg["inner"] = inner_cfg' in source
     assert "sceneMaskPolicyCombo" not in source
+
+
+def test_timelapsed_scene_mask_generation_flag_follows_table_generate_policy() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    scene_override = source.split("    def _scene_settings_override", 1)[1].split("\n    def ", 1)[0]
+    scene_run = source.split("    def _on_run_scene_pipeline", 1)[1].split("\n    def ", 1)[0]
+
+    assert "scene_generates_masks = self._scene_mask_generation_requested()" in scene_override
+    assert 'masks_cfg["generate"] = scene_generates_masks' in scene_override
+    assert 'masks_cfg["overwrite"] = scene_generates_masks' in scene_override
+    assert 'masks_cfg["roles"] = self._scene_requested_mask_roles()' in scene_override
+    assert "Scene mask request:" in scene_run
+    assert "outer_kernel=" in scene_run
+    assert "outer_open=" in scene_run
+
+
+def test_timelapsed_scene_mask_policy_choices_sync_by_column() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "self._syncing_scene_mask_policy = False" in source
+    assert "def _on_scene_mask_policy_changed" in source
+    assert 'if value not in {"__generate__", "__none__"}' in source
+    assert "other is selector" in source
+    assert "other.setCurrentIndex(index)" in source
+    add_timepoint = source.split("    def _add_scene_timepoint", 1)[1].split("\n    def ", 1)[0]
+    assert "selector.currentIndexChanged.connect(" in add_timepoint
+    assert "self._on_scene_mask_policy_changed(selector, column)" in add_timepoint
 
 
 def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
@@ -478,6 +736,68 @@ def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
     assert plan.timepoints[0].image_path.name == "sub-SAMPLE001_ses-1_site-tibia_image.nii.gz"
     assert plan.timepoints[1].full_mask_path.name == "sub-SAMPLE001_ses-2_site-tibia_mask-full.nii.gz"
     assert plan.timepoints[1].transform_path.name == "sub-SAMPLE001_ses-2_site-tibia_transform.tfm"
+
+
+def test_scene_discovery_ignores_generated_mask_loadback() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate(
+                node_id="image-00",
+                name="sub-001_ses-00_site-radius_image",
+                node_class="vtkMRMLScalarVolumeNode",
+            ),
+            TimelapsedSceneNodeCandidate(
+                node_id="full-00",
+                name="sub-001_ses-00_site-radius_mask-full",
+                node_class="vtkMRMLLabelMapVolumeNode",
+                attributes={"TimelapsedHRpQCT.GeneratedMask": "1"},
+            ),
+            TimelapsedSceneNodeCandidate(
+                node_id="image-04",
+                name="sub-001_ses-04_site-radius_image",
+                node_class="vtkMRMLScalarVolumeNode",
+            ),
+        ]
+    )
+
+    assert len(discovery.timepoints) == 2
+    assert discovery.mask_count == 0
+    assert discovery.matched_mask_count == 0
+    assert discovery.timepoints[0].full_mask_node_id == ""
+    assert discovery.timepoints[0].full_mask_policy == "generate"
+
+
+def test_scene_discovery_ignores_generated_mask_loadback_from_storage_path() -> None:
+    discovery = discover_timelapsed_scene_timepoints(
+        [
+            TimelapsedSceneNodeCandidate(
+                node_id="image-00",
+                name="sub-001_ses-00_site-radius_image",
+                node_class="vtkMRMLScalarVolumeNode",
+            ),
+            TimelapsedSceneNodeCandidate(
+                node_id="full-00",
+                name="sub-001_ses-00_site-radius_mask-full",
+                node_class="vtkMRMLLabelMapVolumeNode",
+                attributes={
+                    "StorageFileName": (
+                        "/tmp/SlicerBoneImagingToolbox/TimelapsedScene/derivatives/Timelapsed/"
+                        "scene_runs/run-1/output/derivatives/TimelapsedHRpQCT/sub-001/"
+                        "site-radius/ses-00/stacks/sub-001_ses-00_site-radius_mask-full.nii.gz"
+                    )
+                },
+            ),
+            TimelapsedSceneNodeCandidate(
+                node_id="image-04",
+                name="sub-001_ses-04_site-radius_image",
+                node_class="vtkMRMLScalarVolumeNode",
+            ),
+        ]
+    )
+
+    assert len(discovery.timepoints) == 2
+    assert discovery.mask_count == 0
+    assert discovery.matched_mask_count == 0
 
 
 def test_timelapsed_scene_plan_respects_none_mask_policy(tmp_path: Path) -> None:

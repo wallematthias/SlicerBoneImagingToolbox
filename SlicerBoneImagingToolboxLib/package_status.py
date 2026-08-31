@@ -42,6 +42,14 @@ DEFAULT_RUNTIME_PACKAGES = (
         notes="Shared derivative manifests, discovery, and prerequisite planning.",
     ),
     PackageSpec(
+        display_name="Bone Contouring",
+        package_name="bone-contouring",
+        import_name="bone_contouring",
+        minimum_version="0.1.0",
+        constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.3"),
+        notes="Standalone bone segmentation and full/trab/cort contour generation package.",
+    ),
+    PackageSpec(
         display_name="Timelapsed HR-pQCT",
         package_name="timelapsed-hrpqct",
         import_name="timelapsedhrpqct",

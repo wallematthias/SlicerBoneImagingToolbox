@@ -12,7 +12,7 @@ def test_parosol_module_has_public_metadata_and_root_resolution() -> None:
     source = PAROSOL_MODULE.read_text(encoding="utf-8")
 
     assert 'parent.title = "ParOSol FEA"' in source
-    assert 'parent.categories = ["Bone Imaging.FEA"]' in source
+    assert 'parent.categories = ["Bone Imaging.Analysis Methods"]' in source
     assert "Private ParOSol" not in source
     assert "extension_root = module_path.parents[2]" in source
     assert "def _active_repositories_root" in source
@@ -25,7 +25,7 @@ def test_mechanoregulation_module_has_public_metadata_and_root_resolution() -> N
     source = MECHREG_MODULE.read_text(encoding="utf-8")
 
     assert 'parent.title = "Bone Mechanoregulation"' in source
-    assert 'parent.categories = ["Bone Imaging.Mechanoregulation"]' in source
+    assert 'parent.categories = ["Bone Imaging.Timelapsed Methods"]' in source
     assert "Private Slicer wrapper" not in source
     assert "TOOLBOX_ROOT = Path(__file__).resolve().parents[2]" in source
     assert 'CORE_REQUIREMENT = "bone-mechanoregulation"' in source
@@ -118,8 +118,54 @@ def test_mechanoregulation_ui_uses_batch_and_review_tabs() -> None:
     setup_source = source[source.index("    def setup(self):", source.index("class MechanoregulationHRpQCTWidget")) :]
 
     assert "self.modeTabs = qt.QTabWidget()" in setup_source
+    assert 'self.modeTabs.addTab(scene_tab, "Scene")' in setup_source
     assert 'self.modeTabs.addTab(batch_tab, "Batch")' in setup_source
     assert 'self.modeTabs.addTab(review_tab, "Review")' in setup_source
     assert 'box.text = "Batch"' in source
+    assert 'box.text = "Scene"' in source
     assert 'box.text = "Review"' in source
-    assert 'self.runButton = qt.QPushButton("Run Batch")' in source
+    assert 'self.runButton = qt.QPushButton("Run")' in source
+    assert 'self.batchDiscoveryGroup = qt.QGroupBox("Discovery")' in source
+    assert 'self.batchWorkflowGroup = qt.QGroupBox("Workflow")' in source
+    assert 'self.sceneDiscoveryGroup = qt.QGroupBox("Discovery")' in source
+    assert 'self.sceneWorkflowGroup = qt.QGroupBox("Workflow")' in source
+    assert "self.sceneProgressBar = qt.QProgressBar()" in source
+    assert "self.sceneCurrentStepLabel = qt.QLabel(\"Current step: idle\")" in source
+    scene_body = source.split("    def _build_scene_section", 1)[1].split("\n    def ", 1)[0]
+    assert scene_body.index("self.sceneDiscoveryGroup") < scene_body.index("self.sceneCaseTable")
+    assert scene_body.index("self.sceneCaseTable") < scene_body.index("self.sceneWorkflowGroup")
+    assert scene_body.index("self.sceneWorkflowGroup") < scene_body.index("self.sceneStatusLabel")
+    assert scene_body.index("self.sceneStatusLabel") < scene_body.index("self.sceneRunButton")
+
+
+def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api() -> None:
+    source = MECHREG_MODULE.read_text(encoding="utf-8")
+
+    assert "self.sceneDiscoverButton = qt.QPushButton(\"Discover\")" in source
+    assert "self.sceneRunButton = qt.QPushButton(\"Run\")" in source
+    assert "self.sceneStopButton = qt.QPushButton(\"Stop\")" in source
+    assert "self.sceneCaseTable = qt.QTableWidget()" in source
+    assert "self.sceneProgressBar.visible = True" in source
+    assert "self.sceneProgressBar.setRange" in source
+    assert "self.sceneCurrentStepLabel.text = self._status_text(message)" in source
+    assert "if text.startswith(\"[scene]\")" in source
+    assert "self.sceneCaseTable.setHorizontalHeaderLabels" in source
+    assert "\"Remodelling\"" in source
+    assert "\"Baseline SED\"" in source
+    assert "\"Baseline Seg\"" in source
+    assert "\"Trab\"" in source
+    assert "\"Cort\"" in source
+    assert "\"Full\"" in source
+    assert "def discover_scene_cases(self):" in source
+    assert "def _scene_volume_nodes" in source
+    assert "def _scene_remodelling_candidates" in source
+    assert "def _scene_sed_candidates" in source
+    assert "def _scene_mask_candidates" in source
+    assert "Generate" in source
+    assert "def _stage_scene_case(self, row):" in source
+    assert "slicer.util.saveNode" in source
+    assert "TimelapseCase(" in source
+    assert "run_post_timelapse_case(" in source
+    assert "baseline_sed_path" in source
+    assert "outputs[\"sed\"].write_bytes" in source
+    assert "self._load_scene_mechanoregulation_outputs" in source

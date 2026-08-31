@@ -250,6 +250,11 @@ def _safe_token(value: str) -> str:
 
 def _is_generated_timelapsed_display_artifact(candidate: TimelapsedSceneNodeCandidate) -> bool:
     attributes = candidate.attributes or {}
+    if attributes.get("TimelapsedHRpQCT.GeneratedMask") == "1":
+        return True
+    storage_path = str(attributes.get("StorageFileName", "") or "").replace("\\", "/")
+    if "/TimelapsedScene/derivatives/Timelapsed/scene_runs/" in storage_path and "/output/" in storage_path:
+        return True
     if attributes.get("TimelapsedHRpQCT.RemodellingFull") == "1":
         return True
     if attributes.get("TimelapsedHRpQCT.SliceReference") == "1":
