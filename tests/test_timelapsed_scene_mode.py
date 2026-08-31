@@ -122,10 +122,12 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self.layout.addWidget(self.logText)" in source
     assert "self.logText.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "self.layout.addStretch(1)" in source
-    assert '"quiescent": 0' in source
-    assert '"demineralisation": 0' in source
-    assert '"mineralisation": 0' in source
-    assert "Show event voxels only" in source
+    assert '"quiescent": 2' in source
+    assert '"demineralisation": 2' in source
+    assert '"mineralisation": 2' in source
+    assert 'label_map.update({"demineralisation": 0, "quiescent": 0, "mineralisation": 0})' in source
+    assert 'label_map.update({"demineralisation": 2, "quiescent": 2, "mineralisation": 2})' in source
+    assert 'binary_cfg["enabled"] = True' in source
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
     assert 'self._set_stage_status("dataset", "done")' in source
     assert 'self._set_stage_status("parse", "done")' in source

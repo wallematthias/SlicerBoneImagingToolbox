@@ -1848,10 +1848,20 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         analysis_cfg = dict(settings.get("analysis") or {})
         analysis_cfg["compartments"] = self._scene_analysis_compartments()
+        visualization_cfg = dict(settings.get("visualization") or {})
+        label_map = dict(visualization_cfg.get("label_map") or {})
         if not self._scene_segmentation_requested():
             binary_cfg = dict(analysis_cfg.get("binary_reclassification") or {})
             binary_cfg["enabled"] = False
             analysis_cfg["binary_reclassification"] = binary_cfg
+            label_map.update({"demineralisation": 0, "quiescent": 0, "mineralisation": 0})
+        else:
+            binary_cfg = dict(analysis_cfg.get("binary_reclassification") or {})
+            binary_cfg["enabled"] = True
+            analysis_cfg["binary_reclassification"] = binary_cfg
+            label_map.update({"demineralisation": 2, "quiescent": 2, "mineralisation": 2})
+        visualization_cfg["label_map"] = label_map
+        settings["visualization"] = visualization_cfg
         settings["analysis"] = analysis_cfg
         return settings
 
@@ -2723,10 +2733,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _settings_override(self, multistack_enabled=None):
         label_map = {
             "resorption": 1,
-            "demineralisation": 0,
-            "quiescent": 0,
+            "demineralisation": 2,
+            "quiescent": 2,
             "formation": 3,
-            "mineralisation": 0,
+            "mineralisation": 2,
         }
 
         if self.tlSampling.value > 0.01:
@@ -4559,10 +4569,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _interactive_preview_label_map(self):
         return {
             "resorption": 1,
-            "demineralisation": 0,
-            "quiescent": 0,
+            "demineralisation": 2,
+            "quiescent": 2,
             "formation": 3,
-            "mineralisation": 0,
+            "mineralisation": 2,
         }
 
     def _current_comparison_table_row(self, metric_row):
@@ -4732,14 +4742,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             valid = np.asarray(valid_mask_zyx, dtype=bool)
             if valid.shape == arr.shape and np.any(valid):
                 arr[~valid] = 0
-        # Show event voxels only; neutral/quiescent support remains in metrics, not the overlay.
+        # Collapse legacy 5-label remodelling images into the default 3-label display.
         if np.any(arr == 4) or np.any(arr == 5):
-            arr[arr == 2] = 0
-            arr[arr == 3] = 0
+            arr[arr == 2] = 2
+            arr[arr == 3] = 2
             arr[arr == 4] = 3
-            arr[arr == 5] = 0
-        else:
-            arr[arr == 2] = 0
+            arr[arr == 5] = 2
         return arr
 
     def _get_valid_mask_for_source(self, source_path):
