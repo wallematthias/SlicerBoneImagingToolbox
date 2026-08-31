@@ -25,6 +25,10 @@ class TimelapsedSceneTimepoint:
     cort_mask_node_id: str = ""
     seg_mask_node_id: str = ""
     transform_node_id: str = ""
+    full_mask_policy: str = "generate"
+    trab_mask_policy: str = "generate"
+    cort_mask_policy: str = "generate"
+    seg_mask_policy: str = "generate"
     image_path: Path | None = None
     full_mask_path: Path | None = None
     trab_mask_path: Path | None = None
@@ -101,6 +105,10 @@ def discover_timelapsed_scene_timepoints(
                 cort_mask_node_id=group.get("cort", ""),
                 seg_mask_node_id=group.get("seg", ""),
                 transform_node_id=group.get("transform", ""),
+                full_mask_policy="node" if group.get("full") else "generate",
+                trab_mask_policy="node" if group.get("trab") else "generate",
+                cort_mask_policy="node" if group.get("cort") else "generate",
+                seg_mask_policy="node" if group.get("seg") else "generate",
             )
         )
     if not timepoints and scalar_candidates:
@@ -195,16 +203,37 @@ def _plan_timepoint(
         timepoint,
         session_id=session_id,
         image_path=directory / f"{stem}_image.nii.gz",
-        full_mask_path=_optional_path(directory, stem, "mask-full", timepoint.full_mask_node_id),
-        trab_mask_path=_optional_path(directory, stem, "mask-trab", timepoint.trab_mask_node_id),
-        cort_mask_path=_optional_path(directory, stem, "mask-cort", timepoint.cort_mask_node_id),
-        seg_mask_path=_optional_path(directory, stem, "mask-seg", timepoint.seg_mask_node_id),
+        full_mask_path=_mask_path_for_policy(
+            directory, stem, "mask-full", timepoint.full_mask_node_id, timepoint.full_mask_policy
+        ),
+        trab_mask_path=_mask_path_for_policy(
+            directory, stem, "mask-trab", timepoint.trab_mask_node_id, timepoint.trab_mask_policy
+        ),
+        cort_mask_path=_mask_path_for_policy(
+            directory, stem, "mask-cort", timepoint.cort_mask_node_id, timepoint.cort_mask_policy
+        ),
+        seg_mask_path=_mask_path_for_policy(
+            directory, stem, "mask-seg", timepoint.seg_mask_node_id, timepoint.seg_mask_policy
+        ),
         transform_path=_optional_path(directory, stem, "transform", timepoint.transform_node_id, suffix_ext=".tfm"),
     )
 
 
 def _optional_path(directory: Path, stem: str, suffix: str, node_id: str, *, suffix_ext: str = ".nii.gz") -> Path | None:
     return directory / f"{stem}_{suffix}{suffix_ext}" if node_id.strip() else None
+
+
+def _mask_path_for_policy(
+    directory: Path,
+    stem: str,
+    suffix: str,
+    node_id: str,
+    policy: str,
+) -> Path | None:
+    normalized = str(policy or "").strip().lower()
+    if node_id.strip() or normalized == "generate":
+        return directory / f"{stem}_{suffix}.nii.gz"
+    return None
 
 
 def _clean_token(value: str, prefix: str) -> str:

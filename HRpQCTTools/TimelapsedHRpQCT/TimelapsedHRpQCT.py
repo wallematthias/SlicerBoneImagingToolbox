@@ -1670,6 +1670,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_scene_mask_row_node(row, 3, timepoint.trab_mask_node_id)
             self._set_scene_mask_row_node(row, 4, timepoint.cort_mask_node_id)
             self._set_scene_mask_row_node(row, 5, timepoint.seg_mask_node_id)
+            self._set_scene_mask_row_policy(row, 2, timepoint.full_mask_policy)
+            self._set_scene_mask_row_policy(row, 3, timepoint.trab_mask_policy)
+            self._set_scene_mask_row_policy(row, 4, timepoint.cort_mask_policy)
+            self._set_scene_mask_row_policy(row, 5, timepoint.seg_mask_policy)
             self._set_scene_row_node(row, 6, timepoint.transform_node_id)
         self._resize_scene_timepoint_table()
 
@@ -1693,6 +1697,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         index = selector.findData(str(node_id))
         if index >= 0:
             selector.setCurrentIndex(index)
+
+    def _set_scene_mask_row_policy(self, row, column, policy):
+        selector = self.sceneTimepointTable.cellWidget(row, column)
+        if selector is None:
+            return
+        normalized = str(policy or "").strip().lower()
+        if normalized == "none":
+            index = selector.findData("__none__")
+            if index >= 0:
+                selector.setCurrentIndex(index)
 
     def _remove_scene_timepoint(self):
         row = self.sceneTimepointTable.currentRow()
@@ -1780,6 +1794,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return ""
         return value
 
+    def _scene_selected_mask_policy(self, row, column):
+        selector = self.sceneTimepointTable.cellWidget(row, column)
+        value = str(selector.currentData or "") if selector is not None else ""
+        if value == "__none__":
+            return "none"
+        if value == "__generate__" or not value:
+            return "generate"
+        return "node"
+
     def _scene_mask_generation_requested(self):
         if not hasattr(self, "sceneTimepointTable"):
             return True
@@ -1789,6 +1812,44 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 if selector is not None and str(selector.currentData or "") == "__generate__":
                     return True
         return False
+
+    def _scene_requested_mask_roles(self):
+        roles = []
+        role_columns = [("full", 2), ("trab", 3), ("cort", 4)]
+        for role, column in role_columns:
+            for row in range(self.sceneTimepointTable.rowCount):
+                if self._scene_selected_mask_policy(row, column) != "none":
+                    roles.append(role)
+                    break
+        return roles or ["full"]
+
+    def _scene_segmentation_requested(self):
+        if not hasattr(self, "sceneTimepointTable"):
+            return True
+        for row in range(self.sceneTimepointTable.rowCount):
+            if self._scene_selected_mask_policy(row, 5) != "none":
+                return True
+        return False
+
+    def _scene_analysis_compartments(self):
+        roles = self._scene_requested_mask_roles()
+        return [role for role in ("trab", "cort", "full") if role in roles] or ["full"]
+
+    def _scene_settings_override(self):
+        settings = self._settings_override()
+        masks_cfg = dict(settings.get("masks") or {})
+        masks_cfg["roles"] = self._scene_requested_mask_roles()
+        masks_cfg["generate_segmentation"] = self._scene_segmentation_requested()
+        settings["masks"] = masks_cfg
+
+        analysis_cfg = dict(settings.get("analysis") or {})
+        analysis_cfg["compartments"] = self._scene_analysis_compartments()
+        if not self._scene_segmentation_requested():
+            binary_cfg = dict(analysis_cfg.get("binary_reclassification") or {})
+            binary_cfg["enabled"] = False
+            analysis_cfg["binary_reclassification"] = binary_cfg
+        settings["analysis"] = analysis_cfg
+        return settings
 
     def _scene_timepoints(self):
         timepoints = []
@@ -1803,6 +1864,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     cort_mask_node_id=self._scene_selected_mask_node_id(row, 4),
                     seg_mask_node_id=self._scene_selected_mask_node_id(row, 5),
                     transform_node_id=self._scene_selected_node_id(row, 6),
+                    full_mask_policy=self._scene_selected_mask_policy(row, 2),
+                    trab_mask_policy=self._scene_selected_mask_policy(row, 3),
+                    cort_mask_policy=self._scene_selected_mask_policy(row, 4),
+                    seg_mask_policy=self._scene_selected_mask_policy(row, 5),
                 )
             )
         return timepoints
@@ -1879,7 +1944,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             if seeded_transforms:
                 self._show(f"[timelapsed-slicer] seeded {seeded_transforms} scene transform(s) for registration reuse.")
             cfg = self.logic.create_override_config(
-                self._settings_override(), results_root=plan.output_root
+                self._scene_settings_override(), results_root=plan.output_root
             )
         except Exception as exc:
             self.sceneStatusLabel.text = f"Scene run could not start: {exc}"
@@ -2654,10 +2719,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _settings_override(self, multistack_enabled=None):
         label_map = {
             "resorption": 1,
-            "demineralisation": 2,
-            "quiescent": 2,
+            "demineralisation": 0,
+            "quiescent": 0,
             "formation": 3,
-            "mineralisation": 2,
+            "mineralisation": 0,
         }
 
         if self.tlSampling.value > 0.01:
@@ -4490,10 +4555,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _interactive_preview_label_map(self):
         return {
             "resorption": 1,
-            "demineralisation": 2,
-            "quiescent": 2,
+            "demineralisation": 0,
+            "quiescent": 0,
             "formation": 3,
-            "mineralisation": 2,
+            "mineralisation": 0,
         }
 
     def _current_comparison_table_row(self, metric_row):
@@ -4663,14 +4728,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             valid = np.asarray(valid_mask_zyx, dtype=bool)
             if valid.shape == arr.shape and np.any(valid):
                 arr[~valid] = 0
-        # Collapse legacy 5-label remodelling images into the default 3-label display.
+        # Show event voxels only; neutral/quiescent support remains in metrics, not the overlay.
         if np.any(arr == 4) or np.any(arr == 5):
-            arr[arr == 2] = 2
-            arr[arr == 3] = 2
+            arr[arr == 2] = 0
+            arr[arr == 3] = 0
             arr[arr == 4] = 3
-            arr[arr == 5] = 2
-        if np.any(original > 0) and not np.any(arr > 0):
-            return original.copy()
+            arr[arr == 5] = 0
+        else:
+            arr[arr == 2] = 0
         return arr
 
     def _get_valid_mask_for_source(self, source_path):
@@ -6465,6 +6530,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return False
         try:
             node.SetName(str(name))
+        except Exception:
+            pass
+        try:
+            display = node.GetDisplayNode()
+            if display is not None:
+                display.SetVisibility(False)
         except Exception:
             pass
         self._place_node_in_folder(node, folder_item_id)

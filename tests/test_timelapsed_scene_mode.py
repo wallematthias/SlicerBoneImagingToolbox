@@ -97,7 +97,12 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Missing masks" not in source
     assert "def _scene_mask_selector" in source
     assert "def _scene_selected_mask_node_id" in source
+    assert "def _scene_selected_mask_policy" in source
     assert "def _scene_mask_generation_requested" in source
+    assert "def _scene_settings_override" in source
+    assert 'masks_cfg["roles"] = self._scene_requested_mask_roles()' in source
+    assert 'masks_cfg["generate_segmentation"] = self._scene_segmentation_requested()' in source
+    assert 'analysis_cfg["compartments"] = self._scene_analysis_compartments()' in source
     assert 'addItem("Generate", "__generate__")' in source
     assert 'addItem("None", "__none__")' in source
     assert "self._scene_mask_generation_requested()" in source
@@ -116,6 +121,10 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "self.layout.addWidget(self.logText)" in source
     assert "self.logText.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "self.layout.addStretch(1)" in source
+    assert '"quiescent": 0' in source
+    assert '"demineralisation": 0' in source
+    assert '"mineralisation": 0' in source
+    assert "Show event voxels only" in source
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
     assert 'self._set_stage_status("dataset", "done")' in source
     assert 'self._set_stage_status("parse", "done")' in source
@@ -423,6 +432,12 @@ def test_timelapsed_scene_mask_policy_is_per_table_cell() -> None:
     assert 'selector.addItem("None", "__none__")' in source
     assert 'value in {"__generate__", "__none__"}' in source
     assert 'str(selector.currentData or "") == "__generate__"' in source
+    assert "def _scene_selected_mask_policy" in source
+    assert "def _scene_requested_mask_roles" in source
+    assert "def _scene_segmentation_requested" in source
+    assert "def _scene_analysis_compartments" in source
+    assert 'value == "__none__"' in source
+    assert 'return "none"' in source
     assert "sceneMaskPolicyCombo" not in source
 
 
@@ -447,6 +462,38 @@ def test_timelapsed_scene_plan_paths(tmp_path: Path) -> None:
     assert plan.timepoints[0].image_path.name == "sub-SAMPLE001_ses-1_site-tibia_image.nii.gz"
     assert plan.timepoints[1].full_mask_path.name == "sub-SAMPLE001_ses-2_site-tibia_mask-full.nii.gz"
     assert plan.timepoints[1].transform_path.name == "sub-SAMPLE001_ses-2_site-tibia_transform.tfm"
+
+
+def test_timelapsed_scene_plan_respects_none_mask_policy(tmp_path: Path) -> None:
+    plan = build_timelapsed_scene_plan(
+        results_root=tmp_path,
+        subject_id="SAMPLE001",
+        site="radius",
+        timepoints=[
+            TimelapsedSceneTimepoint(
+                session_id="ses-1",
+                image_node_id="v1",
+                full_mask_policy="generate",
+                trab_mask_policy="none",
+                cort_mask_policy="none",
+                seg_mask_policy="generate",
+            ),
+            TimelapsedSceneTimepoint(
+                session_id="ses-2",
+                image_node_id="v2",
+                full_mask_policy="generate",
+                trab_mask_policy="none",
+                cort_mask_policy="none",
+                seg_mask_policy="generate",
+            ),
+        ],
+        run_id="abc",
+    )
+
+    assert plan.timepoints[0].full_mask_path is not None
+    assert plan.timepoints[0].seg_mask_path is not None
+    assert plan.timepoints[0].trab_mask_path is None
+    assert plan.timepoints[0].cort_mask_path is None
 
 
 def test_timelapsed_scene_plan_defaults_identifiers_for_loaded_scene_runs(tmp_path: Path) -> None:
