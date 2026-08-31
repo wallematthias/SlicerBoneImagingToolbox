@@ -1860,9 +1860,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             analysis_cfg["binary_reclassification"] = binary_cfg
             label_map.update({"demineralisation": 0, "quiescent": 0, "mineralisation": 0})
         else:
-            binary_cfg = dict(analysis_cfg.get("binary_reclassification") or {})
-            binary_cfg["enabled"] = True
-            analysis_cfg["binary_reclassification"] = binary_cfg
             label_map.update({"demineralisation": 2, "quiescent": 2, "mineralisation": 2})
         visualization_cfg["label_map"] = label_map
         settings["visualization"] = visualization_cfg

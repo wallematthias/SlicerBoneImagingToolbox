@@ -127,7 +127,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert '"mineralisation": 2' in source
     assert 'label_map.update({"demineralisation": 0, "quiescent": 0, "mineralisation": 0})' in source
     assert 'label_map.update({"demineralisation": 2, "quiescent": 2, "mineralisation": 2})' in source
-    assert 'binary_cfg["enabled"] = True' in source
+    assert 'binary_cfg["enabled"] = True' not in source
     assert 'self.sceneStatusLabel.text = "Preparing scene run..."' in source
     assert 'self._set_stage_status("dataset", "done")' in source
     assert 'self._set_stage_status("parse", "done")' in source
