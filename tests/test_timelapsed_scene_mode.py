@@ -239,6 +239,28 @@ def test_timelapsed_batch_structured_fallback_is_success_status() -> None:
     assert '"Parse needs correction"' in source
 
 
+def test_timelapsed_batch_processing_scope_has_subject_and_site() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "self.processingSubjectCombo = qt.QComboBox()" in source
+    assert "self.processingSiteCombo = qt.QComboBox()" in source
+    assert 'self.processingSiteCombo.addItem("All sites")' in source
+    assert "self.processingSubjectCombo.currentIndexChanged.connect(self._refresh_processing_sites)" in source
+    assert 'Processing site' in source
+    assert "def _selected_processing_site" in source
+    assert "def _refresh_processing_sites" in source
+    assert "return scoped, subject, site" in source
+    assert "scoped_sessions, scoped_subject, scoped_site = self._sessions_for_processing_scope()" in source
+    assert "force_virtual_root=bool(scoped_subject or scoped_site)" in source
+    assert '*(["--site", str(scoped_site)] if scoped_site else [])' in source
+
+
 def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]

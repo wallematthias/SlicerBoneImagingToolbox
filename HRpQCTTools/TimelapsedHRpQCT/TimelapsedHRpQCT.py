@@ -637,6 +637,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Choose which parsed subject to process. "
             "'All subjects' runs the full cohort."
         )
+        self.processingSubjectCombo.currentIndexChanged.connect(self._refresh_processing_sites)
+        self.processingSiteCombo = qt.QComboBox()
+        self.processingSiteCombo.addItem("All sites")
+        _cap_width(self.processingSiteCombo, 220)
+        self.processingSiteCombo.toolTip = (
+            "Choose which parsed site to process. "
+            "'All sites' uses every parsed site for the selected subject scope."
+        )
 
         self.parseSummaryLabel = qt.QLabel("Parse summary: not run")
         self.parseSummaryLabel.wordWrap = True
@@ -1233,6 +1241,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         processingSubjectLayout.addRow(
             _label("Processing subject", "Subject selected for pipeline runs. All subjects processes the cohort."),
             self.processingSubjectCombo,
+        )
+        processingSubjectLayout.addRow(
+            _label("Processing site", "Site selected for pipeline runs. All sites processes every parsed site in scope."),
+            self.processingSiteCombo,
         )
         actionLayout.addWidget(processingSubjectRow)
         actionLayout.addWidget(self.runTimelapseBtn)
@@ -3167,17 +3179,32 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return None
         return text
 
+    def _selected_processing_site(self):
+        combo = getattr(self, "processingSiteCombo", None)
+        text = str(getattr(combo, "currentText", "")).strip()
+        if not text or text == "All sites":
+            return None
+        return text
+
     def _sessions_for_processing_scope(self):
         self._sync_sessions_from_parse_table()
         sessions = list(self._last_parsed_sessions or [])
         subject = self._selected_processing_subject()
-        if subject is None:
-            return sessions, None
+        site = self._selected_processing_site()
+        if subject is None and site is None:
+            return sessions, None, None
         scoped = [
             s for s in sessions
-            if str(getattr(s, "subject_id", "")).strip() == subject
+            if (
+                subject is None
+                or str(getattr(s, "subject_id", "")).strip() == subject
+            )
+            and (
+                site is None
+                or str(getattr(s, "site", "")).strip().lower() == site
+            )
         ]
-        return scoped, subject
+        return scoped, subject, site
 
     def _refresh_processing_subjects(self):
         prev = self._selected_processing_subject()
@@ -3193,6 +3220,27 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             idx = self.processingSubjectCombo.findText(prev)
             if idx >= 0:
                 self.processingSubjectCombo.setCurrentIndex(idx)
+        self._refresh_processing_sites()
+
+    def _refresh_processing_sites(self, *_args):
+        if not hasattr(self, "processingSiteCombo"):
+            return
+        prev = self._selected_processing_site()
+        subject = self._selected_processing_subject()
+        self.processingSiteCombo.clear()
+        self.processingSiteCombo.addItem("All sites")
+        seen = set()
+        for s in (self._last_parsed_sessions or []):
+            if subject is not None and str(getattr(s, "subject_id", "")).strip() != subject:
+                continue
+            site = str(getattr(s, "site", "")).strip().lower()
+            if site and site not in seen:
+                seen.add(site)
+                self.processingSiteCombo.addItem(site)
+        if prev and prev in seen:
+            idx = self.processingSiteCombo.findText(prev)
+            if idx >= 0:
+                self.processingSiteCombo.setCurrentIndex(idx)
 
     def _sanitize_name_token(self, text):
         token = re.sub(r"[^A-Za-z0-9]+", "_", str(text or "").strip())
@@ -3520,15 +3568,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except ValueError as exc:
             slicer.util.errorDisplay(str(exc))
             return
-        scoped_sessions, scoped_subject = self._sessions_for_processing_scope()
-        if scoped_subject and not scoped_sessions:
-            slicer.util.errorDisplay(f"No parsed sessions available for subject '{scoped_subject}'.")
+        scoped_sessions, scoped_subject, scoped_site = self._sessions_for_processing_scope()
+        if (scoped_subject or scoped_site) and not scoped_sessions:
+            slicer.util.errorDisplay("No parsed sessions available for the selected processing scope.")
             return
         run_root = self._make_run_input_root_for_sessions(
             source_root,
             ingest_mode=raw_ingest_mode,
             sessions=scoped_sessions,
-            force_virtual_root=bool(scoped_subject),
+            force_virtual_root=bool(scoped_subject or scoped_site),
         )
         if run_root is None:
             return
@@ -3571,15 +3619,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except ValueError as exc:
             slicer.util.errorDisplay(str(exc))
             return
-        scoped_sessions, scoped_subject = self._sessions_for_processing_scope()
-        if scoped_subject and not scoped_sessions:
-            slicer.util.errorDisplay(f"No parsed sessions available for subject '{scoped_subject}'.")
+        scoped_sessions, scoped_subject, scoped_site = self._sessions_for_processing_scope()
+        if (scoped_subject or scoped_site) and not scoped_sessions:
+            slicer.util.errorDisplay("No parsed sessions available for the selected processing scope.")
             return
         run_root = self._make_run_input_root_for_sessions(
             source_root,
             ingest_mode=raw_ingest_mode,
             sessions=scoped_sessions,
-            force_virtual_root=bool(scoped_subject),
+            force_virtual_root=bool(scoped_subject or scoped_site),
         )
         if run_root is None:
             return
@@ -3623,11 +3671,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if root is None:
             return
         scoped_subject = self._selected_processing_subject()
-        scoped_site = None
-        if scoped_subject is not None:
-            patient_key = self._current_patient_key()
-            if patient_key is not None and str(patient_key[0]) == str(scoped_subject):
-                scoped_site = str(patient_key[1])
+        scoped_site = self._selected_processing_site()
 
         imported = self._require_results_root("Could not resolve imported dataset path.")
         if imported is None:
@@ -3665,7 +3709,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return False
         return True
 
-    def _existing_imported_segmentations_complete(self, imported, sessions=None, scoped_subject=None):
+    def _existing_imported_segmentations_complete(self, imported, sessions=None, scoped_subject=None, scoped_site=None):
         try:
             from timelapsedhrpqct.dataset.artifacts import iter_imported_stack_records
         except Exception as exc:
@@ -3689,6 +3733,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for record in iter_imported_stack_records(imported):
             if scoped_subject is not None and str(getattr(record, "subject_id", "")) != str(scoped_subject):
                 continue
+            if scoped_site is not None and str(getattr(record, "site", "")).strip().lower() != str(scoped_site):
+                continue
             if session_keys:
                 key = (
                     str(getattr(record, "subject_id", "")).strip(),
@@ -3706,7 +3752,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return False
         return all(getattr(record, "seg_path", None) and Path(record.seg_path).exists() for record in records)
 
-    def _can_skip_mask_generation(self, imported, sessions=None, scoped_subject=None):
+    def _can_skip_mask_generation(self, imported, sessions=None, scoped_subject=None, scoped_site=None):
         if not self._current_analysis_requires_segmentation():
             return True
         if self._raw_sessions_have_segmentation_inputs(sessions):
@@ -3715,6 +3761,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             imported,
             sessions=sessions,
             scoped_subject=scoped_subject,
+            scoped_site=scoped_site,
         )
 
     def _auto_mode_from_sessions(self, sessions=None):
@@ -3737,15 +3784,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except ValueError as exc:
             slicer.util.errorDisplay(str(exc))
             return
-        scoped_sessions, scoped_subject = self._sessions_for_processing_scope()
-        if scoped_subject and not scoped_sessions:
-            slicer.util.errorDisplay(f"No parsed sessions available for subject '{scoped_subject}'.")
+        scoped_sessions, scoped_subject, scoped_site = self._sessions_for_processing_scope()
+        if (scoped_subject or scoped_site) and not scoped_sessions:
+            slicer.util.errorDisplay("No parsed sessions available for the selected processing scope.")
             return
         run_root = self._make_run_input_root_for_sessions(
             source_root,
             ingest_mode=raw_ingest_mode,
             sessions=scoped_sessions,
-            force_virtual_root=bool(scoped_subject),
+            force_virtual_root=bool(scoped_subject or scoped_site),
         )
         if run_root is None:
             return
@@ -3758,6 +3805,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             imported,
             sessions=scoped_sessions,
             scoped_subject=scoped_subject,
+            scoped_site=scoped_site,
         ):
             slicer.util.errorDisplay(
                 "Cannot skip mask generation with the current analysis options.\n\n"
