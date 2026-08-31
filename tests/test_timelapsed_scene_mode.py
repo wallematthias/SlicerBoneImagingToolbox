@@ -35,7 +35,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "button.setMinimumHeight(34)" in source
     assert "QPushButton { background:#1f6feb; color:white;" in source
     assert "actions.addWidget(self.sceneRunButton)" not in source
-    assert "layout.addWidget(self.sceneRunButton)" in source
+    assert "sceneActionLayout.addWidget(self.sceneRunButton)" in source
     assert "self.sceneStageItems = {}" in source
     assert "self.sceneStageRows = {}" in source
     assert "rowWidget.setFixedHeight(22)" in source
@@ -132,7 +132,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "viewport().update()" in source
     assert "layout().activate()" in source
-    assert "setMaximumHeight(max(440, min(760, height + 350)))" in source
+    assert "self.timelapsedModeTabs.setMaximumHeight(16777215)" in source
 
 
 def test_timelapsed_batch_tab_uses_uncapped_height() -> None:
@@ -145,9 +145,10 @@ def test_timelapsed_batch_tab_uses_uncapped_height() -> None:
     source = module_path.read_text(encoding="utf-8")
 
     resize_body = source.split("    def _resize_timelapsed_mode_tabs", 1)[1].split("\n    def ", 1)[0]
-    assert "self.timelapsedModeTabs.setMaximumHeight(max(440, min(760, height + 350)))" in resize_body
     assert "self.timelapsedModeTabs.setMaximumHeight(16777215)" in resize_body
     assert "self.timelapsedModeTabs.setMaximumHeight(520)" not in resize_body
+    assert "self.timelapsedModeTabs.setMaximumHeight(520)" not in source
+    assert "max(440, min(760" not in resize_body
     assert "self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "setMaximumHeight(max(520" not in source
     assert "scene_results_table_path" in source
@@ -259,6 +260,32 @@ def test_timelapsed_batch_processing_scope_has_subject_and_site() -> None:
     assert "scoped_sessions, scoped_subject, scoped_site = self._sessions_for_processing_scope()" in source
     assert "force_virtual_root=bool(scoped_subject or scoped_site)" in source
     assert '*(["--site", str(scoped_site)] if scoped_site else [])' in source
+
+
+def test_timelapsed_scene_layout_matches_batch_concepts() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    scene_ui = source.split("    def _build_scene_ui", 1)[1].split("\n    def ", 1)[0]
+
+    assert 'sceneInputBox = qt.QGroupBox("Scene Input")' in scene_ui
+    assert 'sceneTimepointBox = qt.QGroupBox("Timepoints")' in scene_ui
+    assert 'sceneActionBox = qt.QGroupBox("Pipeline")' in scene_ui
+    assert 'self.sceneComparisonBox = qt.QGroupBox("Current Comparisons")' in scene_ui
+    assert "self.sceneComparisonTable = qt.QTableWidget()" in scene_ui
+    assert '["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"]' in scene_ui
+    assert 'sceneAdvancedBox.text = "Advanced Settings"' in scene_ui
+    assert "sceneAdvancedBox.collapsed = True" in scene_ui
+    assert 'Processing workspace' in scene_ui
+    assert "form.addRow(_label(\"Results folder\"" not in scene_ui
+    assert "layout.addWidget(self.sceneComparisonBox)" in scene_ui
+    assert "def _set_scene_comparison_rows" in source
+    assert "self._set_scene_comparison_rows(rows)" in source
+    assert "def _load_scene_results_table(self, plan, *, show=False):" in source
 
 
 def test_timelapsed_scene_loads_pairwise_results_table() -> None:

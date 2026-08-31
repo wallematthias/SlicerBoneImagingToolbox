@@ -575,7 +575,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return widget
 
         self.timelapsedModeTabs = qt.QTabWidget()
-        self.timelapsedModeTabs.setMaximumHeight(520)
+        self.timelapsedModeTabs.setMaximumHeight(16777215)
         self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         self.timelapsedModeTabs.currentChanged.connect(self._on_timelapsed_mode_changed)
         scenePage = qt.QWidget()
@@ -1389,8 +1389,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         layout = qt.QVBoxLayout(parent)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        form = qt.QFormLayout()
+        layout.setSpacing(6)
+
+        sceneInputBox = qt.QGroupBox("Scene Input")
+        form = qt.QFormLayout(sceneInputBox)
         form.setVerticalSpacing(4)
         self.sceneProfileCombo = qt.QComboBox()
         self._populate_study_profiles(self.sceneProfileCombo)
@@ -1400,16 +1402,30 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneResultsRootPath = ctk.ctkPathLineEdit()
         self.sceneResultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.sceneResultsRootPath.setCurrentPath(str(self._default_scene_results_root()))
-        self.sceneResultsRootPath.toolTip = "Folder that will contain this scene run's derivatives."
+        self.sceneResultsRootPath.toolTip = (
+            "Folder used for standardized scene-run inputs and outputs. "
+            "Selected scene nodes are written into pipeline-readable names before running."
+        )
         _cap_width(self.sceneResultsRootPath, 360)
         form.addRow(_label("Profile", "Study defaults used for registration, mask generation, and remodelling analysis."), self.sceneProfileCombo)
-        form.addRow(_label("Results folder", "Folder that will contain this scene run's derivatives."), self.sceneResultsRootPath)
         self.sceneAppendDiscoveryCheck = qt.QCheckBox("Append to table")
         self.sceneAppendDiscoveryCheck.checked = False
         self.sceneAppendDiscoveryCheck.toolTip = "Append discovered loaded timepoints instead of replacing the current table."
         form.addRow(_label("Discovery", "Append discovered loaded timepoints instead of replacing the table."), self.sceneAppendDiscoveryCheck)
-        layout.addLayout(form)
+        self.sceneInputHintLabel = qt.QLabel(
+            "Scene mode works from loaded Slicer nodes. Use Discover to guess timepoints, then edit the table if needed."
+        )
+        self.sceneInputHintLabel.wordWrap = True
+        self.sceneInputHintLabel.toolTip = (
+            "Loaded nodes may have arbitrary names. The module writes a standardized processing dataset before running."
+        )
+        form.addRow(self.sceneInputHintLabel)
+        layout.addWidget(sceneInputBox)
 
+        sceneTimepointBox = qt.QGroupBox("Timepoints")
+        sceneTimepointLayout = qt.QVBoxLayout(sceneTimepointBox)
+        sceneTimepointLayout.setContentsMargins(8, 10, 8, 8)
+        sceneTimepointLayout.setSpacing(4)
         self.sceneTimepointTable = qt.QTableWidget()
         self.sceneTimepointTable.setColumnCount(7)
         self.sceneTimepointTable.setHorizontalHeaderLabels(
@@ -1425,9 +1441,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         self.sceneTimepointTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
         self.sceneTimepointTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
-        layout.addWidget(self.sceneTimepointTable)
+        sceneTimepointLayout.addWidget(self.sceneTimepointTable)
+        layout.addWidget(sceneTimepointBox)
         self._resize_scene_timepoint_table()
 
+        sceneActionBox = qt.QGroupBox("Pipeline")
+        sceneActionLayout = qt.QVBoxLayout(sceneActionBox)
+        sceneActionLayout.setContentsMargins(8, 10, 8, 8)
+        sceneActionLayout.setSpacing(6)
         actions = qt.QHBoxLayout()
         self.sceneDiscoverButton = qt.QPushButton("Discover Loaded Timepoints")
         self.sceneAddTimepointButton = qt.QPushButton("Add timepoint")
@@ -1448,8 +1469,29 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         actions.addWidget(self.sceneMoveUpButton)
         actions.addWidget(self.sceneMoveDownButton)
         actions.addStretch(1)
-        layout.addLayout(actions)
-        layout.addWidget(self.sceneRunButton)
+        sceneActionLayout.addLayout(actions)
+        sceneActionLayout.addWidget(self.sceneRunButton)
+        layout.addWidget(sceneActionBox)
+
+        self.sceneComparisonBox = qt.QGroupBox("Current Comparisons")
+        sceneComparisonLayout = qt.QVBoxLayout(self.sceneComparisonBox)
+        sceneComparisonLayout.setContentsMargins(8, 10, 8, 8)
+        sceneComparisonLayout.setSpacing(4)
+        self.sceneComparisonTable = qt.QTableWidget()
+        self.sceneComparisonTable.setColumnCount(6)
+        self.sceneComparisonTable.setHorizontalHeaderLabels(["Pair", "Mask", "FV/BV", "RV/BV", "AV/BV", "NV/BV"])
+        self.sceneComparisonTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
+        self.sceneComparisonTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
+        self.sceneComparisonTable.verticalHeader().setVisible(False)
+        self.sceneComparisonTable.horizontalHeader().setStretchLastSection(True)
+        self.sceneComparisonTable.setAlternatingRowColors(True)
+        self.sceneComparisonTable.setMinimumHeight(82)
+        self.sceneComparisonTable.setMaximumHeight(140)
+        self.sceneComparisonTable.toolTip = "Pairwise remodelling fractions from the current scene run."
+        sceneComparisonLayout.addWidget(self.sceneComparisonTable)
+        self._set_scene_comparison_rows([])
+        layout.addWidget(self.sceneComparisonBox)
+
         self.sceneStatusBox = qt.QGroupBox("Pipeline Status")
         sceneStatusBox = self.sceneStatusBox
         sceneStatusLayout = qt.QVBoxLayout(sceneStatusBox)
@@ -1485,6 +1527,16 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusLabel = qt.QLabel("")
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
+
+        sceneAdvancedBox = ctk.ctkCollapsibleButton()
+        sceneAdvancedBox.text = "Advanced Settings"
+        sceneAdvancedBox.collapsed = True
+        sceneAdvancedLayout = qt.QFormLayout(sceneAdvancedBox)
+        sceneAdvancedLayout.addRow(
+            _label("Processing workspace", "Folder used for standardized scene-run inputs and outputs."),
+            self.sceneResultsRootPath,
+        )
+        layout.addWidget(sceneAdvancedBox)
 
     def _resize_scene_timepoint_table(self):
         visible_rows = self._scene_timepoint_visible_rows()
@@ -1535,11 +1587,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         current_index = self.timelapsedModeTabs.currentIndex
         if callable(current_index):
             current_index = current_index()
-        if int(current_index) == 0 and hasattr(self, "sceneTimepointTable"):
-            height = int(getattr(self, "_scene_timepoint_table_height", 100))
-            self.timelapsedModeTabs.setMaximumHeight(max(440, min(760, height + 350)))
-        else:
-            self.timelapsedModeTabs.setMaximumHeight(16777215)
+        self.timelapsedModeTabs.setMaximumHeight(16777215)
         try:
             self.timelapsedModeTabs.updateGeometry()
             if self.timelapsedModeTabs.parent() is not None and self.timelapsedModeTabs.parent().layout() is not None:
@@ -6562,6 +6610,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._show(f"[scene] could not refresh preview table rows for {Path(source_path).name}: {exc}")
         return rows
 
+    def _set_scene_comparison_rows(self, rows=None):
+        if not hasattr(self, "sceneComparisonTable"):
+            return
+        display_rows = list(rows or [])
+        if not display_rows:
+            display_rows = [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]]
+        self.sceneComparisonTable.setRowCount(len(display_rows))
+        for row_idx, row_values in enumerate(display_rows):
+            for col_idx, value in enumerate(row_values):
+                item = qt.QTableWidgetItem(str(value))
+                self.sceneComparisonTable.setItem(row_idx, col_idx, item)
+        try:
+            self.sceneComparisonTable.resizeColumnsToContents()
+            self.sceneComparisonTable.horizontalHeader().setStretchLastSection(True)
+        except Exception:
+            pass
+
     def _load_scene_results_table_node(self, rows, plan):
         name = f"TimelapsedHRpQCT Scene Results {plan.run_id}"
         table_node = slicer.mrmlScene.GetFirstNodeByName(name)
@@ -6606,12 +6671,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._show(f"[scene] could not show scene results table in Slicer table view: {exc}")
 
-    def _load_scene_results_table(self, plan, *, show=True):
+    def _load_scene_results_table(self, plan, *, show=False):
         rows = self._scene_result_rows_from_loaded_remodelling()
         rows_source = "current scene display"
         if not rows:
             rows = self._scene_result_rows(plan)
             rows_source = "saved CSV"
+        self._set_scene_comparison_rows(rows)
         if not rows:
             return 0
 
