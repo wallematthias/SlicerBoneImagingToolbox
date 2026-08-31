@@ -200,6 +200,25 @@ def test_timelapsed_batch_current_comparison_uses_table() -> None:
     assert "metricsLayout.addWidget(self.analysisFormationFractionLabel)" not in source
 
 
+def test_timelapsed_batch_manual_fallback_supports_strambo_aim_names() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "def _strip_manual_aim_suffix" in source
+    assert r"(?i)\.aim(?:;\d+)?$" in source
+    assert r"(?i)\\.aim(?:;\\d+)?$" not in source
+    assert "def _manual_metadata_from_filename" in source
+    assert "STRAMBO_0003_TR_Y04.AIM" in source
+    assert "tibia_right" in source
+    assert 'subject_id=metadata.get("subject_id", "MANUAL")' in source
+    assert 'session_id=metadata.get("session_id", f"T{idx}")' in source
+
+
 def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]

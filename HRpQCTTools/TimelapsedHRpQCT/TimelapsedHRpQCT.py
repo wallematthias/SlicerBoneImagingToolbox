@@ -2829,7 +2829,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
 
     def _manual_role_from_filename(self, path):
-        stem = Path(path).stem
+        stem = self._strip_manual_aim_suffix(Path(path).name)
         upper = stem.upper()
         suffix_roles = [
             ("_TRAB_MASK", "trab"),
@@ -2843,6 +2843,50 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return stem[: -len(suffix)], role
         return stem, None
 
+    def _strip_manual_aim_suffix(self, name):
+        return re.sub(r"(?i)\.aim(?:;\d+)?$", "", str(name))
+
+    def _manual_site_from_token(self, token):
+        site_aliases = {
+            "DR": "radius",
+            "RAD": "radius",
+            "RADIUS": "radius",
+            "DT": "tibia",
+            "TIB": "tibia",
+            "TIBIA": "tibia",
+            "KN": "knee",
+            "KNEE": "knee",
+            "RL": "radius_left",
+            "RADIUS_LEFT": "radius_left",
+            "RR": "radius_right",
+            "RADIUS_RIGHT": "radius_right",
+            "TL": "tibia_left",
+            "TIBIA_LEFT": "tibia_left",
+            "TR": "tibia_right",
+            "TIBIA_RIGHT": "tibia_right",
+            "KL": "knee_left",
+            "KNEE_LEFT": "knee_left",
+            "KR": "knee_right",
+            "KNEE_RIGHT": "knee_right",
+        }
+        return site_aliases.get(str(token or "").strip().upper(), "radius")
+
+    def _manual_metadata_from_filename(self, base):
+        # Example: STRAMBO_0003_TR_Y04.AIM -> sub STRAMBO_0003, site tibia_right, ses Y04.
+        match = re.match(
+            r"(?i)^(?P<subject>[A-Za-z][A-Za-z0-9]+_[0-9]+)_(?P<site>DR|DT|KN|RL|RR|TL|TR|KL|KR)_(?P<session>Y[0-9]+|T[0-9]+|C[0-9]+|BL|FL[0-9]*|FU[0-9]*)$",
+            str(base or ""),
+        )
+        if not match:
+            return {}
+        session_id = str(match.group("session")).upper()
+        return {
+            "subject_id": match.group("subject"),
+            "site": self._manual_site_from_token(match.group("site")),
+            "session_id": session_id,
+            "source_session_id": session_id,
+        }
+
     def _manual_sessions_from_input_files(self, root):
         try:
             from timelapsedhrpqct.dataset.models import RawSession
@@ -2852,7 +2896,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         root = Path(root)
         aim_paths = sorted(
             path for path in root.rglob("*")
-            if path.is_file() and path.suffix.lower() == ".aim"
+            if path.is_file() and re.search(r"(?i)\.aim(?:;\d+)?$", path.name)
         )
         if not aim_paths:
             return []
@@ -2886,13 +2930,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             image_path = entry.get("image")
             if image_path is None:
                 continue
+            metadata = self._manual_metadata_from_filename(base)
             sessions.append(
                 RawSession(
-                    subject_id="MANUAL",
-                    session_id=f"T{idx}",
+                    subject_id=metadata.get("subject_id", "MANUAL"),
+                    session_id=metadata.get("session_id", f"T{idx}"),
                     raw_image_path=Path(image_path),
-                    source_session_id=str(base),
-                    site="radius",
+                    source_session_id=metadata.get("source_session_id", str(base)),
+                    site=metadata.get("site", "radius"),
                     stack_index=None,
                     raw_mask_paths=dict(entry.get("masks") or {}),
                     raw_seg_path=entry.get("seg"),
