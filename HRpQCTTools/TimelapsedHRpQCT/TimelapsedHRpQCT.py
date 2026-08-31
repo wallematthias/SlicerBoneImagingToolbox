@@ -175,6 +175,15 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
             )
         return True, f"Installed ({version}) from {package_path}"
 
+    def run_cli_supports_option(self, option):
+        try:
+            import inspect
+            from timelapsedhrpqct import cli
+
+            return str(option) in inspect.getsource(cli._build_parser)
+        except Exception:
+            return False
+
     def install_or_update_pipeline(self):
         if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC):
             # Local development: import from the sibling checkout directly, and install the
@@ -2972,6 +2981,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             for idx, path in enumerate(aim_paths, start=1)
         ]
 
+    def _manual_sessions_need_correction(self, sessions):
+        if not sessions:
+            return True
+        for session in sessions:
+            subject_id = str(getattr(session, "subject_id", "") or "").strip().upper()
+            session_id = str(getattr(session, "session_id", "") or "").strip().upper()
+            source_session_id = str(getattr(session, "source_session_id", "") or "").strip()
+            if subject_id == "MANUAL" or not subject_id:
+                return True
+            if not session_id or re.fullmatch(r"T\d+", session_id) and source_session_id not in {"", session_id}:
+                return True
+        return False
+
     def _on_parse(self):
         if not self.logic.is_pipeline_available():
             slicer.util.errorDisplay("Please install timelapsed-hrpqct first.")
@@ -2995,35 +3017,51 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if err:
             manual_sessions = self._manual_sessions_from_input_files(root)
             if manual_sessions:
+                needs_correction = self._manual_sessions_need_correction(manual_sessions)
                 self._manual_parse_active = True
                 self._last_parsed_sessions = list(manual_sessions)
                 self._parsed_baseline_rows = []
                 self._populate_parse_table(manual_sessions)
-                try:
-                    self.parseBox.collapsed = False
-                except Exception:
-                    pass
+                if needs_correction:
+                    try:
+                        self.parseBox.collapsed = False
+                    except Exception:
+                        pass
                 self.parseSummaryLabel.text = (
-                    "Parse summary: manual correction needed "
+                    "Parse summary: fallback filename parse "
                     f"({len(manual_sessions)} AIM image row(s) prepared)."
+                    if not needs_correction
+                    else (
+                        "Parse summary: manual correction needed "
+                        f"({len(manual_sessions)} AIM image row(s) prepared)."
+                    )
                 )
             else:
+                needs_correction = True
                 self._manual_parse_active = False
                 self.parseTable.setRowCount(0)
                 self._last_parsed_sessions = []
                 self._parsed_baseline_rows = []
                 self.parseSummaryLabel.text = "Parse summary: failed"
-            self.parseSummaryLabel.styleSheet = "color: #cc5500;"
+            self.parseSummaryLabel.styleSheet = "color: #cc5500;" if needs_correction else "color: #228b22;"
             self._refresh_processing_subjects()
-            self._set_stage_status("parse", "error")
-            detail = (
-                "Could not parse filenames automatically. "
-                "Use Parse Details to correct Subject, Site, Session, and Stack values, "
-                "then run the pipeline from the corrected table."
-                if manual_sessions
-                else "Could not parse filenames automatically and no AIM files were found for manual correction."
-            )
-            self._set_user_message("error", "Parse needs correction", detail)
+            self._set_stage_status("parse", "error" if needs_correction else "done")
+            if needs_correction:
+                detail = (
+                    "Could not parse filenames automatically. "
+                    "Use Parse Details to correct Subject, Site, Session, and Stack values, "
+                    "then run the pipeline from the corrected table."
+                    if manual_sessions
+                    else "Could not parse filenames automatically and no AIM files were found for manual correction."
+                )
+                self._set_user_message("error", "Parse needs correction", detail)
+            else:
+                self._set_user_message(
+                    "success",
+                    "Parse used fallback",
+                    "Automatic parser failed, but Slicer recovered structured filename rows. "
+                    "Review Parse Details if needed, then run the pipeline.",
+                )
             self._show("[parse] automatic parse failed:")
             self._show(str(err))
             return
@@ -3269,6 +3307,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return []
 
     def _storage_cli_flags(self):
+        if not self.logic.run_cli_supports_option("--storage-mode"):
+            return []
         mode = str(getattr(self.storageModeCombo, "currentData", "minimal") or "minimal")
         if mode == "full":
             return ["--storage-mode", "full"]

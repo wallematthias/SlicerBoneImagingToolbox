@@ -105,6 +105,8 @@ def test_timelapsed_ui_exposes_minimal_storage_mode_for_batch_runs():
     assert "self.storageModeCombo" in source
     assert 'self.storageModeCombo.addItem("Minimal", "minimal")' in source
     assert 'self.storageModeCombo.addItem("Full debug", "full")' in source
+    assert "def run_cli_supports_option(self, option):" in source
     assert "def _storage_cli_flags(self):" in source
+    assert 'self.logic.run_cli_supports_option("--storage-mode")' in source
     assert '"--storage-mode", "minimal"' in source
     assert "*self._storage_cli_flags()" in source

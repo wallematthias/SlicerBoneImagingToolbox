@@ -223,6 +223,22 @@ def test_timelapsed_batch_manual_fallback_supports_strambo_aim_names() -> None:
     assert "grouped[str(path.stem)" not in source
 
 
+def test_timelapsed_batch_structured_fallback_is_success_status() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "def _manual_sessions_need_correction" in source
+    assert "needs_correction = self._manual_sessions_need_correction(manual_sessions)" in source
+    assert 'self._set_stage_status("parse", "error" if needs_correction else "done")' in source
+    assert '"Parse used fallback"' in source
+    assert '"Parse needs correction"' in source
+
+
 def test_timelapsed_scene_loads_pairwise_results_table() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
