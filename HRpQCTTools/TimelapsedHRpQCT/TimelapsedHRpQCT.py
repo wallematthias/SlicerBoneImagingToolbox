@@ -1792,6 +1792,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         value = str(selector.currentData or "") if selector is not None else ""
         if value in {"__generate__", "__none__"}:
             return ""
+        if slicer.mrmlScene.GetNodeByID(value) is None:
+            return ""
         return value
 
     def _scene_selected_mask_policy(self, row, column):
@@ -1800,6 +1802,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if value == "__none__":
             return "none"
         if value == "__generate__" or not value:
+            return "generate"
+        if slicer.mrmlScene.GetNodeByID(value) is None:
             return "generate"
         return "node"
 
@@ -5187,6 +5191,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         display.SetVisibility(other_node is node)
             self._style_remodelling_labelmap(node, activate_display=False)
             slicer.util.setSliceViewerLayers(label=node, fit=False)
+            self._center_slices_on_node(node, fit_to_bounds=True)
             return True
         except Exception as exc:
             self._show(f"[preview] could not activate selected remodelling image: {exc}")
