@@ -25,9 +25,9 @@ def build_motionscore_scene_plan(
     *,
     results_root: Path,
     scan_id: str,
-    subject_id: str,
-    site: str,
-    session_id: str,
+    subject_id: str = "scene",
+    site: str = "scene",
+    session_id: str = "scene",
     volume_node_id: str,
     run_id: str,
 ) -> MotionScoreScenePlan:

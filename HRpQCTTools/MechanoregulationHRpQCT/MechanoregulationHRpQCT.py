@@ -246,8 +246,9 @@ def read_metric_summary(path):
 class MechanoregulationHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "Bone Mechanoregulation"
-        parent.categories = ["Bone Imaging.Timelapsed Methods"]
+        parent.title = "Mechanoregulation"
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.index = 60
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -255,6 +256,7 @@ class MechanoregulationHRpQCT(ScriptedLoadableModule):
             f"Module version: {MODULE_VERSION}"
         )
         parent.acknowledgementText = (
+            "Author: Matthias Walle. "
             "Mechanoregulation analysis after TimelapsedHRpQCT. "
             "If used scientifically, cite the Timelapsed HR-pQCT mechanoregulation work."
         )

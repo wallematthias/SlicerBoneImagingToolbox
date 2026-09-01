@@ -2,10 +2,46 @@ from __future__ import annotations
 
 from pathlib import Path
 import importlib.util
+import sys
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "HRpQCTTools" / "PlateRodMorphometryHRpQCT" / "PlateRodMorphometryHRpQCT.py"
+
+
+def _install_slicer_import_stubs(monkeypatch) -> None:
+    qt = types.ModuleType("qt")
+    ctk = types.ModuleType("ctk")
+    vtk = types.ModuleType("vtk")
+    slicer = types.ModuleType("slicer")
+    scripted = types.ModuleType("slicer.ScriptedLoadableModule")
+
+    class _Base:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    scripted.ScriptedLoadableModule = _Base
+    scripted.ScriptedLoadableModuleWidget = _Base
+    scripted.ScriptedLoadableModuleLogic = _Base
+    scripted.ScriptedLoadableModuleTest = _Base
+    slicer.ScriptedLoadableModule = scripted
+    slicer.util = types.SimpleNamespace()
+    slicer.app = types.SimpleNamespace()
+
+    monkeypatch.setitem(sys.modules, "qt", qt)
+    monkeypatch.setitem(sys.modules, "ctk", ctk)
+    monkeypatch.setitem(sys.modules, "vtk", vtk)
+    monkeypatch.setitem(sys.modules, "slicer", slicer)
+    monkeypatch.setitem(sys.modules, "slicer.ScriptedLoadableModule", scripted)
+
+
+def _load_plate_rod_module(monkeypatch, name: str):
+    _install_slicer_import_stubs(monkeypatch)
+    spec = importlib.util.spec_from_file_location(name, MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_plate_rod_module_is_registered_with_toolbox_manifest_and_cmake() -> None:
@@ -15,7 +51,16 @@ def test_plate_rod_module_is_registered_with_toolbox_manifest_and_cmake() -> Non
     assert "add_subdirectory(HRpQCTTools/PlateRodMorphometryHRpQCT)" in cmake
     assert '"path": "HRpQCTTools/PlateRodMorphometryHRpQCT"' in manifest
     assert '"title": "Plate/Rod Morphometry"' in manifest
-    assert '"section": "Analysis Methods"' in manifest
+    assert '"section": "Microstructural Analysis"' in manifest
+
+
+def test_plate_rod_module_has_custom_icon_and_author_credit() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    icon_path = ROOT / "HRpQCTTools" / "PlateRodMorphometryHRpQCT" / "Resources" / "Icons" / "PlateRodMorphometryHRpQCT.png"
+
+    assert icon_path.is_file()
+    assert "parent.icon = qt.QIcon(str(Path(__file__).with_name(\"Resources\") / \"Icons\" / \"PlateRodMorphometryHRpQCT.png\"))" in source
+    assert "Author: Matthias Walle" in source
 
 
 def test_plate_rod_module_keeps_algorithm_logic_in_core_package() -> None:
@@ -237,9 +282,7 @@ def test_plate_rod_batch_delegates_to_package_batch_api() -> None:
 
 
 def test_plate_rod_folder_batch_action_executes_package_api(monkeypatch, tmp_path: Path) -> None:
-    spec = importlib.util.spec_from_file_location("plate_rod_batch_test", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_plate_rod_module(monkeypatch, "plate_rod_batch_test")
     received = {}
     monkeypatch.setattr(module, "run_plate_rod_batch", lambda root, **kwargs: received.update(root=root, **kwargs) or "done")
 
@@ -249,10 +292,8 @@ def test_plate_rod_folder_batch_action_executes_package_api(monkeypatch, tmp_pat
     assert received == {"root": tmp_path, "use_common_region": False, "force": True, "progress": None}
 
 
-def test_plate_rod_background_batch_command_carries_folder_options(tmp_path: Path) -> None:
-    spec = importlib.util.spec_from_file_location("plate_rod_batch_command_test", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_plate_rod_background_batch_command_carries_folder_options(monkeypatch, tmp_path: Path) -> None:
+    module = _load_plate_rod_module(monkeypatch, "plate_rod_batch_command_test")
 
     command = module.PlateRodMorphometryHRpQCTLogic.folder_batch_command(
         tmp_path, subject_id="S1", site="tibia", use_common_region=False, force=True,
@@ -265,9 +306,7 @@ def test_plate_rod_background_batch_command_carries_folder_options(tmp_path: Pat
 
 
 def test_plate_rod_background_job_launches_with_pythonslicer(monkeypatch, tmp_path: Path) -> None:
-    spec = importlib.util.spec_from_file_location("plate_rod_batch_launch_test", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_plate_rod_module(monkeypatch, "plate_rod_batch_launch_test")
     started = []
 
     class Signal:

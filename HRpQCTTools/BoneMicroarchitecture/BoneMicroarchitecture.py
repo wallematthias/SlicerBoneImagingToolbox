@@ -57,7 +57,7 @@ def run_microarchitecture_batch(*args, **kwargs):
 
 
 MODULE_VERSION = "0.1.0"
-REGISTERED_MICROARCHITECTURE_DIR_NAME = "RegisteredMicroarchitecture"
+REGISTERED_MICROARCHITECTURE_DIR_NAME = "registered"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
 SEGMENT_NAME_HINTS = {
@@ -77,8 +77,10 @@ SEGMENT_ROLE_HINTS = {
 class BoneMicroarchitecture(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "Bone Microarchitecture"
-        parent.categories = ["Bone Imaging.Analysis Methods"]
+        parent.title = "Microarchitecture"
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "BoneMicroarchitecture.png"))
+        parent.index = 70
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -86,6 +88,7 @@ class BoneMicroarchitecture(ScriptedLoadableModule):
             f"Module version: {MODULE_VERSION}"
         )
         parent.acknowledgementText = (
+            "Author: Matthias Walle. "
             "This module wraps a lightweight Python microarchitecture core for Slicer."
         )
 
@@ -117,10 +120,15 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         )
 
     @staticmethod
-    def folder_batch_command(dataset_root, *, subject_id="", site="", use_common_region=True, force=False,
+    def folder_batch_command(dataset_root, *, subject_id="", site="", session_id="", use_common_region=True, force=False,
                              thickness_method="hildebrand", thickness_backend="auto"):
-        del subject_id, site  # The current package batch CLI operates on all manifest cases.
         command = ["-m", "bone_microarchitecture.cli", "run-batch", str(Path(dataset_root).expanduser().resolve())]
+        if subject_id:
+            command.extend(["--subject", str(subject_id)])
+        if site:
+            command.extend(["--site", str(site)])
+        if session_id:
+            command.extend(["--session", str(session_id)])
         if not use_common_region:
             command.append("--no-common-region")
         if force:
@@ -128,14 +136,45 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         command.extend(["--thickness-method", str(thickness_method), "--thickness-backend", str(thickness_backend)])
         return command
 
-    def run_folder_batch_job(self, dataset_root, *, subject_id="", site="", use_common_region=True, force=False,
+    def run_folder_batch_job(self, dataset_root, *, subject_id="", site="", session_id="", use_common_region=True, force=False,
                              thickness_method="hildebrand", thickness_backend="auto", on_output=None, on_finished=None):
         proc = qt.QProcess()
         proc.setProcessChannelMode(qt.QProcess.MergedChannels)
-        proc.readyRead.connect(lambda: on_output and on_output(bytes(proc.readAll()).decode("utf-8", errors="replace")))
-        proc.finished.connect(lambda code, status: on_finished and on_finished(code, status))
+
+        def _read_output():
+            raw = proc.readAll()
+            if isinstance(raw, (bytes, bytearray)):
+                data = bytes(raw)
+            else:
+                try:
+                    data = raw.data()
+                    if isinstance(data, str):
+                        data = data.encode("utf-8", errors="replace")
+                    else:
+                        data = bytes(data)
+                except Exception:
+                    data = str(raw).encode("utf-8", errors="replace")
+            text = data.decode("utf-8", errors="replace")
+            if on_output and text:
+                on_output(text)
+
+        def _finished(*signal_args):
+            if len(signal_args) >= 2:
+                exit_code = int(signal_args[0])
+                exit_status = signal_args[1]
+            elif len(signal_args) == 1:
+                exit_code = int(signal_args[0])
+                exit_status = 0
+            else:
+                exit_code = int(proc.exitCode())
+                exit_status = proc.exitStatus()
+            if on_finished:
+                on_finished(exit_code, exit_status)
+
+        proc.readyRead.connect(_read_output)
+        proc.finished.connect(_finished)
         proc.start(slicer_python_executable(slicer.app.applicationFilePath()), self.folder_batch_command(
-            dataset_root, subject_id=subject_id, site=site, use_common_region=use_common_region, force=force,
+            dataset_root, subject_id=subject_id, site=site, session_id=session_id, use_common_region=use_common_region, force=force,
             thickness_method=thickness_method, thickness_backend=thickness_backend,
         ))
         return proc
@@ -271,11 +310,20 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
     def registered_microarchitecture_root(self, dataset_root, output_root=""):
         output_text = str(output_root or "").strip()
         if output_text:
-            return Path(output_text).expanduser()
-        dataset_root = Path(str(dataset_root)).expanduser()
-        if dataset_root.name == REGISTERED_MICROARCHITECTURE_DIR_NAME:
-            return dataset_root
-        return dataset_root / REGISTERED_MICROARCHITECTURE_DIR_NAME
+            root = Path(output_text).expanduser()
+        else:
+            root = Path(str(dataset_root)).expanduser()
+        return self._derivative_family_root(root, "Microarchitecture") / REGISTERED_MICROARCHITECTURE_DIR_NAME
+
+    def _derivative_family_root(self, root, family):
+        root = Path(str(root)).expanduser()
+        if root.name in {REGISTERED_MICROARCHITECTURE_DIR_NAME, "RegisteredMicroarchitecture"}:
+            return root.parent
+        if root.name == family:
+            return root
+        if root.name == "derivatives":
+            return root / family
+        return root / "derivatives" / family
 
     def registered_subject_site_dir(self, output_root, subject_id, site):
         return Path(output_root) / f"sub-{subject_id}" / f"site-{site or 'unknown'}"
@@ -288,19 +336,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             / "microarchitecture"
         )
 
-    def registered_session_masks_dir(self, output_root, row):
-        return (
-            self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
-            / "native_space"
-            / f"ses-{row['session_id']}"
-            / "masks"
-        )
-
-    def registered_session_mask_path(self, output_root, row, role):
-        site = row.get("site") or "unknown"
-        filename = f"sub-{row['subject_id']}_ses-{row['session_id']}_site-{site}_mask-{role}.nii.gz"
-        return self.registered_session_masks_dir(output_root, row) / filename
-
     def discover_registered_series(self, dataset_root, *, subject_filter="", site_filter=""):
         from timelapsedhrpqct.config.models import DiscoveryConfig
         from timelapsedhrpqct.dataset.discovery import discover_raw_sessions
@@ -310,7 +345,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         sessions = discover_raw_sessions(
             Path(str(dataset_root)).expanduser(),
             DiscoveryConfig(),
-            canonicalize_sessions=True,
+            canonicalize_sessions=False,
         )
         subject_filter = str(subject_filter or "").strip()
         site_filter = str(site_filter or "").strip().lower()
@@ -350,6 +385,71 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             rows.append(row)
         return rows
 
+    def discover_independent_cases(self, dataset_root, *, subject_filter="", site_filter=""):
+        rows = self.discover_registered_series(
+            dataset_root,
+            subject_filter=subject_filter,
+            site_filter=site_filter,
+        )
+        ready_by_key = {}
+        try:
+            from bone_microarchitecture import batch as microarchitecture_batch
+
+            for case in microarchitecture_batch._discover_cases(Path(str(dataset_root)).expanduser()):
+                record = case["bone_segmentation"]
+                key = (
+                    str(record.subject_id),
+                    str(record.site or ""),
+                    self._microarchitecture_session_key(record.session_id),
+                    int(record.stack_index or 1),
+                )
+                ready_by_key[key] = {
+                    "subject_id": str(record.subject_id),
+                    "site": str(record.site or ""),
+                    "session_id": str(record.session_id or ""),
+                    "image_path": str(case["transformed_image"].path),
+                    "seg_path": str(case["bone_segmentation"].path),
+                    "full_path": str(case["periosteal_mask"].path),
+                    "trab_path": str(case["trabecular_mask"].path),
+                    "cort_path": str(case.get("cortical_mask").path) if case.get("cortical_mask") else "",
+                    "stack_index": int(record.stack_index or 1),
+                    "status": "Ready",
+                }
+        except Exception:
+            ready_by_key = {}
+
+        merged = {}
+        for row in rows:
+            key = (
+                str(row.get("subject_id", "")),
+                self._canonical_microarchitecture_site(row.get("site", "")),
+                self._microarchitecture_session_key(row.get("session_id", "")),
+                int(row.get("stack_index", 1)),
+            )
+            merged[key] = ready_by_key.get(key, row)
+        for key, row in ready_by_key.items():
+            merged.setdefault(key, row)
+        return list(merged.values())
+
+    @staticmethod
+    def _canonical_microarchitecture_site(site):
+        normalized = str(site or "").strip().lower()
+        return {
+            "rl": "radius_left",
+            "rr": "radius_right",
+            "tl": "tibia_left",
+            "tr": "tibia_right",
+        }.get(normalized, normalized)
+
+    @staticmethod
+    def _microarchitecture_session_key(session_id):
+        value = str(session_id or "").strip().upper()
+        if value.startswith("SES-"):
+            value = value[4:]
+        if value.startswith("Y") and value[1:].isdigit():
+            value = value[1:]
+        return value.lstrip("0") or "0"
+
     def sequential_registration_pairs(self, rows):
         try:
             from timelapsedhrpqct.utils.session_ids import session_sort_key
@@ -380,11 +480,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         for row in rows:
             subject_site_dir = self.registered_subject_site_dir(root, row["subject_id"], row["site"])
             for relative_dir in (
-                "registration/adjacent",
-                "registration/composed",
-                "common_space/masks_from_each_session",
-                "common_space/common_masks",
-                f"native_space/ses-{row['session_id']}/masks",
                 f"native_space/ses-{row['session_id']}/microarchitecture/maps",
             ):
                 (subject_site_dir / relative_dir).mkdir(parents=True, exist_ok=True)
@@ -407,9 +502,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         output_root,
         rows,
         *,
-        segmentation_method="seg_gauss",
-        periosteal_contour_method="standard",
-        endosteal_contour_method="standard",
         progress_callback=None,
     ):
         root = self.registered_microarchitecture_root(dataset_root, output_root)
@@ -423,20 +515,18 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 f"[registered] preparing sub-{row['subject_id']} ses-{row['session_id']}",
             )
             prepared = dict(row)
-            generated.extend(
-                self._complete_registered_series_masks(
-                    root,
-                    prepared,
-                    segmentation_method=segmentation_method,
-                    periosteal_contour_method=periosteal_contour_method,
-                    endosteal_contour_method=endosteal_contour_method,
-                )
-            )
             missing = self._registered_row_missing(prepared)
             prepared["status"] = "Ready" if not missing else f"Missing {', '.join(missing)}"
             prepared_rows.append(prepared)
         self._mark_incomplete_registered_groups(prepared_rows)
-        generated.extend(self._build_registered_common_regions(root, prepared_rows, progress_callback=progress_callback))
+        generated.extend(
+            self._build_registered_common_regions(
+                root,
+                prepared_rows,
+                dataset_root=dataset_root,
+                progress_callback=progress_callback,
+            )
+        )
         manifest_path = self.write_registered_series_manifest(dataset_root, root, prepared_rows)
         return {"manifest": str(manifest_path), "rows": prepared_rows, "generated": generated}
 
@@ -457,181 +547,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             if not value or not Path(str(value)).expanduser().exists()
         ]
 
-    def _write_registered_mask(self, output_root, row, role, image):
-        path = self.registered_session_mask_path(output_root, row, role)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        sitk.WriteImage(sitk.Cast(image > 0, sitk.sitkUInt8), str(path))
-        row[self._registered_mask_key(role)] = str(path)
-        return str(path)
-
-    def _registered_mask_key(self, role):
-        return f"{role}_path" if role != "seg" else "seg_path"
-
-    def _read_optional_registered_mask(self, row, key, role):
-        path = str(row.get(key) or "").strip()
-        if not path:
-            return None
-        if not Path(path).expanduser().exists():
-            return None
-        return self._read_registered_series_image(path, role=role)
-
-    def _complete_registered_series_masks(
-        self,
-        output_root,
-        row,
-        *,
-        segmentation_method,
-        periosteal_contour_method,
-        endosteal_contour_method,
-    ):
-        generated = []
-        if not row.get("image_path"):
-            return generated
-        image = self._read_registered_series_image(row["image_path"], role="image")
-
-        resolved_compartments, provenance = self._resolve_registered_compartment_masks(row, image)
-        for role, mask in resolved_compartments.items():
-            key = self._registered_mask_key(role)
-            original = self._read_optional_registered_mask(row, key, role)
-            source = provenance.get(role, "provided")
-            needs_workspace_copy = (
-                source.startswith("derived_from_")
-                or original is None
-                or not self._same_image_geometry(original, image)
-            )
-            if needs_workspace_copy:
-                path = self._write_registered_mask(output_root, row, role, mask)
-                generated.append({"session": row["session_id"], "role": role, "path": path, "source": source})
-
-        missing_compartments = [role for role in ("full", "trab", "cort") if role in self._registered_row_missing(row)]
-        if missing_compartments and periosteal_contour_method != "none":
-            contour_masks = self._generate_registered_contours(
-                image,
-                row,
-                segmentation_method=segmentation_method,
-                periosteal_contour_method=periosteal_contour_method,
-                endosteal_contour_method=endosteal_contour_method,
-            )
-            for role in missing_compartments:
-                if role in contour_masks:
-                    path = self._write_registered_mask(output_root, row, role, contour_masks[role])
-                    generated.append({"session": row["session_id"], "role": role, "path": path, "source": "generated"})
-
-        if "bone seg" in self._registered_row_missing(row) and segmentation_method != "none":
-            full = self._read_optional_registered_mask(row, "full_path", "full")
-            trab = self._read_optional_registered_mask(row, "trab_path", "trab")
-            cort = self._read_optional_registered_mask(row, "cort_path", "cort")
-            if full is not None and trab is not None and cort is not None:
-                seg = self._generate_registered_bone_segmentation(
-                    image,
-                    full,
-                    trab,
-                    cort,
-                    segmentation_method=segmentation_method,
-                )
-                path = self._write_registered_mask(output_root, row, "seg", seg)
-                generated.append({"session": row["session_id"], "role": "seg", "path": path, "source": "generated"})
-        return generated
-
-    def _same_image_geometry(self, first, second):
-        return (
-            first.GetSize() == second.GetSize()
-            and first.GetSpacing() == second.GetSpacing()
-            and first.GetOrigin() == second.GetOrigin()
-            and first.GetDirection() == second.GetDirection()
-        )
-
-    def _resolve_registered_compartment_masks(self, row, image):
-        from timelapsedhrpqct.processing.masks import resolve_masks
-
-        provided = {
-            role: mask
-            for role, mask in {
-                "full": self._read_optional_registered_mask(row, "full_path", "full"),
-                "trab": self._read_optional_registered_mask(row, "trab_path", "trab"),
-                "cort": self._read_optional_registered_mask(row, "cort_path", "cort"),
-            }.items()
-            if mask is not None
-        }
-        if len(provided) < 2:
-            return {}, {}
-        resolved, provenance = resolve_masks(image=image, provided_masks=provided, desired_roles=["full", "trab", "cort"])
-        return resolved, provenance
-
-    def _derive_registered_compartment_masks(self, row, image):
-        resolved, provenance = self._resolve_registered_compartment_masks(row, image)
-        return {
-            role: mask
-            for role, mask in resolved.items()
-            if provenance.get(role, "").startswith("derived_from_")
-        }
-
-    def _segmentation_defaults(self, segmentation_method):
-        from SegmentationHRpQCT import METHOD_PRESETS
-
-        defaults = dict(METHOD_PRESETS.get(str(segmentation_method), METHOD_PRESETS["seg_gauss"]))
-        defaults["method"] = "seg_gauss" if str(segmentation_method) == "none" else str(segmentation_method)
-        defaults["enabled"] = str(segmentation_method) != "none"
-        return defaults
-
-    def _site_defaults(self, row):
-        from SegmentationHRpQCT import SITE_PRESETS
-
-        site = str(row.get("site") or "").lower()
-        if site not in SITE_PRESETS:
-            site = "radius"
-        return site, SITE_PRESETS[site]
-
-    def _generate_registered_contours(
-        self,
-        image,
-        row,
-        *,
-        segmentation_method,
-        periosteal_contour_method,
-        endosteal_contour_method,
-    ):
-        from timelapsedhrpqct.processing.contour_generation import (
-            ContourGenerationParams,
-            InnerContourParams,
-            OuterContourParams,
-            SegmentationParams,
-            generate_masks_from_image,
-        )
-
-        site, site_defaults = self._site_defaults(row)
-        inner = dict(site_defaults["inner"])
-        inner["site"] = site
-        inner["contour_method"] = str(endosteal_contour_method)
-        outer = dict(site_defaults["outer"])
-        outer["contour_method"] = str(periosteal_contour_method)
-        params = ContourGenerationParams(
-            outer=OuterContourParams(**outer),
-            inner=InnerContourParams(**inner),
-            segmentation=SegmentationParams(**self._segmentation_defaults(segmentation_method)),
-        )
-        generated = generate_masks_from_image(image, params, verbose=False)
-        return {"full": generated.full, "trab": generated.trab, "cort": generated.cort, "seg": generated.seg}
-
-    def _generate_registered_bone_segmentation(self, image, full_mask, trab_mask, cort_mask, *, segmentation_method):
-        from timelapsedhrpqct.processing.contour_generation import (
-            SegmentationParams,
-            _segment_bone_xyz,
-            numpy_xyz_to_sitk_binary,
-            sitk_to_numpy_xyz,
-        )
-
-        params = SegmentationParams(**self._segmentation_defaults(segmentation_method))
-        seg_xyz = _segment_bone_xyz(
-            image_xyz=sitk_to_numpy_xyz(image),
-            full_mask_xyz=sitk_to_numpy_xyz(full_mask) > 0,
-            trab_mask_xyz=sitk_to_numpy_xyz(trab_mask) > 0,
-            cort_mask_xyz=sitk_to_numpy_xyz(cort_mask) > 0,
-            params=params,
-            spacing_xyz=tuple(float(value) for value in image.GetSpacing()),
-        )
-        return numpy_xyz_to_sitk_binary(seg_xyz, image)
-
     def _registered_group_key(self, row):
         return (row["subject_id"], row["site"], row.get("stack_index", 1))
 
@@ -647,31 +562,94 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                     if row.get("status") == "Ready":
                         row["status"] = "Missing common region (group has incomplete timepoints)"
 
-    def _registered_common_mask_path(self, output_root, row, role):
-        subject_site_dir = self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
-        return subject_site_dir / "common_space" / "common_masks" / (
-            f"sub-{row['subject_id']}_site-{row['site']}_stack-{int(row.get('stack_index', 1)):02d}_mask-{role}_common.nii.gz"
+    def _shared_common_region_root(self, dataset_root):
+        return self._derivative_family_root(Path(str(dataset_root)).expanduser(), "CommonRegion")
+
+    def _shared_common_region_subject_site_dir(self, dataset_root, row):
+        return (
+            self._shared_common_region_root(dataset_root)
+            / f"sub-{row['subject_id']}"
+            / f"site-{row['site']}"
+            / f"stack-{int(row.get('stack_index', 1)):02d}"
         )
 
-    def _registered_common_session_mask_path(self, output_root, row, role):
-        return self.registered_session_masks_dir(output_root, row) / (
-            f"sub-{row['subject_id']}_ses-{row['session_id']}_site-{row['site']}_mask-{role}_native_common.nii.gz"
+    def _shared_common_region_common_mask_path(self, dataset_root, row):
+        return self._shared_common_region_subject_site_dir(dataset_root, row) / "common_space" / "masks" / (
+            f"sub-{row['subject_id']}_site-{row['site']}_stack-{int(row.get('stack_index', 1)):02d}_mask-scan-region_common.nii.gz"
         )
 
-    def _registered_transform_path(self, output_root, row, baseline_row):
-        subject_site_dir = self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
-        return subject_site_dir / "registration" / "composed" / (
-            f"sub-{row['subject_id']}_site-{row['site']}_stack-{int(row.get('stack_index', 1)):02d}_"
-            f"from-ses-{row['session_id']}_to-ses-{baseline_row['session_id']}.tfm"
+    def _shared_common_region_native_mask_path(self, dataset_root, row):
+        return self._shared_common_region_subject_site_dir(dataset_root, row) / "native_space" / f"ses-{row['session_id']}" / "masks" / (
+            f"sub-{row['subject_id']}_ses-{row['session_id']}_site-{row['site']}_mask-scan-region_native_common.nii.gz"
         )
 
-    def _registered_pairwise_transform_path(self, output_root, moving_row, fixed_row):
-        subject_site_dir = self.registered_subject_site_dir(output_root, moving_row["subject_id"], moving_row["site"])
-        return subject_site_dir / "registration" / "pairwise" / (
-            f"sub-{moving_row['subject_id']}_site-{moving_row['site']}_"
-            f"stack-{int(moving_row.get('stack_index', 1)):02d}_"
-            f"from-ses-{moving_row['session_id']}_to-ses-{fixed_row['session_id']}.tfm"
+    def _read_existing_registered_transform(self, path):
+        path = Path(str(path)).expanduser()
+        if not path.exists():
+            return None
+        return sitk.ReadTransform(str(path))
+
+    def _shared_timelapsed_pairwise_transform_path(self, dataset_root, moving_row, fixed_row):
+        root = Path(str(dataset_root)).expanduser()
+        path = (
+            root
+            / "derivatives"
+            / "Registration"
+            / f"sub-{moving_row['subject_id']}"
+            / f"site-{moving_row['site']}"
+            / "registration"
+            / f"stack-{int(moving_row.get('stack_index', 1)):02d}"
+            / "pairwise"
+            / (
+                f"sub-{moving_row['subject_id']}_site-{moving_row['site']}_"
+                f"stack-{int(moving_row.get('stack_index', 1)):02d}_"
+                f"from-ses-{moving_row['session_id']}_to-ses-{fixed_row['session_id']}_pairwise.tfm"
+            )
         )
+        if path.exists():
+            return path
+        from timelapsedhrpqct.dataset.derivative_paths import existing_derivative_path, timelapse_pairwise_transform_path
+
+        fallback = timelapse_pairwise_transform_path(
+            root,
+            moving_row["subject_id"],
+            moving_row["site"],
+            int(moving_row.get("stack_index", 1)),
+            moving_row["session_id"],
+            fixed_row["session_id"],
+        )
+        return existing_derivative_path(fallback)
+
+    def _shared_timelapsed_baseline_transform_path(self, dataset_root, row, baseline_row):
+        root = Path(str(dataset_root)).expanduser()
+        path = (
+            root
+            / "derivatives"
+            / "Registration"
+            / f"sub-{row['subject_id']}"
+            / f"site-{row['site']}"
+            / "registration"
+            / f"stack-{int(row.get('stack_index', 1)):02d}"
+            / "baseline"
+            / (
+                f"sub-{row['subject_id']}_site-{row['site']}_"
+                f"stack-{int(row.get('stack_index', 1)):02d}_"
+                f"from-ses-{row['session_id']}_to-ses-{baseline_row['session_id']}_baseline.tfm"
+            )
+        )
+        if path.exists():
+            return path
+        from timelapsedhrpqct.dataset.derivative_paths import existing_derivative_path, timelapse_baseline_transform_path
+
+        fallback = timelapse_baseline_transform_path(
+            root,
+            row["subject_id"],
+            row["site"],
+            int(row.get("stack_index", 1)),
+            row["session_id"],
+            baseline_row["session_id"],
+        )
+        return existing_derivative_path(fallback)
 
     def _resample_registered_mask(self, mask, reference, transform):
         from SlicerBoneImagingToolboxLib.masks import resample_mask
@@ -698,8 +676,9 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             moving_mask=moving_mask,
         )
 
-    def _build_registered_common_regions(self, output_root, rows, *, progress_callback=None):
+    def _build_registered_common_regions(self, output_root, rows, *, dataset_root=None, progress_callback=None):
         from SlicerBoneImagingToolboxLib.common_region import CommonRegionSession, build_common_scan_region
+        from SlicerBoneImagingToolboxLib.derivatives import DerivativeManifest, DerivativeRecord, write_manifest
         from timelapsedhrpqct.utils.session_ids import session_sort_key
         from timelapsedhrpqct.processing.transform_chain import (
             PairwiseTransform,
@@ -708,6 +687,8 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         )
 
         generated = []
+        dataset_root = Path(str(dataset_root)).expanduser() if dataset_root is not None else Path(str(output_root)).expanduser()
+        common_records = []
         groups = {}
         for row in rows:
             if row.get("status") == "Ready":
@@ -729,35 +710,50 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             previous_image = baseline_image
             previous_full = self._read_registered_series_image(previous["full_path"], role="full")
             for row in ordered[1:]:
-                self._registered_progress(
-                    progress_callback,
-                    f"[registered] registering sub-{row['subject_id']} ses-{row['session_id']} "
-                    f"to ses-{previous['session_id']}",
-                )
-                image = self._read_registered_series_image(row["image_path"], role="image")
-                full = self._read_registered_series_image(row["full_path"], role="full")
-                result = self._register_to_baseline(
-                    fixed_image=previous_image,
-                    moving_image=image,
-                    fixed_mask=previous_full,
-                    moving_mask=full,
-                )
-                pairwise_transform = flatten_transform(result.transform)
-                pairwise_path = self._registered_pairwise_transform_path(output_root, row, previous)
-                pairwise_path.parent.mkdir(parents=True, exist_ok=True)
-                sitk.WriteTransform(pairwise_transform, str(pairwise_path))
+                shared_pairwise_path = self._shared_timelapsed_pairwise_transform_path(dataset_root, row, previous)
+                pairwise_transform = self._read_existing_registered_transform(shared_pairwise_path)
+                if pairwise_transform is not None:
+                    pairwise_transform = flatten_transform(pairwise_transform)
+                    pairwise_path = shared_pairwise_path
+                    source = "reused_registration"
+                    self._registered_progress(
+                        progress_callback,
+                        f"[registered] reusing registration sub-{row['subject_id']} ses-{row['session_id']} "
+                        f"to ses-{previous['session_id']}",
+                    )
+                    image = None
+                    full = None
+                else:
+                    self._registered_progress(
+                        progress_callback,
+                        f"[registered] registering sub-{row['subject_id']} ses-{row['session_id']} "
+                        f"to ses-{previous['session_id']}",
+                    )
+                    image = self._read_registered_series_image(row["image_path"], role="image")
+                    full = self._read_registered_series_image(row["full_path"], role="full")
+                    result = self._register_to_baseline(
+                        fixed_image=previous_image,
+                        moving_image=image,
+                        fixed_mask=previous_full,
+                        moving_mask=full,
+                    )
+                    pairwise_transform = flatten_transform(result.transform)
+                    pairwise_path = self._shared_timelapsed_pairwise_transform_path(dataset_root, row, previous)
+                    pairwise_path.parent.mkdir(parents=True, exist_ok=True)
+                    sitk.WriteTransform(pairwise_transform, str(pairwise_path))
+                    source = "registration"
                 generated.append(
                     {
                         "session": row["session_id"],
                         "role": "transform_pairwise",
                         "path": str(pairwise_path),
-                        "source": "registration",
+                        "source": source,
                     }
                 )
                 pairwise.append(PairwiseTransform(session_id=row["session_id"], transform=pairwise_transform))
                 previous = row
-                previous_image = image
-                previous_full = full
+                previous_image = image if image is not None else self._read_registered_series_image(row["image_path"], role="image")
+                previous_full = full if full is not None else self._read_registered_series_image(row["full_path"], role="full")
 
             identity = sitk.Transform(3, sitk.sitkIdentity)
             baseline_transforms = compose_sequential_to_baseline(
@@ -768,15 +764,23 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             transforms = {item.session_id: item.transform for item in baseline_transforms}
             transforms[baseline["session_id"]] = transforms.get(baseline["session_id"], identity)
             for row in ordered:
-                transform_path = self._registered_transform_path(output_root, row, baseline)
-                transform_path.parent.mkdir(parents=True, exist_ok=True)
-                sitk.WriteTransform(flatten_transform(transforms[row["session_id"]]), str(transform_path))
+                shared_baseline_path = self._shared_timelapsed_baseline_transform_path(dataset_root, row, baseline)
+                shared_baseline_transform = self._read_existing_registered_transform(shared_baseline_path)
+                if shared_baseline_transform is not None:
+                    transforms[row["session_id"]] = flatten_transform(shared_baseline_transform)
+                    transform_path = shared_baseline_path
+                    source = "reused_registration"
+                else:
+                    transform_path = self._shared_timelapsed_baseline_transform_path(dataset_root, row, baseline)
+                    transform_path.parent.mkdir(parents=True, exist_ok=True)
+                    sitk.WriteTransform(flatten_transform(transforms[row["session_id"]]), str(transform_path))
+                    source = "registration"
                 generated.append(
                     {
                         "session": row["session_id"],
                         "role": "transform_composed",
                         "path": str(transform_path),
-                        "source": "registration",
+                        "source": source,
                     }
                 )
 
@@ -805,15 +809,29 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             common_scan_region = common_region.common_mask
 
             self._registered_progress(progress_callback, "[registered] writing scan-region common-space mask")
-            common_path = self._registered_common_mask_path(output_root, baseline, "scan-region")
-            common_path.parent.mkdir(parents=True, exist_ok=True)
-            sitk.WriteImage(common_scan_region, str(common_path))
+            shared_common_path = self._shared_common_region_common_mask_path(dataset_root, baseline)
+            shared_common_path.parent.mkdir(parents=True, exist_ok=True)
+            sitk.WriteImage(common_scan_region, str(shared_common_path))
+            common_records.append(
+                DerivativeRecord(
+                    derivative="CommonRegion",
+                    role="scan_region_common",
+                    subject_id=str(baseline["subject_id"]),
+                    site=str(baseline["site"]),
+                    session_id=str(baseline["session_id"]),
+                    stack_index=int(baseline.get("stack_index", 1)),
+                    space="reference",
+                    path=str(shared_common_path),
+                    source="generated",
+                    metadata={"reference_session_id": str(baseline["session_id"]), "producer": "BoneMicroarchitecture"},
+                )
+            )
             generated.append(
                 {
                     "session": baseline["session_id"],
                     "role": "scan_region_common",
-                    "path": str(common_path),
-                    "source": "common_space",
+                    "path": str(shared_common_path),
+                    "source": "CommonRegion",
                 }
             )
 
@@ -823,19 +841,45 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                     f"[registered] returning common scan region to native space for sub-{row['subject_id']} ses-{row['session_id']}",
                 )
                 native_common = common_region.native_masks[row["session_id"]]
-                path = self._registered_common_session_mask_path(output_root, row, "scan-region")
-                path.parent.mkdir(parents=True, exist_ok=True)
-                sitk.WriteImage(native_common, str(path))
-                row["native_common_scan_region_path"] = str(path)
+                shared_native_path = self._shared_common_region_native_mask_path(dataset_root, row)
+                shared_native_path.parent.mkdir(parents=True, exist_ok=True)
+                sitk.WriteImage(native_common, str(shared_native_path))
+                row["native_common_scan_region_path"] = str(shared_native_path)
+                common_records.append(
+                    DerivativeRecord(
+                        derivative="CommonRegion",
+                        role="scan_region_native_common",
+                        subject_id=str(row["subject_id"]),
+                        site=str(row["site"]),
+                        session_id=str(row["session_id"]),
+                        stack_index=int(row.get("stack_index", 1)),
+                        space="native",
+                        path=str(shared_native_path),
+                        source="generated",
+                        metadata={"reference_session_id": str(baseline["session_id"]), "producer": "BoneMicroarchitecture"},
+                    )
+                )
                 generated.append(
                     {
                         "session": row["session_id"],
                         "role": "scan_region_native_common",
-                        "path": str(path),
-                        "source": "native_common",
+                        "path": str(shared_native_path),
+                        "source": "CommonRegion",
                     }
                 )
                 row["measurement_space"] = "native_image_space_common_region"
+        if common_records:
+            common_root = self._shared_common_region_root(dataset_root)
+            write_manifest(
+                common_root / "manifest.json",
+                DerivativeManifest(
+                    workflow="CommonRegion",
+                    version=MODULE_VERSION,
+                    dataset_root=str(dataset_root),
+                    records=common_records,
+                    metadata={"module": "BoneMicroarchitecture", "producer": "registered_microarchitecture"},
+                ),
+            )
         return generated
 
     def _read_registered_series_image(self, path, *, role):
@@ -1343,12 +1387,12 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
 
                 common_region = self._volume_to_sitk_uint8(
                     common_region_node,
-                    "common scan region mask",
+                    "analysis mask",
                     selected_segment_id=common_region_segment_id,
                     reference_node=reference_node,
                 )
                 if common_region.GetSize() != trab_seg.GetSize():
-                    raise ValueError("Common scan region mask size must match the selected masks.")
+                    raise ValueError("Analysis mask size must match the selected masks.")
                 bone_seg = clip_mask_to_region(bone_seg, common_region)
                 peri_mask = clip_mask_to_region(peri_mask, common_region)
                 trab_seg = clip_mask_to_region(trab_seg, common_region)
@@ -1397,8 +1441,8 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             table_node.SetAttribute("BoneImaging.Microarchitecture.ThicknessMethod", str(core_result.metadata.get("thickness_method", thickness_method)))
             table_node.SetAttribute("BoneImaging.Microarchitecture.ThicknessBackend", str(core_result.metadata.get("thickness_backend", thickness_backend)))
             if common_region_node is not None:
-                table_node.SetAttribute("BoneImaging.Microarchitecture.CommonRegionNode", common_region_node.GetID())
-                table_node.SetAttribute("BoneImaging.Microarchitecture.CommonRegionName", common_region_node.GetName())
+                table_node.SetAttribute("BoneImaging.Microarchitecture.AnalysisMaskNode", common_region_node.GetID())
+                table_node.SetAttribute("BoneImaging.Microarchitecture.AnalysisMaskName", common_region_node.GetName())
             for key, value in provenance_metadata.items():
                 table_node.SetAttribute(f"BoneImaging.Microarchitecture.{key}", str(value))
 
@@ -1435,6 +1479,9 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._lastMetrics = None
         self._lastMaps = None
         self._lastTableNode = None
+        self._lastMeasurementColumns = []
+        self._lastMeasurementRows = []
+        self._lastFilteredTableNode = None
         self._lastRegisteredRows = []
         self._allRegisteredRows = []
 
@@ -1506,23 +1553,29 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         )
         self.commonRegionMaskSelector, self.commonRegionSegmentCombo = self._mask_selector_row(
             form,
-            "Common scan region mask",
-            "common scan region mask",
-            "Optional registered scan/FOV common-region mask used to constrain all selected analysis masks.",
+            "Analysis mask",
+            "analysis mask",
+            "Optional mask used to constrain all selected microarchitecture analysis regions.",
         )
 
-        self.imageUnitsCombo = qt.QComboBox()
-        for label, value in [("BMD", "bmd"), ("HU", "hu"), ("Scanco native", "scanco"), ("Attenuation", "attenuation")]:
-            self.imageUnitsCombo.addItem(label, value)
-        self._tip(self.imageUnitsCombo, "Units of the optional grayscale/BMD image for BMD conversion.")
-        form.addRow("Image units", self.imageUnitsCombo)
-
         calibration = ctk.ctkCollapsibleButton()
-        calibration.text = "BMD Calibration"
+        calibration.text = "Grayscale Calibration"
         calibration.collapsed = True
         single_layout.addWidget(calibration)
         calibration_form = qt.QFormLayout(calibration)
 
+        self.imageUnitsCombo = qt.QComboBox()
+        for label, value in [
+            ("Auto / already calibrated", "bmd"),
+            ("HU", "hu"),
+            ("Scanco native", "scanco"),
+            ("Attenuation", "attenuation"),
+        ]:
+            self.imageUnitsCombo.addItem(label, value)
+        self._tip(
+            self.imageUnitsCombo,
+            "Advanced override for BMD conversion. AIM images are read with AIMIO density scaling when source metadata is available.",
+        )
         self.muScalingSpin = self._double_spin(1, 100000, 1, 8192)
         self.muWaterSpin = self._double_spin(0, 10, 4, 0.2409)
         self.rescaleSlopeSpin = self._double_spin(-100000, 100000, 4, 1603.51904)
@@ -1531,6 +1584,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._tip(self.muWaterSpin, "mu_water value for HU to BMD conversion.")
         self._tip(self.rescaleSlopeSpin, "rescale_slope value for BMD conversion.")
         self._tip(self.rescaleInterceptSpin, "rescale_intercept value for BMD conversion.")
+        calibration_form.addRow("Calibration source", self.imageUnitsCombo)
         calibration_form.addRow("mu_scaling", self.muScalingSpin)
         calibration_form.addRow("mu_water", self.muWaterSpin)
         calibration_form.addRow("rescale_slope", self.rescaleSlopeSpin)
@@ -1581,6 +1635,20 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         )
         form.addRow(self.runButton)
 
+        filter_widget = qt.QWidget()
+        filter_layout = qt.QHBoxLayout(filter_widget)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        self.measurementFilterEdit = qt.QLineEdit()
+        self.measurementFilterEdit.placeholderText = "Filter rows, e.g. Tb.BMD or cortical"
+        self.measurementFilterEdit.textChanged.connect(self._apply_measurement_filter)
+        self._tip(self.measurementFilterEdit, "Filter the current measurement table by parameter, compartment, statistic, units, or any visible value.")
+        self.clearMeasurementFilterButton = qt.QPushButton("Clear")
+        self.clearMeasurementFilterButton.clicked.connect(self.measurementFilterEdit.clear)
+        self._tip(self.clearMeasurementFilterButton, "Clear the measurement table filter.")
+        filter_layout.addWidget(self.measurementFilterEdit)
+        filter_layout.addWidget(self.clearMeasurementFilterButton)
+        form.addRow("Filter results", filter_widget)
+
         self.exportCsvButton = qt.QPushButton("Export measurements CSV")
         self.exportCsvButton.enabled = False
         self.exportCsvButton.clicked.connect(self._export_measurements_csv)
@@ -1594,74 +1662,132 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         single_layout.addWidget(self.logText)
         single_layout.addStretch(1)
 
-        series_tab = qt.QWidget()
-        series_layout = qt.QVBoxLayout(series_tab)
-        self._setup_registered_series_tab(series_layout)
-
         batch_tab = qt.QWidget()
         batch_layout = qt.QVBoxLayout(batch_tab)
+        self._folderBatchGroups = []
+        self._folderBatchQueue = []
+        self._folderBatchCurrent = None
+        self._folderBatchProcess = None
         discovery_box = qt.QGroupBox("Discovery")
         discovery_form = qt.QFormLayout(discovery_box)
         batch_layout.addWidget(discovery_box)
         self.folderDatasetRootEdit = qt.QLineEdit()
-        self.folderSubjectEdit = qt.QLineEdit()
-        self.folderSiteEdit = qt.QLineEdit()
+        self.folderBrowseDatasetButton = qt.QPushButton("Browse")
+        self.folderBrowseDatasetButton.clicked.connect(self._browse_folder_dataset_root)
         self.folderDiscoverButton = qt.QPushButton("Discover")
         self.folderBatchTable = qt.QTableWidget()
-        self.folderBatchTable.setColumnCount(3)
-        self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])
+        self._configure_folder_batch_table_for_mode()
         self.folderBatchTable.minimumHeight = 160
         try:
-            self.folderBatchTable.horizontalHeader().setStretchLastSection(True)
+            self.folderBatchTable.horizontalHeader().setStretchLastSection(False)
             self.folderBatchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
         except Exception:
             pass
         self.folderDiscoverButton.clicked.connect(self._discover_folder_batch_groups)
-        discovery_form.addRow("Dataset root", self.folderDatasetRootEdit)
-        discovery_form.addRow("Subject filter", self.folderSubjectEdit)
-        discovery_form.addRow("Site filter", self.folderSiteEdit)
+        folder_root_row = qt.QWidget()
+        folder_root_layout = qt.QHBoxLayout(folder_root_row)
+        folder_root_layout.setContentsMargins(0, 0, 0, 0)
+        folder_root_layout.addWidget(self.folderDatasetRootEdit, 1)
+        folder_root_layout.addWidget(self.folderBrowseDatasetButton)
+        discovery_form.addRow("Dataset root", folder_root_row)
         discovery_form.addRow("", self.folderDiscoverButton)
         batch_layout.addWidget(self.folderBatchTable)
 
         workflow_box = qt.QGroupBox("Workflow")
         workflow_form = qt.QFormLayout(workflow_box)
         batch_layout.addWidget(workflow_box)
-        self.folderUseCommonRegionCheck = qt.QCheckBox()
-        self.folderUseCommonRegionCheck.checked = True
-        self.folderForceCheck = qt.QCheckBox()
-        self.folderRunButton = qt.QPushButton("Run Batch")
+        self.folderRegisteredCheck = qt.QCheckBox()
+        self.folderRegisteredCheck.checked = False
+        self.folderRegisteredCheck.toggled.connect(self._update_folder_registered_options)
+        self.folderRegisteredCheck.toggled.connect(self._discover_folder_batch_groups)
+        self.folderRegisteredWorkflowCombo = qt.QComboBox()
+        self.folderRegisteredWorkflowCombo.addItem("Measure microarchitecture", "measure")
+        self.folderRegisteredWorkflowCombo.addItem("Prepare common region only", "common_region_only")
+        self._tip(
+            self.folderRegisteredWorkflowCombo,
+            "For registered series, either run microarchitecture after preparing shared Registration/CommonRegion derivatives, or stop after preparing the common region.",
+        )
+        self.folderSkipExistingCheck = qt.QCheckBox()
+        self.folderSkipExistingCheck.checked = True
+        self.folderRunButton = qt.QPushButton("Run all")
         self.folderBatchStatus = qt.QLabel()
         self.folderBatchStatus.wordWrap = True
         self.folderRunButton.clicked.connect(self._run_folder_batch)
-        workflow_form.addRow("Use common region", self.folderUseCommonRegionCheck)
-        workflow_form.addRow("Force recompute", self.folderForceCheck)
+        workflow_form.addRow("Register", self.folderRegisteredCheck)
+        workflow_form.addRow("Registered workflow", self.folderRegisteredWorkflowCombo)
+        workflow_form.addRow("Skip existing", self.folderSkipExistingCheck)
+
+        batch_thickness_row = qt.QWidget()
+        batch_thickness_layout = qt.QHBoxLayout(batch_thickness_row)
+        batch_thickness_layout.setContentsMargins(0, 0, 0, 0)
+        self.folderThicknessMethodCombo = qt.QComboBox()
+        for label, value in [("Exact sphere fitting", "hildebrand"), ("Bounded EDT", "edt")]:
+            self.folderThicknessMethodCombo.addItem(label, value)
+        self.folderThicknessBackendCombo = qt.QComboBox()
+        for label, value in [("Auto", "auto"), ("CPU", "cpu"), ("Apple MPS (macOS)", "mps"), ("OpenCL GPU", "opencl")]:
+            self.folderThicknessBackendCombo.addItem(label, value)
+        batch_thickness_layout.addWidget(qt.QLabel("Method"))
+        batch_thickness_layout.addWidget(self.folderThicknessMethodCombo)
+        batch_thickness_layout.addWidget(qt.QLabel("Backend"))
+        batch_thickness_layout.addWidget(self.folderThicknessBackendCombo)
+        workflow_form.addRow("Thickness", batch_thickness_row)
         workflow_form.addRow(self.folderRunButton)
+        self._update_folder_registered_options()
         batch_layout.addWidget(self.folderBatchStatus)
+        self.folderBatchLogText = qt.QTextEdit()
+        self.folderBatchLogText.readOnly = True
+        self.folderBatchLogText.minimumHeight = 110
+        self.folderBatchLogText.placeholderText = "Batch log"
+        batch_layout.addWidget(self.folderBatchLogText)
         batch_layout.addStretch(1)
 
         self.modeTabs.addTab(single_tab, "Scene")
-        self.modeTabs.addTab(series_tab, "Registered Series")
         self.modeTabs.addTab(batch_tab, "Batch")
         self.layout.addStretch(1)
         self._update_dependency_ui()
 
     def _run_folder_batch(self):
-        self.folderRunButton.enabled = False
-        self.folderBatchStatus.text = "Microarchitecture batch is running in the background."
-        self.logic.run_folder_batch_job(
-            self.folderDatasetRootEdit.text,
-            subject_id=self.folderSubjectEdit.text,
-            site=self.folderSiteEdit.text,
-            use_common_region=bool(self.folderUseCommonRegionCheck.checked),
-            force=bool(self.folderForceCheck.checked),
-            thickness_method=str(self.thicknessMethodCombo.currentData),
-            thickness_backend=str(self.thicknessBackendCombo.currentData),
-            on_finished=self._on_folder_batch_finished,
-        )
+        if not self._folderBatchGroups:
+            self._discover_folder_batch_groups()
+        for row_index in range(len(self._folderBatchGroups)):
+            self._queue_folder_batch_row(row_index)
 
     def _on_folder_batch_finished(self, exit_code, _exit_status):
         self.folderRunButton.enabled = True
         self.folderBatchStatus.text = f"Microarchitecture batch finished with exit code {int(exit_code)}."
+
+    def _update_folder_registered_options(self, *args):
+        del args
+        registered = bool(getattr(self, "folderRegisteredCheck", None) and self.folderRegisteredCheck.checked)
+        if hasattr(self, "folderRegisteredWorkflowCombo"):
+            self.folderRegisteredWorkflowCombo.enabled = registered
+        self._configure_folder_batch_table_for_mode()
+
+    def _configure_folder_batch_table_for_mode(self):
+        if bool(getattr(self, "folderRegisteredCheck", None) and self.folderRegisteredCheck.checked):
+            headers = ["Action", "Subject", "Site", "Sessions", "Status"]
+        else:
+            headers = ["Action", "Image", "Subject", "Site", "Session", "Status"]
+        self.folderBatchTable.setColumnCount(len(headers))
+        self.folderBatchTable.setHorizontalHeaderLabels(headers)
+
+    def _is_folder_batch_image_path(self, path):
+        name = path.name.lower()
+        if any(token in name for token in ("_mask-", "_seg", "_map", "manifest", "measurements", "slicer_run_config")):
+            return False
+        if name.endswith((".nii", ".nii.gz", ".nrrd", ".mha", ".mhd")):
+            return True
+        upper = path.name.upper()
+        return upper.startswith("ISQ") or ".AIM" in upper
+
+    def _browse_folder_dataset_root(self):
+        path = qt.QFileDialog.getExistingDirectory(
+            slicer.util.mainWindow(),
+            "Select dataset root",
+            self.folderDatasetRootEdit.text,
+        )
+        if path:
+            self.folderDatasetRootEdit.text = str(path)
 
     def _discover_folder_batch_groups(self):
         root_text = str(self.folderDatasetRootEdit.text or "").strip()
@@ -1669,16 +1795,50 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             self.folderBatchStatus.text = "Select a dataset root before discovery."
             return
         root = Path(root_text).expanduser()
-        subject_filter = str(self.folderSubjectEdit.text or "").strip()
-        site_filter = str(self.folderSiteEdit.text or "").strip()
+        subject_filter = ""
+        site_filter = ""
+        self._configure_folder_batch_table_for_mode()
         groups = {}
+        registered = bool(self.folderRegisteredCheck.checked)
         try:
-            rows = self.logic.discover_registered_series(root, subject_filter=subject_filter, site_filter=site_filter)
-            for row in rows:
-                key = (str(row.get("subject_id", "")), str(row.get("site", "")))
-                groups.setdefault(key, set()).add(str(row.get("session_id", "")))
+            if registered:
+                rows = self.logic.discover_registered_series(root, subject_filter=subject_filter, site_filter=site_filter)
+                for row in rows:
+                    key = (str(row.get("subject_id", "")), str(row.get("site", "")), int(row.get("stack_index", 1)))
+                    group = groups.setdefault(
+                        key,
+                        {
+                            "subject": str(row.get("subject_id", "")),
+                            "site": str(row.get("site", "")),
+                            "stack_index": int(row.get("stack_index", 1)),
+                            "sessions": set(),
+                            "rows": [],
+                            "status": "Ready",
+                            "mode": "registered",
+                        },
+                    )
+                    group["sessions"].add(str(row.get("session_id", "")))
+                    group["rows"].append(row)
+                    if row.get("status") != "Ready":
+                        group["status"] = "Missing inputs"
+            else:
+                rows = self.logic.discover_independent_cases(root, subject_filter=subject_filter, site_filter=site_filter)
+                for row_index, row in enumerate(rows):
+                    key = (str(row.get("subject_id", "")), str(row.get("site", "")), str(row.get("session_id", "")), int(row.get("stack_index", 1)), row_index)
+                    groups[key] = {
+                        "image": str(row.get("image_path", "")),
+                        "subject": str(row.get("subject_id", "")),
+                        "site": str(row.get("site", "")),
+                        "session": str(row.get("session_id", "")),
+                        "stack_index": int(row.get("stack_index", 1)),
+                        "rows": [row],
+                        "status": str(row.get("status", "Discovered")),
+                        "mode": "independent",
+                    }
         except Exception:
-            for path in root.rglob("*"):
+            for path in root.iterdir():
+                if not path.is_file() or not self._is_folder_batch_image_path(path):
+                    continue
                 name = path.name
                 if "sub-" not in name or "site-" not in name:
                     continue
@@ -1694,135 +1854,272 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
                 if site_filter and site != site_filter:
                     continue
                 if subject or site:
-                    groups.setdefault((subject, site), set())
-        self.folderBatchTable.setRowCount(len(groups))
-        for row_index, ((subject, site), sessions) in enumerate(sorted(groups.items())):
-            for column, value in enumerate([subject, site, ", ".join(sorted(s for s in sessions if s))]):
+                    key = (subject, site, 1)
+                    groups.setdefault(
+                        key,
+                        {"image": str(path), "subject": subject, "site": site, "session": "", "stack_index": 1, "sessions": set(), "rows": [], "status": "Discovered", "mode": "independent"},
+                    )
+        self._folderBatchGroups = sorted(groups.values(), key=lambda item: (item["subject"], item["site"], item["stack_index"]))
+        self.folderBatchTable.setRowCount(len(self._folderBatchGroups))
+        for row_index, group in enumerate(self._folderBatchGroups):
+            result_path = self._folder_result_path_for_group(root, group)
+            if result_path is not None:
+                group["result_path"] = str(result_path)
+                group["status"] = "Done"
+            if registered:
+                sessions = ", ".join(sorted(s for s in group.get("sessions", set()) if s))
+                values = [group.get("subject", ""), group.get("site", ""), sessions, group.get("status", "Discovered")]
+            else:
+                image_name = Path(str(group.get("image", ""))).name if group.get("image") else ""
+                values = [image_name, group.get("subject", ""), group.get("site", ""), group.get("session", ""), group.get("status", "Discovered")]
+            for column, value in enumerate(values, start=1):
                 item = qt.QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
                 self.folderBatchTable.setItem(row_index, column, item)
+            if group.get("result_path"):
+                self._set_folder_group_action(row_index, "Load")
+            else:
+                self._set_folder_group_action(row_index, "Run")
         try:
             self.folderBatchTable.resizeColumnsToContents()
         except Exception:
             pass
-        self.folderBatchStatus.text = f"Discovered {len(groups)} subject/site group(s). Run Batch processes the package batch workflow for the selected dataset root."
+        mode = "registered series" if registered else "independent case"
+        self.folderBatchStatus.text = f"Discovered {len(self._folderBatchGroups)} {mode} group(s)."
 
-    def _setup_registered_series_tab(self, layout):
-        box = ctk.ctkCollapsibleButton()
-        box.text = "RegisteredMicroarchitecture"
-        layout.addWidget(box)
-        form = qt.QFormLayout(box)
+    def _set_folder_group_status(self, row_index, status):
+        if row_index is None:
+            self.folderBatchStatus.text = str(status)
+            return
+        if 0 <= int(row_index) < self._table_count(self.folderBatchTable, "rowCount"):
+            item = qt.QTableWidgetItem(str(status))
+            item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+            status_column = self._table_count(self.folderBatchTable, "columnCount") - 1
+            self.folderBatchTable.setItem(int(row_index), status_column, item)
 
-        self.seriesDatasetRootEdit = qt.QLineEdit()
-        self.seriesOutputRootEdit = qt.QLineEdit()
-        self.seriesSubjectCombo = qt.QComboBox()
-        self.seriesSiteCombo = qt.QComboBox()
-        self.seriesSubjectCombo.addItem("All subjects", "")
-        self.seriesSiteCombo.addItem("All sites", "")
-        self._tip(
-            self.seriesDatasetRootEdit,
-            "Dataset root discovered with Timelapsed HR-pQCT filename and header conventions.",
-        )
-        self._tip(
-            self.seriesOutputRootEdit,
-            "Output folder. Defaults to RegisteredMicroarchitecture under the dataset root.",
-        )
-        self.seriesDatasetRootEdit.textChanged.connect(self._update_registered_output_default)
+    @staticmethod
+    def _table_count(table, attribute):
+        value = getattr(table, attribute)
+        return int(value() if callable(value) else value)
 
-        dataset_row = qt.QWidget()
-        dataset_layout = qt.QHBoxLayout(dataset_row)
-        dataset_layout.setContentsMargins(0, 0, 0, 0)
-        dataset_layout.addWidget(self.seriesDatasetRootEdit, 1)
-        browse_dataset = qt.QPushButton("Browse")
-        browse_dataset.clicked.connect(self._browse_series_dataset_root)
-        dataset_layout.addWidget(browse_dataset)
-        form.addRow("Dataset root", dataset_row)
+    def _set_folder_group_action(self, row_index, action):
+        if isinstance(action, qt.QPushButton):
+            button = action
+        else:
+            button = qt.QPushButton(str(action))
+        text = button.text
+        label = str(text() if callable(text) else text)
+        if label == "Load":
+            button.clicked.connect(lambda _checked=False, index=row_index: self._load_folder_batch_outputs(index))
+        elif label in {"Running", "Queued"}:
+            button.enabled = False
+        else:
+            button.clicked.connect(lambda _checked=False, index=row_index: self._queue_folder_batch_row(index))
+        self.folderBatchTable.setCellWidget(int(row_index), 0, button)
 
-        output_row = qt.QWidget()
-        output_layout = qt.QHBoxLayout(output_row)
-        output_layout.setContentsMargins(0, 0, 0, 0)
-        output_layout.addWidget(self.seriesOutputRootEdit, 1)
-        browse_output = qt.QPushButton("Browse")
-        browse_output.clicked.connect(self._browse_series_output_root)
-        output_layout.addWidget(browse_output)
-        form.addRow("Output root", output_row)
+    def _folder_result_path_for_group(self, root, group, existing_only=True):
+        group = dict(group or {})
+        if group.get("mode") == "registered":
+            result_path = str(group.get("result_path") or "").strip()
+            return Path(result_path).expanduser() if result_path else None
+        subject = str(group.get("subject") or "unknown").strip() or "unknown"
+        site = str(group.get("site") or "unknown").strip() or "unknown"
+        session = str(group.get("session") or "unknown").strip() or "unknown"
+        root = Path(str(root)).expanduser()
+        candidates = []
+        for session_part in self._folder_result_session_parts(session):
+            for family_root in (
+                root / "derivatives" / "Microarchitecture",
+                root / "Microarchitecture",
+            ):
+                candidates.append(
+                    family_root
+                    / f"sub-{subject}"
+                    / f"site-{site}"
+                    / "native_space"
+                    / session_part
+                    / "measurements"
+                    / f"sub-{subject}_{session_part}_site-{site}_measurements.csv"
+                )
+        existing = next((path for path in candidates if path.exists()), None)
+        if existing is not None or existing_only:
+            return existing
+        return candidates[0]
 
-        self.discoverSeriesButton = qt.QPushButton("Discover series")
-        self.discoverSeriesButton.clicked.connect(self._discover_registered_series)
-        form.addRow(self.discoverSeriesButton)
+    def _folder_result_session_parts(self, session):
+        value = str(session or "unknown").strip() or "unknown"
+        bare = value[4:] if value.lower().startswith("ses-") else value
+        variants = []
+        for candidate in (bare, bare.upper(), f"Y{bare}", f"Y{bare.lstrip('0') or '0'}"):
+            session_part = candidate if str(candidate).lower().startswith("ses-") else f"ses-{candidate}"
+            if session_part not in variants:
+                variants.append(session_part)
+        return variants
 
-        self.seriesSubjectCombo.currentIndexChanged.connect(self._refresh_registered_series_table)
-        self.seriesSiteCombo.currentIndexChanged.connect(self._refresh_registered_series_table)
-        form.addRow("Subject", self.seriesSubjectCombo)
-        form.addRow("Site", self.seriesSiteCombo)
+    def _queue_folder_batch_row(self, row_index):
+        if row_index is None:
+            return
+        group = self._folderBatchGroups[int(row_index)]
+        if group.get("result_path") and Path(str(group.get("result_path"))).expanduser().exists():
+            self._set_folder_group_action(row_index, "Load")
+            self._set_folder_group_status(row_index, "Done")
+            return
+        if bool(self.folderRegisteredCheck.checked):
+            if len(group.get("rows", [])) < 2 or group.get("status") != "Ready":
+                self._set_folder_group_status(row_index, "Missing inputs")
+                self.folderBatchStatus.text = "Registered series needs at least two ready sessions with image, segmentation, full, trab, and cort masks."
+                return
+            queued = {"mode": "registered", "row_index": int(row_index), "group": group}
+        else:
+            if group.get("status") != "Ready":
+                self._set_folder_group_status(row_index, str(group.get("status") or "Missing masks"))
+                self.folderBatchStatus.text = "Microarchitecture batch row is missing required masks. Prepare segmentation, full/periosteal, and trabecular masks before running."
+                return
+            queued = {"mode": "independent", "row_index": int(row_index), "group": group}
+        if not any(job.get("row_index") == int(row_index) for job in self._folderBatchQueue):
+            self._folderBatchQueue.append(queued)
+            self._set_folder_group_status(row_index, "Queued")
+            self._set_folder_group_action(row_index, "Running" if self._folderBatchCurrent and self._folderBatchCurrent.get("row_index") == int(row_index) else "Queued")
+        self._start_next_folder_batch_job()
 
-        missing_masks_row = qt.QWidget()
-        missing_masks_layout = qt.QHBoxLayout(missing_masks_row)
-        missing_masks_layout.setContentsMargins(0, 0, 0, 0)
-        self.seriesSegmentationMethodCombo = qt.QComboBox()
-        for value, descriptor in BONE_SEGMENTATION_METHODS.items():
-            self.seriesSegmentationMethodCombo.addItem(descriptor.label, value)
-        self.seriesPeriostealContourCombo = qt.QComboBox()
-        for value, descriptor in PERIOSTEAL_CONTOUR_METHODS.items():
-            self.seriesPeriostealContourCombo.addItem(descriptor.label, value)
-        self.seriesEndostealContourCombo = qt.QComboBox()
-        for value, descriptor in ENDOSTEAL_CONTOUR_METHODS.items():
-            self.seriesEndostealContourCombo.addItem(descriptor.label, value)
-        missing_masks_layout.addWidget(qt.QLabel("Bone"))
-        missing_masks_layout.addWidget(self.seriesSegmentationMethodCombo)
-        missing_masks_layout.addWidget(qt.QLabel("Peri"))
-        missing_masks_layout.addWidget(self.seriesPeriostealContourCombo)
-        missing_masks_layout.addWidget(qt.QLabel("Endo"))
-        missing_masks_layout.addWidget(self.seriesEndostealContourCombo)
-        self._tip(
-            missing_masks_row,
-            "Methods used by Prepare to create missing segmentation, full, trabecular, or cortical masks. "
-            "Masks that can be derived from existing compartments are derived first.",
-        )
-        form.addRow("Missing masks", missing_masks_row)
+    def _start_next_folder_batch_job(self):
+        if self._folderBatchCurrent is not None or not self._folderBatchQueue:
+            return
+        job = self._folderBatchQueue.pop(0)
+        self._folderBatchCurrent = job
+        row_index = job["row_index"]
+        self._set_folder_group_status(row_index, "Running")
+        self._set_folder_group_action(row_index, "Running")
+        self.folderRunButton.enabled = False
+        try:
+            dataset_root = str(self.folderDatasetRootEdit.text or "").strip()
+            output_root = dataset_root
+            if job.get("mode") == "independent":
+                job["result_path"] = self._folder_result_path_for_group(dataset_root, job["group"], existing_only=False)
+                self._folderBatchProcess = self.logic.run_folder_batch_job(
+                    dataset_root,
+                    subject_id=str(job["group"].get("subject", "")),
+                    site=str(job["group"].get("site", "")),
+                    session_id=str(job["group"].get("session", "")),
+                    use_common_region=True,
+                    force=not bool(self.folderSkipExistingCheck.checked),
+                    thickness_method=str(self.folderThicknessMethodCombo.currentData),
+                    thickness_backend=str(self.folderThicknessBackendCombo.currentData),
+                    on_output=self._series_log,
+                    on_finished=self._on_folder_batch_job_finished,
+                )
+            else:
+                job_path, result_path = self._write_registered_series_job_for_rows(
+                    job["group"]["rows"],
+                    dataset_root=dataset_root,
+                    output_root=output_root,
+                )
+                job["result_path"] = result_path
+                self._folderBatchProcess = self.logic.run_registered_series_job(
+                    job_path,
+                    on_output=self._series_log,
+                    on_finished=self._on_folder_batch_job_finished,
+                )
+        except Exception as exc:
+            self._set_folder_group_status(row_index, "Failed")
+            self._set_folder_group_action(row_index, "Run")
+            self._folderBatchCurrent = None
+            self.folderBatchStatus.text = f"Registered batch row failed to start: {exc}"
+            self._start_next_folder_batch_job()
 
-        settings_row = qt.QWidget()
-        settings_layout = qt.QHBoxLayout(settings_row)
-        settings_layout.setContentsMargins(0, 0, 0, 0)
-        self.seriesThicknessMethodCombo = qt.QComboBox()
-        for label, value in [("Exact sphere fitting", "hildebrand"), ("Bounded EDT", "edt")]:
-            self.seriesThicknessMethodCombo.addItem(label, value)
-        self.seriesThicknessBackendCombo = qt.QComboBox()
-        for label, value in [("Auto", "auto"), ("CPU", "cpu"), ("Apple MPS (macOS)", "mps"), ("OpenCL GPU", "opencl")]:
-            self.seriesThicknessBackendCombo.addItem(label, value)
-        settings_layout.addWidget(qt.QLabel("Method"))
-        settings_layout.addWidget(self.seriesThicknessMethodCombo)
-        settings_layout.addWidget(qt.QLabel("Backend"))
-        settings_layout.addWidget(self.seriesThicknessBackendCombo)
-        form.addRow("Thickness", settings_row)
+    def _on_folder_batch_job_finished(self, exit_code, exit_status):
+        del exit_status
+        if self._folderBatchCurrent is None:
+            self._folderBatchProcess = None
+            self.folderRunButton.enabled = True
+            self.folderBatchStatus.text = f"Microarchitecture batch finished with exit code {int(exit_code)}."
+            return
+        row_index = self._folderBatchCurrent.get("row_index")
+        self._set_folder_group_status(row_index, "Done" if int(exit_code) == 0 else "Failed")
+        if int(exit_code) == 0:
+            result_path = self._folderBatchCurrent.get("result_path")
+            if result_path is None or not Path(str(result_path)).expanduser().exists():
+                result_path = self._folder_result_path_for_group(
+                    self.folderDatasetRootEdit.text,
+                    self._folderBatchCurrent["group"],
+                    existing_only=True,
+                ) or self._folder_result_path_for_group(
+                    self.folderDatasetRootEdit.text,
+                    self._folderBatchCurrent["group"],
+                    existing_only=False,
+                )
+            self._folderBatchGroups[int(row_index)]["result_path"] = str(result_path or "")
+            self._set_folder_group_action(row_index, "Load")
+        else:
+            self._set_folder_group_action(row_index, "Run")
+        self._folderBatchCurrent = None
+        self._folderBatchProcess = None
+        if self._folderBatchQueue:
+            self.folderBatchStatus.text = f"Microarchitecture batch running; {len(self._folderBatchQueue)} queued."
+            self._start_next_folder_batch_job()
+        else:
+            self.folderRunButton.enabled = True
+            self.folderBatchStatus.text = "Microarchitecture batch queue finished."
 
-        self.runRegisteredSeriesButton = qt.QPushButton("Run Registered Series")
-        self.runRegisteredSeriesButton.clicked.connect(self._run_registered_series)
-        self._tip(
-            self.runRegisteredSeriesButton,
-            "Prepare the registered workspace, derive or generate missing masks when possible, then run measurements.",
-        )
-        form.addRow(self.runRegisteredSeriesButton)
-
-        self.seriesStatusLabel = qt.QLabel()
-        self.seriesStatusLabel.wordWrap = True
-        form.addRow("Status", self.seriesStatusLabel)
-
-        self.seriesTable = qt.QTableWidget()
-        self.seriesTable.setColumnCount(9)
-        self.seriesTable.setHorizontalHeaderLabels(
-            ["Subject", "Site", "Session", "Image", "Bone seg", "Full", "Trab", "Cort", "Status"]
-        )
-        self.seriesTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
-        self.seriesTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
-        self.seriesTable.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.seriesTable)
-        self.seriesLogText = qt.QTextEdit()
-        self.seriesLogText.readOnly = True
-        self.seriesLogText.minimumHeight = 120
-        self.seriesLogText.placeholderText = "Registered series log"
-        layout.addWidget(self.seriesLogText)
-        layout.addStretch(1)
+    def _load_folder_batch_outputs(self, row_index):
+        if row_index is None or not (0 <= int(row_index) < len(self._folderBatchGroups)):
+            return
+        group = self._folderBatchGroups[int(row_index)]
+        result_path = Path(str(group.get("result_path") or "")).expanduser()
+        if not result_path.exists():
+            result_path = self._folder_result_path_for_group(self.folderDatasetRootEdit.text, group, existing_only=True)
+            if result_path is None or not result_path.exists():
+                self.folderBatchStatus.text = "No saved result is available for this batch row."
+                return
+            group["result_path"] = str(result_path)
+        try:
+            if result_path.suffix.lower() == ".csv":
+                outputs = {"long_csv": str(result_path), "session_csvs": [str(result_path)]}
+            else:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                outputs = dict(result.get("outputs", {}) or {})
+            long_csv = str(outputs.get("long_csv") or "")
+            loaded_table = None
+            if long_csv and Path(long_csv).exists():
+                loaded = slicer.util.loadTable(long_csv)
+                if isinstance(loaded, tuple):
+                    success, loaded_table = loaded
+                else:
+                    success, loaded_table = bool(loaded), loaded
+                if success and loaded_table is not None:
+                    try:
+                        loaded_table.SetName(Path(long_csv).stem)
+                    except Exception:
+                        pass
+                    self._lastTableNode = loaded_table
+                    self._cache_measurement_rows_from_table(loaded_table)
+                    self.exportCsvButton.enabled = True
+                    self._show_measurement_table(loaded_table)
+                    self._apply_measurement_filter()
+            loaded_maps = 0
+            for csv_path in outputs.get("session_csvs", []) or []:
+                maps_dir = Path(str(csv_path)).expanduser().parent.parent / "maps"
+                if not maps_dir.exists():
+                    continue
+                for map_path in sorted(maps_dir.glob("*.nii.gz")):
+                    name = f"{group.get('subject', 'microarchitecture')}_{Path(csv_path).parent.parent.name}_{map_path.name[:-7]}"
+                    try:
+                        loaded = slicer.util.loadVolume(str(map_path), {"name": name})
+                    except TypeError:
+                        loaded = slicer.util.loadVolume(str(map_path))
+                    if isinstance(loaded, tuple):
+                        success, node = loaded
+                    else:
+                        success, node = bool(loaded), loaded
+                    if success:
+                        try:
+                            node.SetName(name)
+                        except Exception:
+                            pass
+                        loaded_maps += 1
+            self.folderBatchStatus.text = f"Loaded registered measurements and {loaded_maps} map volume(s)."
+        except Exception as exc:
+            self.folderBatchStatus.text = f"Could not load registered batch outputs: {exc}"
 
     def _labelmap_selector(self):
         selector = slicer.qMRMLNodeComboBox()
@@ -1903,21 +2200,10 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self.logText.ensureCursorVisible()
 
     def _series_log(self, message):
-        self.seriesLogText.append(str(message).rstrip())
-        self.seriesLogText.ensureCursorVisible()
-
-    def _set_registered_series_running(self, running):
-        self.runRegisteredSeriesButton.enabled = not running and self.logic.is_core_available()
-        self.discoverSeriesButton.enabled = not running
-        self.seriesDatasetRootEdit.enabled = not running
-        self.seriesOutputRootEdit.enabled = not running
-        self.seriesSubjectCombo.enabled = not running
-        self.seriesSiteCombo.enabled = not running
-        self.seriesSegmentationMethodCombo.enabled = not running
-        self.seriesPeriostealContourCombo.enabled = not running
-        self.seriesEndostealContourCombo.enabled = not running
-        self.seriesThicknessMethodCombo.enabled = not running
-        self.seriesThicknessBackendCombo.enabled = not running
+        log_widget = getattr(self, "seriesLogText", None) or getattr(self, "folderBatchLogText", None)
+        if log_widget is not None:
+            log_widget.append(str(message).rstrip())
+            log_widget.ensureCursorVisible()
 
     def _with_wait_cursor(self, func):
         try:
@@ -1933,162 +2219,12 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         available, message = self.logic.core_runtime_status()
         self.statusLabel.text = message
         self.runButton.enabled = available
-        self.runRegisteredSeriesButton.enabled = available
 
-    def _browse_series_dataset_root(self):
-        path = qt.QFileDialog.getExistingDirectory(
-            slicer.util.mainWindow(),
-            "Select dataset root",
-            self.seriesDatasetRootEdit.text,
-        )
-        if path:
-            self.seriesDatasetRootEdit.text = str(path)
-
-    def _browse_series_output_root(self):
-        path = qt.QFileDialog.getExistingDirectory(
-            slicer.util.mainWindow(),
-            "Select RegisteredMicroarchitecture output root",
-            self.seriesOutputRootEdit.text,
-        )
-        if path:
-            self.seriesOutputRootEdit.text = str(path)
-
-    def _update_registered_output_default(self):
-        dataset_root = str(self.seriesDatasetRootEdit.text or "").strip()
-        if not dataset_root:
-            return
-        current_output = str(self.seriesOutputRootEdit.text or "").strip()
-        if current_output:
-            return
-        self.seriesOutputRootEdit.text = str(self.logic.registered_microarchitecture_root(dataset_root))
-
-    def _discover_registered_series(self):
-        dataset_root = str(self.seriesDatasetRootEdit.text or "").strip()
-        if not dataset_root:
-            slicer.util.errorDisplay("Select a dataset root before discovery.")
-            return
-        try:
-            rows = self._with_wait_cursor(
-                lambda: self.logic.discover_registered_series(dataset_root)
-            )
-        except Exception as exc:
-            slicer.util.errorDisplay(f"Registered series discovery failed:\n{exc}")
-            self._series_log(f"[registered] discovery failed: {exc}")
-            return
-        self._allRegisteredRows = list(rows)
-        self._populate_registered_series_filters(rows)
-        self._refresh_registered_series_table()
-        rows = self._lastRegisteredRows
-        ready = sum(1 for row in rows if row.get("status") == "Ready")
-        self.seriesStatusLabel.text = (
-            f"Discovered {len(self._allRegisteredRows)} session(s); showing {len(rows)}, {ready} ready."
-        )
-        self._series_log(
-            f"[registered] discovered {len(self._allRegisteredRows)} session(s), showing {len(rows)}, {ready} ready."
-        )
-
-    def _populate_registered_series_filters(self, rows):
-        current_subject = str(self.seriesSubjectCombo.currentData or "")
-        current_site = str(self.seriesSiteCombo.currentData or "")
-        self.seriesSubjectCombo.blockSignals(True)
-        self.seriesSiteCombo.blockSignals(True)
-        self.seriesSubjectCombo.clear()
-        self.seriesSiteCombo.clear()
-        self.seriesSubjectCombo.addItem("All subjects", "")
-        self.seriesSiteCombo.addItem("All sites", "")
-        for subject_id in sorted({str(row.get("subject_id") or "") for row in rows if row.get("subject_id")}):
-            self.seriesSubjectCombo.addItem(f"sub-{subject_id}", subject_id)
-        for site in sorted({str(row.get("site") or "") for row in rows if row.get("site")}):
-            self.seriesSiteCombo.addItem(site, site)
-        subject_index = self.seriesSubjectCombo.findData(current_subject)
-        site_index = self.seriesSiteCombo.findData(current_site)
-        self.seriesSubjectCombo.setCurrentIndex(subject_index if subject_index >= 0 else 0)
-        self.seriesSiteCombo.setCurrentIndex(site_index if site_index >= 0 else 0)
-        self.seriesSubjectCombo.blockSignals(False)
-        self.seriesSiteCombo.blockSignals(False)
-
-    def _filtered_registered_rows(self):
-        subject = str(self.seriesSubjectCombo.currentData or "")
-        site = str(self.seriesSiteCombo.currentData or "")
-        rows = []
-        for row in self._allRegisteredRows:
-            if subject and str(row.get("subject_id") or "") != subject:
-                continue
-            if site and str(row.get("site") or "") != site:
-                continue
-            rows.append(row)
-        return rows
-
-    def _refresh_registered_series_table(self):
-        self._lastRegisteredRows = self._filtered_registered_rows()
-        self._populate_registered_series_table(self._lastRegisteredRows)
-        if self._allRegisteredRows:
-            ready = sum(1 for row in self._lastRegisteredRows if row.get("status") == "Ready")
-            self.seriesStatusLabel.text = (
-                f"Showing {len(self._lastRegisteredRows)} of {len(self._allRegisteredRows)} discovered session(s); "
-                f"{ready} ready."
-            )
-
-    def _populate_registered_series_table(self, rows):
-        self.seriesTable.setRowCount(len(rows))
-        columns = [
-            "subject_id",
-            "site",
-            "session_id",
-            "image_path",
-            "seg_path",
-            "full_path",
-            "trab_path",
-            "cort_path",
-            "status",
-        ]
-        for row_index, row in enumerate(rows):
-            for column_index, key in enumerate(columns):
-                value = str(row.get(key) or "")
-                display_value = Path(value).name if key.endswith("_path") and value else value
-                item = qt.QTableWidgetItem(display_value)
-                item.setToolTip(value)
-                self.seriesTable.setItem(row_index, column_index, item)
-        self.seriesTable.resizeColumnsToContents()
-
-    def _prepare_registered_series(self):
-        if not self._lastRegisteredRows:
-            self._discover_registered_series()
-        if not self._lastRegisteredRows:
-            return None
-        try:
-            prepared = self._with_wait_cursor(
-                lambda: self.logic.prepare_registered_series_workspace(
-                    self.seriesDatasetRootEdit.text,
-                    self.seriesOutputRootEdit.text,
-                    self._lastRegisteredRows,
-                    segmentation_method=str(self.seriesSegmentationMethodCombo.currentData),
-                    periosteal_contour_method=str(self.seriesPeriostealContourCombo.currentData),
-                    endosteal_contour_method=str(self.seriesEndostealContourCombo.currentData),
-                )
-            )
-        except Exception as exc:
-            slicer.util.errorDisplay(f"RegisteredMicroarchitecture workspace preparation failed:\n{exc}")
-            self._series_log(f"[registered] workspace preparation failed: {exc}")
-            return None
-        self._allRegisteredRows = list(prepared["rows"])
-        self._populate_registered_series_filters(self._allRegisteredRows)
-        self._refresh_registered_series_table()
-        generated_count = len(prepared.get("generated", []))
-        self.seriesStatusLabel.text = (
-            f"Prepared RegisteredMicroarchitecture workspace: {prepared['manifest']} "
-            f"({generated_count} mask file(s) generated or derived)."
-        )
-        self._series_log(f"[registered] wrote manifest: {prepared['manifest']}")
-        for item in prepared.get("generated", []):
-            self._series_log(f"[registered] {item['source']} {item['role']}: {item['path']}")
-        return prepared
-
-    def _write_registered_series_job(self):
-        dataset_root = str(self.seriesDatasetRootEdit.text or "").strip()
+    def _write_registered_series_job_for_rows(self, rows, *, dataset_root=None, output_root=None):
+        dataset_root = str(dataset_root or "").strip()
         if not dataset_root:
             raise ValueError("Select a dataset root before running registered microarchitecture.")
-        output_root = str(self.seriesOutputRootEdit.text or "").strip()
+        output_root = str(output_root or "").strip()
         root = self.logic.registered_microarchitecture_root(dataset_root, output_root)
         job_dir = root / "slicer_run_configs"
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -2098,78 +2234,20 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         job = {
             "dataset_root": dataset_root,
             "output_root": output_root,
-            "rows": self._lastRegisteredRows,
-            "segmentation_method": str(self.seriesSegmentationMethodCombo.currentData),
-            "periosteal_contour_method": str(self.seriesPeriostealContourCombo.currentData),
-            "endosteal_contour_method": str(self.seriesEndostealContourCombo.currentData),
-            "thickness_method": str(self.seriesThicknessMethodCombo.currentData),
-            "thickness_backend": str(self.seriesThicknessBackendCombo.currentData),
+            "rows": rows,
+            "thickness_method": str(
+                getattr(self, "folderThicknessMethodCombo", self.thicknessMethodCombo).currentData
+            ),
+            "thickness_backend": str(
+                getattr(self, "folderThicknessBackendCombo", self.thicknessBackendCombo).currentData
+            ),
+            "common_region_only": str(getattr(self, "folderRegisteredWorkflowCombo", None).currentData) == "common_region_only"
+            if getattr(self, "folderRegisteredWorkflowCombo", None) is not None
+            else False,
             "result_path": str(result_path),
         }
         Path(job_path).write_text(json.dumps(job, indent=2), encoding="utf-8")
         return Path(job_path), result_path
-
-    def _run_registered_series(self):
-        if not self._lastRegisteredRows:
-            self._discover_registered_series()
-        if not self._lastRegisteredRows:
-            return
-        try:
-            job_path, result_path = self._write_registered_series_job()
-            self._registeredSeriesResultPath = result_path
-            self._set_registered_series_running(True)
-            self.seriesStatusLabel.text = "Registered microarchitecture is running in the background."
-            self.logic.run_registered_series_job(
-                job_path,
-                on_output=self._series_log,
-                on_finished=self._on_registered_series_finished,
-            )
-        except Exception as exc:
-            self._set_registered_series_running(False)
-            slicer.util.errorDisplay(f"Registered series microarchitecture failed:\n{exc}")
-            self._series_log(f"[registered] measurements failed: {exc}")
-            return
-
-    def _on_registered_series_finished(self, exit_code, exit_status):
-        self._set_registered_series_running(False)
-        self._series_log(f"[registered-process] finished with exit code {exit_code}")
-        result_path = Path(str(getattr(self, "_registeredSeriesResultPath", "") or ""))
-        result = {}
-        if result_path.exists():
-            try:
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                self._series_log(f"[registered] could not read worker result: {exc}")
-        if int(exit_code) != 0 or result.get("error"):
-            message = result.get("error") or "Registered microarchitecture worker failed."
-            self.seriesStatusLabel.text = "Registered microarchitecture failed."
-            slicer.util.errorDisplay(f"Registered series microarchitecture failed:\n{message}")
-            return
-
-        prepared = result.get("prepared", {})
-        outputs = result.get("outputs", {})
-        if prepared.get("rows"):
-            self._allRegisteredRows = list(prepared["rows"])
-            self._populate_registered_series_filters(self._allRegisteredRows)
-            self._refresh_registered_series_table()
-        measured_count = len(outputs.get("session_csvs", []))
-        skipped_count = len(outputs.get("skipped_rows", []))
-        self.seriesStatusLabel.text = (
-            f"Wrote registered series measurements for {measured_count} session(s); "
-            f"skipped {skipped_count}. Output: {outputs['long_csv']}"
-        )
-        if prepared.get("manifest"):
-            self._series_log(f"[registered] wrote manifest: {prepared['manifest']}")
-        for item in prepared.get("generated", []):
-            self._series_log(f"[registered] {item['source']} {item['role']}: {item['path']}")
-        self._series_log(f"[registered] wrote manifest: {outputs['manifest']}")
-        self._series_log(f"[registered] wrote long table: {outputs['long_csv']}")
-        for path in outputs.get("session_csvs", []):
-            self._series_log(f"[registered] wrote session table: {path}")
-        for row in outputs.get("skipped_rows", []):
-            self._series_log(
-                f"[registered] skipped sub-{row['subject_id']} ses-{row['session_id']}: {row['status']}"
-            )
 
     def _install_core(self):
         try:
@@ -2196,8 +2274,77 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._log(f"[microarchitecture] table created but could not switch to Tables module: {exc}")
 
+    def _cache_measurement_rows(self, columns, rows):
+        self._lastMeasurementColumns = [str(column) for column in columns]
+        self._lastMeasurementRows = [dict(row) for row in rows]
+
+    def _cache_measurement_rows_from_table(self, table_node):
+        table = table_node.GetTable()
+        columns = [table.GetColumnName(index) for index in range(table.GetNumberOfColumns())]
+        rows = []
+        for row_index in range(table.GetNumberOfRows()):
+            row = {}
+            for column_index, column_name in enumerate(columns):
+                value = table.GetValue(row_index, column_index)
+                row[column_name] = value.ToString() if hasattr(value, "ToString") else str(value)
+            rows.append(row)
+        self._cache_measurement_rows(columns, rows)
+
+    def _filtered_measurement_rows(self):
+        query = str(getattr(self.measurementFilterEdit, "text", "") or "").strip().lower()
+        if not query:
+            return list(self._lastMeasurementRows)
+        terms = [term for term in query.split() if term]
+        if not terms:
+            return list(self._lastMeasurementRows)
+        filtered = []
+        for row in self._lastMeasurementRows:
+            haystack = " ".join(str(row.get(column, "")) for column in self._lastMeasurementColumns).lower()
+            if all(term in haystack for term in terms):
+                filtered.append(row)
+        return filtered
+
+    def _measurement_table_from_rows(self, rows, name):
+        table_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", name)
+        table_node.SetAttribute("BoneImaging.Microarchitecture.Engine", "bone_microarchitecture")
+        table_node.SetAttribute("BoneImaging.Microarchitecture.Filtered", "true")
+        for column_name in self._lastMeasurementColumns:
+            column = vtk.vtkStringArray()
+            column.SetName(column_name)
+            for row in rows:
+                column.InsertNextValue(str(row.get(column_name, "")))
+            table_node.GetTable().AddColumn(column)
+        table_node.Modified()
+        return table_node
+
+    def _apply_measurement_filter(self, *_args):
+        if not self._lastTableNode or not self._lastMeasurementRows:
+            return
+        query = str(self.measurementFilterEdit.text or "").strip()
+        if self._lastFilteredTableNode is not None:
+            try:
+                slicer.mrmlScene.RemoveNode(self._lastFilteredTableNode)
+            except Exception:
+                pass
+            self._lastFilteredTableNode = None
+        if not query:
+            self._show_measurement_table(self._lastTableNode)
+            return
+        filtered_rows = self._filtered_measurement_rows()
+        table_name = f"{self._lastTableNode.GetName()}_filtered"
+        self._lastFilteredTableNode = self._measurement_table_from_rows(filtered_rows, table_name)
+        self._show_measurement_table(self._lastFilteredTableNode)
+        self._log(f"[microarchitecture] filter '{query}' matched {len(filtered_rows)} of {len(self._lastMeasurementRows)} row(s).")
+
+    def _write_filtered_measurement_csv(self, path):
+        rows = self._filtered_measurement_rows()
+        with open(path, "w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(self._lastMeasurementColumns))
+            writer.writeheader()
+            writer.writerows(rows)
+
     def _export_measurements_csv(self):
-        if not self._lastMetrics:
+        if not self._lastMetrics and not self._lastMeasurementRows:
             slicer.util.errorDisplay("Run microarchitecture before exporting measurements.")
             return
         path = qt.QFileDialog.getSaveFileName(
@@ -2214,9 +2361,12 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         if not path.lower().endswith(".csv"):
             path = f"{path}.csv"
         try:
-            from bone_microarchitecture.results import write_measurement_csv
+            if self._lastMeasurementRows and (str(self.measurementFilterEdit.text or "").strip() or not self._lastMetrics):
+                self._write_filtered_measurement_csv(path)
+            else:
+                from bone_microarchitecture.results import write_measurement_csv
 
-            write_measurement_csv(path, self._lastMetrics, self._lastMaps)
+                write_measurement_csv(path, self._lastMetrics, self._lastMaps)
         except Exception as exc:
             slicer.util.errorDisplay(f"Measurement CSV export failed:\n{exc}")
             self._log(f"[export] failed: {exc}")
@@ -2260,15 +2410,18 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._lastMetrics = dict(metrics)
         self._lastMaps = dict(maps)
         self._lastTableNode = table_node
+        from bone_microarchitecture.results import SUMMARY_COLUMNS, measurement_rows
+
+        self._cache_measurement_rows(SUMMARY_COLUMNS, measurement_rows(metrics, maps))
         self.exportCsvButton.enabled = True
         self._show_measurement_table(table_node)
+        self._apply_measurement_filter()
         self._log(f"[microarchitecture] wrote table: {table_node.GetName()}")
         for key, node in output_nodes.items():
             if key != "table":
                 self._log(f"[microarchitecture] wrote {key}: {node.GetName()}")
-        from bone_microarchitecture.results import measurement_rows
 
-        for row in measurement_rows(metrics, maps):
+        for row in self._lastMeasurementRows:
             self._log(f"{row['Parameter']}: {float(row['Mean']):.6g} {row['Units']}")
 
 
@@ -2287,19 +2440,20 @@ def _run_registered_series_worker(job_path):
 
     try:
         print(f"[registered] worker job: {job_path}", flush=True)
-        print("[registered] preparing workspace, masks, registration, and common regions ...", flush=True)
+        print("[registered] preparing workspace, registration, and common regions ...", flush=True)
         prepared = logic.prepare_registered_series_workspace(
             job["dataset_root"],
             job["output_root"],
             job["rows"],
-            segmentation_method=job["segmentation_method"],
-            periosteal_contour_method=job["periosteal_contour_method"],
-            endosteal_contour_method=job["endosteal_contour_method"],
             progress_callback=print_progress,
         )
         print(f"[registered] wrote manifest: {prepared['manifest']}", flush=True)
         for item in prepared.get("generated", []):
             print(f"[registered] {item['source']} {item['role']}: {item['path']}", flush=True)
+        if bool(job.get("common_region_only")):
+            print("[registered] common-region-only workflow complete; measurements skipped.", flush=True)
+            _write_registered_series_worker_result(result_path, {"prepared": prepared, "outputs": {}})
+            return 0
         print("[registered] running native-space common-region measurements ...", flush=True)
         outputs = logic.run_registered_series_microarchitecture(
             job["dataset_root"],

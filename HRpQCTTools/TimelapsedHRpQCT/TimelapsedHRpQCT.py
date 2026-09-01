@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import json
 import csv
+import gc
 import sys
 import importlib
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ import vtk
 
 MODULE_VERSION = "0.2.4"
 MIN_PIPELINE_VERSION = "2.0.39"
+_SCENE_MASK_CHOICE_SEPARATOR = "||"
 
 
 def _version_tuple(version_text):
@@ -58,6 +60,20 @@ def _resolve_local_pipeline_paths(toolbox_root):
     return Path(toolbox_root).parent / "TimelapsedHRpQCT", Path(toolbox_root).parent / "TimelapsedHRpQCT" / "src"
 
 
+def _encode_scene_mask_choice(node_id, segment_id=""):
+    node_id = str(node_id or "")
+    segment_id = str(segment_id or "")
+    return f"{node_id}{_SCENE_MASK_CHOICE_SEPARATOR}{segment_id}" if segment_id else node_id
+
+
+def _decode_scene_mask_choice(value):
+    value = str(value or "")
+    if _SCENE_MASK_CHOICE_SEPARATOR not in value:
+        return value, ""
+    node_id, segment_id = value.split(_SCENE_MASK_CHOICE_SEPARATOR, 1)
+    return node_id, segment_id
+
+
 # Prevent Slicer-specific ITK ImageIO plugin autoloading in this process.
 # This avoids repeated MRMLIDImageIO factory noise from SimpleITK calls.
 for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
@@ -87,9 +103,11 @@ from bone_imaging_derivatives import resolve_workflow_plan  # noqa: E402
 _timelapsed_scene = importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")
 _timelapsed_scene = importlib.reload(_timelapsed_scene)
 TimelapsedSceneNodeCandidate = _timelapsed_scene.TimelapsedSceneNodeCandidate
+TimelapsedSceneRoiSelection = _timelapsed_scene.TimelapsedSceneRoiSelection
 TimelapsedSceneTimepoint = _timelapsed_scene.TimelapsedSceneTimepoint
 build_timelapsed_scene_plan = _timelapsed_scene.build_timelapsed_scene_plan
 discover_timelapsed_scene_timepoints = _timelapsed_scene.discover_timelapsed_scene_timepoints
+scene_segment_matches_role = _timelapsed_scene.scene_segment_matches_role
 timelapsed_scene_run_args = _timelapsed_scene.timelapsed_scene_run_args
 
 _reporting = importlib.import_module("TimelapsedHRpQCTLib.Reporting")
@@ -124,14 +142,15 @@ class TimelapsedHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Timelapsed Remodelling"
-        parent.categories = ["Bone Imaging.Timelapsed Methods"]
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.index = 40
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "GUI wrapper for timelapsed-hrpqct pipeline.\n"
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = """Built for streamlined longitudinal HR-pQCT workflows.
+        parent.acknowledgementText = """Author: Matthias Walle. Built for streamlined longitudinal HR-pQCT workflows.
 
 If you use the main timelapsed HR-pQCT workflow, please cite:
 Walle M, Whittier DE, Schenk D, Atkins PR, Blauth M, Zysset P, Lippuner K, Müller R, Collins CJ. Precision of bone mechanoregulation assessment in humans using longitudinal high-resolution peripheral quantitative computed tomography in vivo. Bone. 2023;172:116780. doi: 10.1016/j.bone.2023.116780.
@@ -589,6 +608,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(self.timelapsedModeTabs)
         self._build_scene_ui(scenePage)
         self.batchLayout = qt.QVBoxLayout(batchPage)
+        self.batchLayout.setContentsMargins(0, 0, 0, 0)
+        self.batchLayout.setSpacing(4)
 
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
@@ -616,6 +637,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         form = qt.QFormLayout()
         form.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
+        form.setVerticalSpacing(4)
 
         self.inputPath = ctk.ctkPathLineEdit()
         self.inputPath.filters = ctk.ctkPathLineEdit.Dirs
@@ -670,7 +692,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
         self.parseTable.horizontalHeader().setStretchLastSection(False)
         self.parseTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.ResizeToContents)
-        self.parseTable.setMinimumHeight(160)
+        self.parseTable.setMinimumHeight(128)
         self.parseTable.setEditTriggers(
             qt.QAbstractItemView.DoubleClicked
             | qt.QAbstractItemView.EditKeyPressed
@@ -683,11 +705,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         parseBox.collapsed = True
         self.parseBox = parseBox
         parseLayout = qt.QVBoxLayout(parseBox)
+        parseLayout.setContentsMargins(6, 6, 6, 4)
+        parseLayout.setSpacing(4)
         parseLayout.addWidget(self.parseTable)
 
         quickBox = qt.QGroupBox("Study Profile")
         quickForm = qt.QFormLayout(quickBox)
-        quickForm.setVerticalSpacing(8)
+        quickForm.setContentsMargins(6, 8, 6, 6)
+        quickForm.setVerticalSpacing(4)
         self.studyProfileCombo = qt.QComboBox()
         self._populate_study_profiles()
         _cap_width(self.studyProfileCombo, 220)
@@ -707,9 +732,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
-        analysisSectionBox.collapsed = False
+        analysisSectionBox.collapsed = True
         analysisSectionBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
+        self.analysisSectionBox = analysisSectionBox
         analysisSectionLayout = qt.QVBoxLayout(analysisSectionBox)
+        analysisSectionLayout.setContentsMargins(6, 6, 6, 4)
+        analysisSectionLayout.setSpacing(4)
 
         settingsBox = ctk.ctkCollapsibleButton()
         settingsBox.text = "Advanced Settings"
@@ -717,7 +745,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         settingsBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
         self.advancedSettingsBox = settingsBox
         settingsLayout = qt.QVBoxLayout(settingsBox)
-        settingsLayout.setSpacing(10)
+        settingsLayout.setContentsMargins(6, 6, 6, 4)
+        settingsLayout.setSpacing(6)
 
         discoveryBox = ctk.ctkCollapsibleButton()
         discoveryBox.text = "Discovery / Import"
@@ -938,9 +967,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.resultsRootPath = ctk.ctkPathLineEdit()
         self.resultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.resultsRootPath.setCurrentPath("")
-        _tip(self.resultsRootPath, "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root.")
+        _tip(
+            self.resultsRootPath,
+            "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under dataset/derivatives.",
+        )
         _cap_width(self.resultsRootPath, 360)
-        discoveryLayout.addRow(_label("Results folder (optional)", "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under the dataset root."), self.resultsRootPath)
+        discoveryLayout.addRow(
+            _label(
+                "Results folder (optional)",
+                "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under dataset/derivatives.",
+            ),
+            self.resultsRootPath,
+        )
         self._connect_path_changed(self.resultsRootPath, self._on_dataset_or_results_root_changed)
 
         self.copyRawInputsCheck = qt.QCheckBox()
@@ -1075,6 +1113,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         registrationForm.addRow(_label("Multistack initial translation (voxels)", "Initial X/Y/Z translation offset for multistack registration."), initTranslationRow)
 
         advancedAnalysisBox = qt.QGroupBox("Advanced analysis")
+        self.advancedAnalysisBox = advancedAnalysisBox
         advancedAnalysisForm = qt.QFormLayout(advancedAnalysisBox)
 
         analysisBox = qt.QGroupBox("Remodelling Analysis")
@@ -1299,6 +1338,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Export saved pairwise remodelling result rows for the processed cohort."
         )
         self.seriesSummaryExportBtn.clicked.connect(self._on_export_study_summary)
+        self.clearLoadedResultsBtn = qt.QPushButton("Clear loaded")
+        self.clearLoadedResultsBtn.toolTip = "Remove loaded Timelapsed result nodes and clear interactive preview cache."
+        self.clearLoadedResultsBtn.clicked.connect(self._on_clear_loaded_timelapsed_results)
         self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
         self.seriesBasisLabel.toolTip = "Comparison pairs currently included in cohort summary calculations."
         self.seriesSummaryTable = qt.QTableWidget()
@@ -1324,7 +1366,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
         self.applyAnalysisSettingsBtn.clicked.connect(self._on_apply_interactive_remodelling)
 
-        settingsLayout.addWidget(maskBox)
+        self.maskGenerationBox = maskBox
+        self.maskGenerationBox.visible = False
         settingsLayout.addWidget(registrationBox)
         settingsLayout.addWidget(advancedAnalysisBox)
         analysisSectionLayout.addWidget(analysisBox)
@@ -1344,8 +1387,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.runMasksBtn.visible = False
         self.runTimelapseBtn = qt.QPushButton("Run pipeline")
         self.runTimelapseBtn.toolTip = (
-            "Run the complete workflow. By default this includes mask generation; "
-            "enable 'Do not generate masks' in Advanced Settings to use existing/provided masks."
+            "Run the complete workflow using masks/ROIs discovered from the input data or Bone Contouring outputs."
         )
         self.cancelRunBtn = qt.QPushButton("✕ Cancel")
         self.cancelRunBtn.clicked.connect(self._on_cancel_run)
@@ -1367,9 +1409,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         secondaryActionLayout.setContentsMargins(0, 0, 0, 0)
         secondaryActionLayout.setSpacing(6)
         secondaryActionLayout.addWidget(self.seriesSummaryExportBtn)
+        secondaryActionLayout.addWidget(self.clearLoadedResultsBtn)
         secondaryActionLayout.addWidget(self.cancelRunBtn)
         secondaryActionLayout.addStretch(1)
         _cap_width(self.seriesSummaryExportBtn, 96)
+        _cap_width(self.clearLoadedResultsBtn, 104)
         _cap_width(self.cancelRunBtn, 82)
         processingSubjectRow = qt.QWidget()
         processingSubjectLayout = qt.QFormLayout(processingSubjectRow)
@@ -1387,7 +1431,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         actionLayout.addWidget(self.runTimelapseBtn)
         actionLayout.addWidget(secondaryActionRow)
 
-        self.runMasksBtn.clicked.connect(self._on_run_masks)
         self.runTimelapseBtn.clicked.connect(self._on_run_full_pipeline)
         self.runAnalysisBtn.clicked.connect(self._on_run_analysis)
 
@@ -1397,7 +1440,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         statusForm = qt.QFormLayout(statusBox)
         self.progressBar = qt.QProgressBar()
         self.progressBar.minimum = 0
-        self.progressBar.maximum = 5
+        self.progressBar.maximum = 4
         self.progressBar.value = 0
         self.progressBar.toolTip = "Current pipeline stage progress."
         self.currentStepLabel = qt.QLabel("Current step: idle")
@@ -1408,7 +1451,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for key, title in [
             ("dataset", "Dataset"),
             ("parse", "Parse"),
-            ("masks", "Mask generation"),
             ("registration", "Registration"),
             ("analysis", "Analysis"),
         ]:
@@ -1424,7 +1466,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.patientCombo = qt.QComboBox()
         self.loadTypeCombo = qt.QComboBox()
         self.loadTypeCombo.addItems(
-            ["remodelling image (full)", "transformed", "raw"]
+            ["remodelling image", "transformed", "raw"]
         )
         self.remodellingComparisonCombo = qt.QComboBox()
         self.loadDataBtn = qt.QPushButton("Load selected")
@@ -1458,11 +1500,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText = qt.QPlainTextEdit()
         self.logText.readOnly = True
         self.logText.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
-        self.logText.setMinimumHeight(200)
-        self.logText.setMaximumHeight(260)
+        self.logText.setMinimumHeight(140)
+        self.logText.setMaximumHeight(200)
 
         self.batchLayout.addLayout(form)
         self.batchLayout.addWidget(quickBox)
+        self.batchLayout.addWidget(analysisSectionBox)
         self.batchLayout.addWidget(parseBox)
         self.batchLayout.addWidget(discoveryBox)
         self.batchLayout.addWidget(actionBox)
@@ -1471,7 +1514,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.batchLayout.addWidget(metricsBox)
         self.batchLayout.addStretch(1)
         self.layout.addWidget(statusBox)
-        self.layout.addWidget(analysisSectionBox)
         self.layout.addWidget(settingsBox)
         self.layout.addWidget(self.logText)
         self.layout.addStretch(1)
@@ -1480,7 +1522,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._update_dependency_ui()
         self._set_stage_status("dataset", "pending")
         self._set_stage_status("parse", "pending")
-        self._set_stage_status("masks", "pending")
         self._set_stage_status("registration", "pending")
         self._set_stage_status("analysis", "pending")
         self._update_progress_ui()
@@ -1510,17 +1551,51 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return label
 
         layout = qt.QVBoxLayout(parent)
+        self.sceneLayout = layout
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
-        sceneInputBox = qt.QGroupBox("Scene Input")
-        form = qt.QFormLayout(sceneInputBox)
-        form.setVerticalSpacing(4)
-        self.sceneProfileCombo = qt.QComboBox()
-        self._populate_study_profiles(self.sceneProfileCombo)
-        self.sceneProfileCombo.currentIndexChanged.connect(self._on_scene_profile_changed)
-        self.sceneProfileCombo.toolTip = "Study defaults applied to scene runs."
-        _cap_width(self.sceneProfileCombo)
+        sceneRegistrationBox = qt.QGroupBox("Timepoints")
+        sceneRegistrationLayout = qt.QVBoxLayout(sceneRegistrationBox)
+        sceneRegistrationLayout.setContentsMargins(6, 8, 6, 6)
+        sceneRegistrationLayout.setSpacing(4)
+
+        sceneDiscoveryRow = qt.QWidget()
+        sceneDiscoveryLayout = qt.QHBoxLayout(sceneDiscoveryRow)
+        sceneDiscoveryLayout.setContentsMargins(0, 0, 0, 0)
+        sceneDiscoveryLayout.setSpacing(6)
+        self.sceneDiscoverButton = qt.QPushButton("Discover Loaded Timepoints")
+        self.sceneAddTimepointButton = qt.QPushButton("Add timepoint")
+        self.sceneRemoveTimepointButton = qt.QPushButton("Remove timepoint")
+        self.sceneMoveUpButton = qt.QPushButton("Move up")
+        self.sceneMoveDownButton = qt.QPushButton("Move down")
+        sceneDiscoveryLayout.addWidget(self.sceneDiscoverButton)
+        sceneDiscoveryLayout.addWidget(self.sceneAddTimepointButton)
+        sceneDiscoveryLayout.addWidget(self.sceneRemoveTimepointButton)
+        sceneDiscoveryLayout.addWidget(self.sceneMoveUpButton)
+        sceneDiscoveryLayout.addWidget(self.sceneMoveDownButton)
+        sceneDiscoveryLayout.addStretch(1)
+        sceneRegistrationLayout.addWidget(sceneDiscoveryRow)
+
+        self.sceneAppendDiscoveryCheck = qt.QCheckBox("Append to table")
+        self.sceneAppendDiscoveryCheck.checked = False
+        self.sceneAppendDiscoveryCheck.toolTip = "Append discovered loaded timepoints instead of replacing the current table."
+        sceneRegistrationLayout.addWidget(self.sceneAppendDiscoveryCheck)
+
+        self.sceneInputHintLabel = qt.QLabel(
+            "Scene mode works from loaded Slicer nodes. Use Discover to guess timepoints, then edit the table if needed."
+        )
+        self.sceneInputHintLabel.wordWrap = True
+        self.sceneInputHintLabel.toolTip = (
+            "Loaded nodes may have arbitrary names. The module writes a standardized processing dataset before running."
+        )
+        sceneRegistrationLayout.addWidget(self.sceneInputHintLabel)
+
+        sceneWorkspaceRow = qt.QWidget()
+        sceneWorkspaceLayout = qt.QFormLayout(sceneWorkspaceRow)
+        sceneWorkspaceLayout.setContentsMargins(0, 0, 0, 0)
+        sceneWorkspaceLayout.setVerticalSpacing(4)
+        sceneWorkspaceLayout.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
         self.sceneResultsRootPath = ctk.ctkPathLineEdit()
         self.sceneResultsRootPath.filters = ctk.ctkPathLineEdit.Dirs
         self.sceneResultsRootPath.setCurrentPath(str(self._default_scene_results_root()))
@@ -1529,61 +1604,88 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Selected scene nodes are written into pipeline-readable names before running."
         )
         _cap_width(self.sceneResultsRootPath, 360)
-        form.addRow(_label("Profile", "Study defaults used for registration, mask generation, and remodelling analysis."), self.sceneProfileCombo)
-        self.sceneAppendDiscoveryCheck = qt.QCheckBox("Append to table")
-        self.sceneAppendDiscoveryCheck.checked = False
-        self.sceneAppendDiscoveryCheck.toolTip = "Append discovered loaded timepoints instead of replacing the current table."
-        form.addRow(_label("Discovery", "Append discovered loaded timepoints instead of replacing the table."), self.sceneAppendDiscoveryCheck)
-        self.sceneInputHintLabel = qt.QLabel(
-            "Scene mode works from loaded Slicer nodes. Use Discover to guess timepoints, then edit the table if needed."
+        sceneWorkspaceLayout.addRow(
+            _label("Processing workspace", "Folder used for standardized scene-run inputs and outputs."),
+            self.sceneResultsRootPath,
         )
-        self.sceneInputHintLabel.wordWrap = True
-        self.sceneInputHintLabel.toolTip = (
-            "Loaded nodes may have arbitrary names. The module writes a standardized processing dataset before running."
-        )
-        form.addRow(self.sceneInputHintLabel)
-        layout.addWidget(sceneInputBox)
+        sceneRegistrationLayout.addWidget(sceneWorkspaceRow)
 
-        sceneTimepointBox = qt.QGroupBox("Timepoints")
-        sceneTimepointLayout = qt.QVBoxLayout(sceneTimepointBox)
-        sceneTimepointLayout.setContentsMargins(8, 10, 8, 8)
-        sceneTimepointLayout.setSpacing(4)
-        self.sceneTimepointTable = qt.QTableWidget()
-        self.sceneTimepointTable.setColumnCount(7)
-        self.sceneTimepointTable.setHorizontalHeaderLabels(
+        self.sceneRegistrationTable = qt.QTableWidget()
+        self.sceneRegistrationTable.setColumnCount(3)
+        self.sceneRegistrationTable.setHorizontalHeaderLabels(
             [
                 "Session",
                 "Image",
-                "Periosteal/full mask",
-                "Trabecular mask",
-                "Cortical mask",
-                "Bone segmentation",
-                "Initial transform",
+                "Masks / segments",
             ]
         )
-        self.sceneTimepointTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
-        self.sceneTimepointTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
-        sceneTimepointLayout.addWidget(self.sceneTimepointTable)
-        layout.addWidget(sceneTimepointBox)
+        self._configure_scene_registration_table_columns()
+        self.sceneRegistrationTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
+        sceneRegistrationLayout.addWidget(self.sceneRegistrationTable)
+        self.sceneTimepointTable = self.sceneRegistrationTable
+
+        sceneRoiBox = ctk.ctkCollapsibleButton()
+        sceneRoiBox.text = "Role Mapping"
+        sceneRoiBox.collapsed = True
+        sceneRoiBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
+        sceneRoiBox.toolTip = (
+            "Advanced scene role assignments. Use this only when automatic matching or segment-order mapping needs correction."
+        )
+        sceneRoiLayout = qt.QVBoxLayout(sceneRoiBox)
+        sceneRoiLayout.setContentsMargins(8, 10, 8, 8)
+        sceneRoiLayout.setSpacing(4)
+        self.sceneRoiTable = qt.QTableWidget()
+        self.sceneRoiTable.setColumnCount(3)
+        self.sceneRoiTable.setHorizontalHeaderLabels(["Use", "Role", "Status"])
+        self.sceneRoiTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
+        self.sceneRoiTable.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
+        self.sceneRoiTable.setMinimumWidth(420)
+        self.sceneRoiTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
+        sceneRoiLayout.addWidget(self.sceneRoiTable)
+        sceneRoiLayout.addSpacing(6)
+        self.sceneManualMappingCheck = qt.QCheckBox("Edit per-timepoint mapping")
+        self.sceneManualMappingCheck.checked = False
+        self.sceneManualMappingCheck.toolTip = "Show one mapping dropdown per timepoint. Leave hidden when automatic matching is correct."
+        sceneRoiLayout.addWidget(self.sceneManualMappingCheck)
+        roiActions = qt.QHBoxLayout()
+        self.sceneAddRoiButton = qt.QPushButton("Add ROI")
+        self.sceneRemoveRoiButton = qt.QPushButton("Remove ROI")
+        self.sceneAutoRoiButton = qt.QPushButton("Auto-detect roles")
+        roiActions.addWidget(self.sceneAddRoiButton)
+        roiActions.addWidget(self.sceneRemoveRoiButton)
+        roiActions.addWidget(self.sceneAutoRoiButton)
+        roiActions.addStretch(1)
+        sceneRoiLayout.addLayout(roiActions)
+        sceneRegistrationLayout.addWidget(sceneRoiBox)
         self._resize_scene_timepoint_table()
+        layout.addWidget(sceneRegistrationBox)
+
+        sceneProfileBox = qt.QGroupBox("Study Profile")
+        self.sceneProfileBox = sceneProfileBox
+        form = qt.QFormLayout(sceneProfileBox)
+        form.setContentsMargins(6, 8, 6, 6)
+        form.setVerticalSpacing(4)
+        self.sceneProfileCombo = qt.QComboBox()
+        self._populate_study_profiles(self.sceneProfileCombo)
+        self.sceneProfileCombo.currentIndexChanged.connect(self._on_scene_profile_changed)
+        self.sceneProfileCombo.toolTip = "Study defaults applied to scene runs."
+        _cap_width(self.sceneProfileCombo)
+        form.addRow(_label("Profile", "Study defaults used for registration, mask generation, and remodelling analysis."), self.sceneProfileCombo)
+        layout.addWidget(sceneProfileBox)
 
         sceneActionBox = qt.QGroupBox("Pipeline")
         sceneActionLayout = qt.QVBoxLayout(sceneActionBox)
-        sceneActionLayout.setContentsMargins(8, 10, 8, 8)
+        sceneActionLayout.setContentsMargins(6, 8, 6, 6)
         sceneActionLayout.setSpacing(6)
-        actions = qt.QHBoxLayout()
-        self.sceneDiscoverButton = qt.QPushButton("Discover Loaded Timepoints")
-        self.sceneAddTimepointButton = qt.QPushButton("Add timepoint")
-        self.sceneRemoveTimepointButton = qt.QPushButton("Remove timepoint")
-        self.sceneMoveUpButton = qt.QPushButton("Move up")
-        self.sceneMoveDownButton = qt.QPushButton("Move down")
         self.sceneRunButton = qt.QPushButton("Run")
         self.sceneInterruptButton = qt.QPushButton("✕ Cancel")
         self.sceneExportCsvButton = qt.QPushButton("Export CSV")
+        self.sceneClearLoadedButton = qt.QPushButton("Clear loaded")
         self._style_primary_run_button(self.sceneRunButton)
         self.sceneInterruptButton.enabled = False
         self.sceneInterruptButton.toolTip = "Interrupt the currently running scene pipeline."
         self.sceneExportCsvButton.toolTip = "Export the current scene comparison rows to CSV."
+        self.sceneClearLoadedButton.toolTip = "Remove loaded Timelapsed result nodes and clear interactive preview cache."
         self.sceneExportCsvButton.setStyleSheet(
             "QPushButton { background:#f5f7fa; color:#222; border:1px solid #b8c0ca; "
             "border-radius:4px; padding:5px 8px; } "
@@ -1602,22 +1704,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneRunButton.clicked.connect(self._on_run_scene_pipeline)
         self.sceneInterruptButton.clicked.connect(self._on_cancel_run)
         self.sceneExportCsvButton.clicked.connect(self._on_export_scene_comparison_csv)
-        actions.addWidget(self.sceneDiscoverButton)
-        actions.addWidget(self.sceneAddTimepointButton)
-        actions.addWidget(self.sceneRemoveTimepointButton)
-        actions.addWidget(self.sceneMoveUpButton)
-        actions.addWidget(self.sceneMoveDownButton)
-        actions.addStretch(1)
+        self.sceneClearLoadedButton.clicked.connect(self._on_clear_loaded_timelapsed_results)
+        self.sceneAddRoiButton.clicked.connect(self._add_scene_roi)
+        self.sceneRemoveRoiButton.clicked.connect(self._remove_scene_roi)
+        self.sceneAutoRoiButton.clicked.connect(self._auto_detect_scene_rois)
+        self.sceneManualMappingCheck.toggled.connect(lambda _checked=False: self._update_scene_role_mapping_visibility())
         sceneSecondaryActionRow = qt.QWidget()
         sceneSecondaryActionLayout = qt.QHBoxLayout(sceneSecondaryActionRow)
         sceneSecondaryActionLayout.setContentsMargins(0, 0, 0, 0)
         sceneSecondaryActionLayout.setSpacing(6)
-        sceneSecondaryActionLayout.addWidget(self.sceneExportCsvButton)
         sceneSecondaryActionLayout.addWidget(self.sceneInterruptButton)
+        sceneSecondaryActionLayout.addWidget(self.sceneClearLoadedButton)
         sceneSecondaryActionLayout.addStretch(1)
         _cap_width(self.sceneExportCsvButton, 96)
+        _cap_width(self.sceneClearLoadedButton, 104)
         _cap_width(self.sceneInterruptButton, 92)
-        sceneActionLayout.addLayout(actions)
         sceneActionLayout.addWidget(self.sceneRunButton)
         sceneActionLayout.addWidget(sceneSecondaryActionRow)
         layout.addWidget(sceneActionBox)
@@ -1638,8 +1739,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneComparisonTable.setMaximumHeight(140)
         self.sceneComparisonTable.toolTip = "Pairwise remodelling fractions from the current scene run."
         sceneComparisonLayout.addWidget(self.sceneComparisonTable)
+        sceneComparisonLayout.addWidget(self.sceneExportCsvButton)
         self._set_scene_comparison_rows([])
-        layout.addWidget(self.sceneComparisonBox)
 
         self.sceneStatusBox = qt.QGroupBox("Pipeline Status")
         sceneStatusBox = self.sceneStatusBox
@@ -1651,7 +1752,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for key, title in [
             ("dataset", "Dataset"),
             ("parse", "Parse"),
-            ("masks", "Masks"),
             ("registration", "Registration"),
             ("analysis", "Analysis"),
         ]:
@@ -1677,50 +1777,98 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneStatusLabel.wordWrap = True
         layout.addWidget(self.sceneStatusLabel)
 
-        sceneWorkspaceBox = ctk.ctkCollapsibleButton()
-        sceneWorkspaceBox.text = "Processing Workspace"
-        sceneWorkspaceBox.collapsed = True
-        sceneWorkspaceLayout = qt.QFormLayout(sceneWorkspaceBox)
-        sceneWorkspaceLayout.addRow(
-            _label("Processing workspace", "Folder used for standardized scene-run inputs and outputs."),
-            self.sceneResultsRootPath,
-        )
-        layout.addWidget(sceneWorkspaceBox)
+        layout.addWidget(self.sceneComparisonBox)
 
-    def _resize_scene_timepoint_table(self):
-        visible_rows = self._scene_timepoint_visible_rows()
+    def _configure_scene_registration_table_columns(self):
+        header = self.sceneRegistrationTable.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, qt.QHeaderView.Fixed)
+        header.setSectionResizeMode(1, qt.QHeaderView.Stretch)
+        header.setSectionResizeMode(2, qt.QHeaderView.Stretch)
+        self.sceneRegistrationTable.setColumnWidth(0, 68)
+
+    def _configure_scene_roi_table_columns(self):
+        header = self.sceneRoiTable.horizontalHeader()
+        header.setStretchLastSection(False)
+        if self.sceneRoiTable.columnCount > 0:
+            header.setSectionResizeMode(0, qt.QHeaderView.Fixed)
+            self.sceneRoiTable.setColumnWidth(0, 42)
+        if self.sceneRoiTable.columnCount > 1:
+            header.setSectionResizeMode(1, qt.QHeaderView.Fixed)
+            self.sceneRoiTable.setColumnWidth(1, 118)
+        for column in range(2, max(2, self.sceneRoiTable.columnCount - 1)):
+            header.setSectionResizeMode(column, qt.QHeaderView.Stretch)
+        if self.sceneRoiTable.columnCount > 2:
+            header.setSectionResizeMode(self.sceneRoiTable.columnCount - 1, qt.QHeaderView.Fixed)
+            self.sceneRoiTable.setColumnWidth(self.sceneRoiTable.columnCount - 1, 92)
+        self._update_scene_role_mapping_visibility()
+
+    def _update_scene_role_mapping_visibility(self):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        show_mapping = bool(getattr(self.sceneManualMappingCheck, "checked", False)) if hasattr(self, "sceneManualMappingCheck") else False
+        status_column = self.sceneRoiTable.columnCount - 1
+        header = self.sceneRoiTable.horizontalHeader()
+        for column in range(self.sceneRoiTable.columnCount):
+            hidden = 2 <= column < status_column and not show_mapping
+            try:
+                self.sceneRoiTable.setColumnHidden(column, hidden)
+            except Exception:
+                pass
         try:
-            header_height = int(self.sceneTimepointTable.horizontalHeader().height())
-            row_height = int(self.sceneTimepointTable.verticalHeader().defaultSectionSize())
-        except Exception:
-            header_height = 28
-            row_height = 30
-        height = header_height + visible_rows * row_height + 12
-        self._scene_timepoint_table_height = height
-        self.sceneTimepointTable.setMinimumHeight(height)
-        self.sceneTimepointTable.setMaximumHeight(height)
-        self.sceneTimepointTable.resizeRowsToContents()
-        try:
-            self.sceneTimepointTable.viewport().update()
-            self.sceneTimepointTable.updateGeometry()
-            if self.sceneTimepointTable.parent() is not None and self.sceneTimepointTable.parent().layout() is not None:
-                self.sceneTimepointTable.parent().layout().activate()
+            if show_mapping:
+                header.setSectionResizeMode(1, qt.QHeaderView.Fixed)
+                self.sceneRoiTable.setColumnWidth(1, 118)
+                for column in range(2, status_column):
+                    header.setSectionResizeMode(column, qt.QHeaderView.Stretch)
+                header.setSectionResizeMode(status_column, qt.QHeaderView.Fixed)
+                self.sceneRoiTable.setColumnWidth(status_column, 92)
+            else:
+                header.setSectionResizeMode(1, qt.QHeaderView.Stretch)
+                header.setSectionResizeMode(status_column, qt.QHeaderView.Fixed)
+                self.sceneRoiTable.setColumnWidth(status_column, 92)
         except Exception:
             pass
+
+    def _resize_scene_timepoint_table(self):
+        timepoint_visible_rows = self._scene_timepoint_visible_rows()
+        def _resize_table(table, visible_rows):
+            try:
+                header_height = int(table.horizontalHeader().height())
+                row_height = int(table.verticalHeader().defaultSectionSize())
+            except Exception:
+                header_height = 28
+                row_height = 30
+            roi_extra_padding = 8 if table is self.sceneRoiTable else 12
+            height = header_height + visible_rows * row_height + roi_extra_padding
+            table.setMinimumHeight(height)
+            table.setMaximumHeight(height)
+            table.resizeRowsToContents()
+            try:
+                table.viewport().update()
+                table.updateGeometry()
+                if table.parent() is not None and table.parent().layout() is not None:
+                    table.parent().layout().activate()
+            except Exception:
+                pass
+            return height
+        height = _resize_table(self.sceneRegistrationTable, timepoint_visible_rows)
+        if hasattr(self, "sceneRoiTable"):
+            roi_visible_rows = max(4, min(int(self.sceneRoiTable.rowCount), 8))
+            _resize_table(self.sceneRoiTable, roi_visible_rows)
+        self._scene_timepoint_table_height = height
         self._resize_timelapsed_mode_tabs()
 
     def _scene_timepoint_visible_rows(self):
-        row_count = int(self.sceneTimepointTable.rowCount)
+        row_count = int(self.sceneRegistrationTable.rowCount)
         return max(2, min(row_count, 8))
 
     def _on_timelapsed_mode_changed(self, *_args):
         self._resize_timelapsed_mode_tabs()
         if not hasattr(self, "timelapsedModeTabs"):
             return
-        current_index = self.timelapsedModeTabs.currentIndex
-        if callable(current_index):
-            current_index = current_index()
-        scene_mode = int(current_index) == 0
+        self._place_analysis_options_for_mode()
+        scene_mode = self._timelapsed_scene_mode_selected()
         if hasattr(self, "runAnalysisBtn"):
             self.runAnalysisBtn.visible = not scene_mode
         if hasattr(self, "seriesSummaryBox"):
@@ -1733,6 +1881,36 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.doNotGenerateMasksCheck.visible = not scene_mode
         if hasattr(self, "doNotGenerateMasksLabel"):
             self.doNotGenerateMasksLabel.visible = not scene_mode
+        self._update_batch_analysis_options_visibility()
+
+    def _place_analysis_options_for_mode(self):
+        if not hasattr(self, "analysisSectionBox"):
+            return
+        if hasattr(self, "sceneLayout"):
+            self.sceneLayout.removeWidget(self.analysisSectionBox)
+        if hasattr(self, "batchLayout"):
+            self.batchLayout.removeWidget(self.analysisSectionBox)
+        if self._timelapsed_scene_mode_selected() and hasattr(self, "sceneLayout"):
+            self.sceneLayout.insertWidget(2, self.analysisSectionBox)
+        elif hasattr(self, "batchLayout"):
+            self.batchLayout.insertWidget(2, self.analysisSectionBox)
+
+    def _timelapsed_scene_mode_selected(self):
+        if not hasattr(self, "timelapsedModeTabs"):
+            return False
+        current_index = self.timelapsedModeTabs.currentIndex
+        if callable(current_index):
+            current_index = current_index()
+        return int(current_index) == 0
+
+    def _update_batch_analysis_options_visibility(self):
+        if not hasattr(self, "analysisSectionBox"):
+            return
+        scene_mode = self._timelapsed_scene_mode_selected()
+        custom = self._selected_profile_is_custom()
+        self.analysisSectionBox.visible = scene_mode or custom
+        if custom:
+            self.analysisSectionBox.collapsed = False
 
     def _resize_timelapsed_mode_tabs(self):
         if not hasattr(self, "timelapsedModeTabs"):
@@ -1750,9 +1928,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _default_scene_results_root(self):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"
-
-    def _scene_generate_missing_masks(self):
-        return self._scene_mask_generation_requested()
 
     def _on_scene_profile_changed(self, *_args):
         if hasattr(self, "studyProfileCombo"):
@@ -1784,83 +1959,736 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         selector.setMRMLScene(slicer.mrmlScene)
         return selector
 
-    def _scene_mask_selector(self):
+    def _scene_segmentation_node_selector(self):
+        selector = self._scene_node_selector(["vtkMRMLSegmentationNode"])
+        try:
+            selector.currentNodeChanged.connect(lambda _node=None, selector=selector: self._on_scene_mask_source_changed(selector))
+        except Exception:
+            pass
+        return selector
+
+    def _scene_transform_is_supported_initial_transform(self, transform_node):
+        if transform_node is None:
+            return False
+        if transform_node.IsA("vtkMRMLLinearTransformNode"):
+            return True
+        stored_transform_path = self._scene_transform_storage_path(transform_node)
+        return stored_transform_path is not None and stored_transform_path.suffix.lower() == ".tfm"
+
+    def _add_scene_combo_item(self, selector, label, data, tooltip=None):
+        selector.addItem(label, data)
+        index = selector.count - 1
+        tooltip_text = str(tooltip or label)
+        try:
+            selector.setItemData(index, tooltip_text, qt.Qt.ToolTipRole)
+        except Exception:
+            try:
+                selector.model().setData(selector.model().index(index, 0), tooltip_text, qt.Qt.ToolTipRole)
+            except Exception:
+                pass
+
+    def _scene_mask_selector(self, timepoint_index=None):
         selector = qt.QComboBox()
-        selector.addItem("Generate", "__generate__")
-        selector.addItem("None", "__none__")
+        self._add_scene_combo_item(selector, "None", "__none__", "No mask/ROI selected for this timepoint.")
+        source_node_id = self._scene_mask_source_node_id_for_timepoint(timepoint_index)
+        if source_node_id:
+            source_node = slicer.mrmlScene.GetNodeByID(source_node_id)
+            for segment_id, segment_name, segment_role in self._scene_segmentation_segment_choices(source_node):
+                suffix = f" ({segment_role})" if segment_role else ""
+                label = f"{segment_name}{suffix}"
+                tooltip = (
+                    f"Segmentation: {source_node.GetName() or source_node_id}\n"
+                    f"Segment: {segment_name}\n"
+                    f"Role: {segment_role or 'unlabeled'}"
+                )
+                self._add_scene_combo_item(
+                    selector,
+                    label,
+                    _encode_scene_mask_choice(source_node_id, segment_id),
+                    tooltip,
+                )
+            selector.toolTip = "Use a segment from this timepoint's selected Masks / segments node."
+            return selector
         for candidate in self._scene_node_candidates():
             node_class = str(candidate.node_class or "")
-            if "LabelMapVolume" not in node_class and "Segmentation" not in node_class:
+            if "LabelMapVolume" in node_class:
+                label = str(candidate.name or candidate.node_id)
+                self._add_scene_combo_item(selector, label, str(candidate.node_id), label)
                 continue
-            label = str(candidate.name or candidate.node_id)
-            selector.addItem(label, str(candidate.node_id))
-        selector.toolTip = "Use a loaded mask, generate it during the run, or leave it absent."
+            if "Segmentation" not in node_class:
+                continue
+            node = slicer.mrmlScene.GetNodeByID(str(candidate.node_id))
+            for segment_id, segment_name, segment_role in self._scene_segmentation_segment_choices(node):
+                suffix = f" ({segment_role})" if segment_role else ""
+                label = f"{segment_name}{suffix}"
+                tooltip = (
+                    f"Segmentation: {candidate.name}\n"
+                    f"Segment: {segment_name}\n"
+                    f"Role: {segment_role or 'unlabeled'}"
+                )
+                self._add_scene_combo_item(
+                    selector,
+                    label,
+                    _encode_scene_mask_choice(candidate.node_id, segment_id),
+                    tooltip,
+                )
+        selector.toolTip = "Use a loaded mask/ROI segment or leave it absent. Generate missing masks in Bone Contouring first."
         return selector
+
+    def _scene_mask_source_node_id_for_timepoint(self, timepoint_index):
+        if timepoint_index is None or not hasattr(self, "sceneRegistrationTable"):
+            return ""
+        try:
+            node = self._scene_selected_table_node(int(timepoint_index), 2, self.sceneRegistrationTable)
+        except Exception:
+            node = None
+        if node is not None and node.IsA("vtkMRMLSegmentationNode"):
+            return str(node.GetID())
+        return ""
+
+    def _on_scene_mask_source_changed(self, selector=None):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        role_rows = self._scene_role_rows()
+        self._refresh_scene_roi_columns()
+        for row, role_row in enumerate(role_rows):
+            if row >= self.sceneRoiTable.rowCount:
+                break
+            self._restore_scene_role_row(row, role_row)
+            self._update_scene_role_status(row)
+        timepoint_index = self._scene_timepoint_index_for_mask_source_selector(selector)
+        if timepoint_index >= 0:
+            source_node = self._scene_selected_table_node(timepoint_index, 2, self.sceneRegistrationTable)
+            self._apply_scene_detected_roles_for_timepoint(timepoint_index, source_node)
+        self._update_scene_role_mapping_visibility()
+
+    def _scene_timepoint_index_for_mask_source_selector(self, selector):
+        if selector is None or not hasattr(self, "sceneRegistrationTable"):
+            return -1
+        for row in range(self.sceneRegistrationTable.rowCount):
+            if self.sceneRegistrationTable.cellWidget(row, 2) is selector:
+                return row
+        return -1
+
+    def _apply_scene_detected_roles_for_timepoint(self, timepoint_index, source_node):
+        if source_node is None or not source_node.IsA("vtkMRMLSegmentationNode"):
+            return
+        source_node_id = str(source_node.GetID())
+        column = 2 + int(timepoint_index)
+        for role in ("registration_roi", "segmentation", "roi1", "roi2", "roi3"):
+            role_row = self._scene_role_row_index(role)
+            if role_row < 0:
+                self._add_scene_required_role(role) if not self._scene_role_is_analysis_roi(role) else self._add_scene_roi(role)
+                role_row = self._scene_role_row_index(role)
+            if role_row < 0:
+                continue
+            segment_id = self._scene_segment_id_for_node_role(source_node_id, role)
+            if not segment_id:
+                continue
+            self._set_scene_mask_row_node(role_row, column, source_node_id, self.sceneRoiTable, role=role, segment_id=segment_id)
+            self._set_scene_mask_row_policy(role_row, column, "node", self.sceneRoiTable)
+            self._update_scene_role_status(role_row)
+
+    def _scene_segmentation_segment_choices(self, segmentation_node):
+        if segmentation_node is None or not segmentation_node.IsA("vtkMRMLSegmentationNode"):
+            return []
+        segmentation = segmentation_node.GetSegmentation()
+        choices = []
+        for index in range(segmentation.GetNumberOfSegments()):
+            segment_id = segmentation.GetNthSegmentID(index)
+            segment = segmentation.GetSegment(segment_id)
+            if segment is None:
+                continue
+            name = str(segment.GetName() or segment_id)
+            role = ""
+            try:
+                role = str(segment.GetTag("HRpQCT.Role") or segment.GetTag("BoneContouring.Role") or "")
+            except Exception:
+                role = ""
+            choices.append((str(segment_id), name, role))
+        return choices
+
+    def _refresh_scene_roi_columns(self):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        session_labels = []
+        for row in range(self.sceneRegistrationTable.rowCount):
+            item = self.sceneRegistrationTable.item(row, 0)
+            session_labels.append(item.text() if item is not None else f"ses-{row + 1}")
+        current_roles = self._scene_role_rows() if self.sceneRoiTable.columnCount > 3 else []
+        self.sceneRoiTable.setColumnCount(3 + len(session_labels))
+        self.sceneRoiTable.setHorizontalHeaderLabels(["Use", "Role"] + session_labels + ["Status"])
+        self._configure_scene_roi_table_columns()
+        for row, role_row in enumerate(current_roles):
+            if row >= self.sceneRoiTable.rowCount:
+                break
+            self._configure_scene_role_row(row, role_row["role"], role_row.get("include", True))
+            self._restore_scene_role_row(row, role_row)
+            self._update_scene_role_status(row)
+        self._ensure_scene_required_role_rows()
+
+    def _add_scene_roi(self, role=None, nodes_by_session=None):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        row = self.sceneRoiTable.rowCount
+        self.sceneRoiTable.insertRow(row)
+        role_text = str(role or f"roi{row + 1}")
+        if self.sceneRoiTable.columnCount != self.sceneRegistrationTable.rowCount + 3:
+            self._refresh_scene_roi_columns()
+        self._configure_scene_role_row(row, role_text, True)
+        nodes_by_session = dict(nodes_by_session or {})
+        for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+            column = 2 + timepoint_index
+            selector = self._scene_mask_selector(timepoint_index=timepoint_index)
+            self._connect_scene_role_selector_status(selector)
+            self.sceneRoiTable.setCellWidget(row, column, selector)
+            node_id = nodes_by_session.get(timepoint_index, "")
+            if node_id:
+                self._set_scene_mask_row_node(
+                    row,
+                    column,
+                    node_id,
+                    self.sceneRoiTable,
+                    role=role_text,
+                )
+        self._configure_scene_roi_table_columns()
+        self._update_scene_role_status(row)
+        self._resize_scene_timepoint_table()
+
+    def _add_scene_required_role(self, role):
+        if self._scene_role_row_index(role) >= 0:
+            return
+        row = self.sceneRoiTable.rowCount
+        self.sceneRoiTable.insertRow(row)
+        self._configure_scene_role_row(row, role, True)
+        self._update_scene_role_status(row)
+
+    def _ensure_scene_required_role_rows(self):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        for role in ("registration_roi", "initial_transform", "segmentation"):
+            self._add_scene_required_role(role)
+
+    def _configure_scene_role_row(self, row, role, include=True):
+        role = self._normalize_scene_role_name(role)
+        use_item = qt.QTableWidgetItem("")
+        if self._scene_role_is_analysis_roi(role):
+            use_item.setFlags(use_item.flags() | qt.Qt.ItemIsUserCheckable)
+            use_item.setCheckState(qt.Qt.Checked if include else qt.Qt.Unchecked)
+        else:
+            use_item.setFlags(use_item.flags() & ~qt.Qt.ItemIsEditable)
+        self.sceneRoiTable.setItem(row, 0, use_item)
+        role_item = qt.QTableWidgetItem(self._scene_role_label(role))
+        role_item.setData(qt.Qt.UserRole, role)
+        if not self._scene_role_is_analysis_roi(role):
+            role_item.setFlags(role_item.flags() & ~qt.Qt.ItemIsEditable)
+        self.sceneRoiTable.setItem(row, 1, role_item)
+        for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+            column = 2 + timepoint_index
+            if role == "initial_transform":
+                self.sceneRoiTable.setCellWidget(row, column, self._scene_node_selector(["vtkMRMLLinearTransformNode"]))
+            else:
+                selector = self._scene_mask_selector(timepoint_index=timepoint_index)
+                self._connect_scene_role_selector_status(selector)
+                self.sceneRoiTable.setCellWidget(row, column, selector)
+        self.sceneRoiTable.setItem(row, self._scene_status_column(), qt.QTableWidgetItem(""))
+
+    def _connect_scene_role_selector_status(self, selector):
+        try:
+            selector.currentIndexChanged.connect(
+                lambda _index=0, selector=selector: self._update_scene_role_status_for_selector(selector)
+            )
+        except Exception:
+            pass
+
+    def _update_scene_role_status_for_selector(self, selector):
+        if selector is None or not hasattr(self, "sceneRoiTable"):
+            return
+        status_column = self._scene_status_column()
+        for row in range(self.sceneRoiTable.rowCount):
+            for column in range(2, status_column):
+                if self.sceneRoiTable.cellWidget(row, column) is selector:
+                    self._update_scene_role_status(row)
+                    return
+
+    def _restore_scene_role_row(self, row, role_row):
+        role = role_row["role"]
+        for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+            column = 2 + timepoint_index
+            if role == "initial_transform":
+                node_id = role_row["node_ids"][timepoint_index] if timepoint_index < len(role_row["node_ids"]) else ""
+                self._set_scene_row_node(row, column, node_id, self.sceneRoiTable)
+                continue
+            node_id = role_row["node_ids"][timepoint_index] if timepoint_index < len(role_row["node_ids"]) else ""
+            segment_id = role_row["segment_ids"][timepoint_index] if timepoint_index < len(role_row["segment_ids"]) else ""
+            policy = role_row["policies"][timepoint_index] if timepoint_index < len(role_row["policies"]) else "none"
+            self._set_scene_mask_row_node(row, column, node_id, self.sceneRoiTable, role=role, segment_id=segment_id)
+            self._set_scene_mask_row_policy(row, column, policy, self.sceneRoiTable)
+
+    def _scene_role_rows(self):
+        rows = []
+        if not hasattr(self, "sceneRoiTable"):
+            return rows
+        for row in range(self.sceneRoiTable.rowCount):
+            role = self._scene_role_at_row(row)
+            if not role:
+                continue
+            node_ids = []
+            segment_ids = []
+            policies = []
+            for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+                column = 2 + timepoint_index
+                if role == "initial_transform":
+                    node_ids.append(self._scene_selected_node_id(row, column, self.sceneRoiTable))
+                    segment_ids.append("")
+                    policies.append("node" if node_ids[-1] else "none")
+                else:
+                    node_ids.append(self._scene_selected_mask_node_id(row, column, self.sceneRoiTable))
+                    segment_ids.append(self._scene_selected_mask_segment_id(row, column, self.sceneRoiTable))
+                    policies.append(self._scene_selected_mask_policy(row, column, self.sceneRoiTable))
+            rows.append(
+                {
+                    "role": role,
+                    "include": self._scene_role_included(row),
+                    "node_ids": tuple(node_ids),
+                    "segment_ids": tuple(segment_ids),
+                    "policies": tuple(policies),
+                }
+            )
+        return rows
+
+    def _scene_role_at_row(self, row):
+        item = self.sceneRoiTable.item(row, 1)
+        if item is None:
+            return ""
+        role = item.data(qt.Qt.UserRole)
+        role_data = self._normalize_scene_role_name(role)
+        if self._scene_role_is_analysis_roi(role_data):
+            if str(item.text()).strip() == str(self._scene_role_label(role_data)).strip():
+                return role_data
+            return self._normalize_scene_role_name(item.text())
+        return self._normalize_scene_role_name(role_data or item.text())
+
+    def _scene_role_row_index(self, role):
+        normalized = self._normalize_scene_role_name(role)
+        for row in range(self.sceneRoiTable.rowCount):
+            if self._scene_role_at_row(row) == normalized:
+                return row
+        return -1
+
+    def _scene_role_included(self, row):
+        role = self._scene_role_at_row(row)
+        if not self._scene_role_is_analysis_roi(role):
+            return True
+        item = self.sceneRoiTable.item(row, 0)
+        return item is None or item.checkState() == qt.Qt.Checked
+
+    def _scene_role_is_analysis_roi(self, role):
+        return self._normalize_scene_role_name(role) not in {"registration_roi", "initial_transform", "segmentation"}
+
+    def _scene_role_display_name(self, role):
+        return self._scene_role_label(role)
+
+    def _scene_role_display_labels(self):
+        labels = {}
+        if not hasattr(self, "sceneRoiTable"):
+            return labels
+        for row in range(self.sceneRoiTable.rowCount):
+            role = self._scene_role_at_row(row)
+            if not self._scene_role_is_analysis_roi(role):
+                continue
+            item = self.sceneRoiTable.item(row, 1)
+            label = str(item.text() if item is not None else "").strip()
+            if label:
+                labels[role] = label
+        return labels
+
+    def _scene_display_compartment_name(self, compartment):
+        normalized = self._normalize_scene_role_name(compartment)
+        table_labels = self._scene_role_display_labels()
+        if normalized in table_labels:
+            return table_labels[normalized]
+        labels = {
+            "roi1": "full",
+            "roi2": "trab",
+            "roi3": "cort",
+            "roi_union": "ROI union",
+        }
+        return labels.get(normalized, str(compartment or "full"))
+
+    def _scene_role_label(self, role):
+        labels = dict(getattr(self, "_scene_role_labels", {}) or {})
+        labels.update({
+            "registration_roi": "Registration ROI",
+            "initial_transform": "Initial transform",
+            "segmentation": "Segmentation",
+            "roi1": "full",
+            "roi2": "trab",
+            "roi3": "cort",
+        })
+        normalized = self._normalize_scene_role_name(role)
+        return labels.get(normalized, normalized)
+
+    def _normalize_scene_role_name(self, role):
+        value = re.sub(r"[^a-zA-Z0-9]+", "_", str(role or "").strip().lower()).strip("_")
+        if value in {"registration", "reg", "regmask", "registration_mask"}:
+            return "registration_roi"
+        if value in {"seg", "bone_seg", "bone_segmentation", "bone_mask"}:
+            return "segmentation"
+        if value in {"transform", "initial_registration", "initial_tfm"}:
+            return "initial_transform"
+        return value or "roi"
+
+    def _scene_compartment_is_interactive_source(self, compartment):
+        normalized = self._normalize_scene_role_name(compartment)
+        return normalized not in {"roi_union"}
+
+    def _scene_remodelling_context_matches_pair(self, candidate_ctx, target_ctx):
+        if not candidate_ctx or not target_ctx:
+            return False
+        for key in ("subject_id", "site", "t0", "t1"):
+            if str(candidate_ctx.get(key, "")) != str(target_ctx.get(key, "")):
+                return False
+        return True
+
+    def _find_loaded_interactive_remodelling_node_for_context(self, target_ctx, preferred_compartment="full"):
+        scene = slicer.mrmlScene
+        matches = []
+        preferred = str(preferred_compartment or "full")
+        for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
+            for index in range(scene.GetNumberOfNodesByClass(class_name)):
+                node = scene.GetNthNodeByClass(index, class_name)
+                if node is None:
+                    continue
+                if str(node.GetAttribute("TimelapsedHRpQCT.RemodellingFull") or "") != "1":
+                    continue
+                source_path = str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
+                if not source_path:
+                    continue
+                ctx = self._parse_remodelling_source_context(source_path)
+                if not self._scene_remodelling_context_matches_pair(ctx, target_ctx):
+                    continue
+                compartment = str((ctx or {}).get("compartment", ""))
+                if not self._scene_compartment_is_interactive_source(compartment):
+                    continue
+                rank = 0 if compartment == preferred else 1
+                matches.append((rank, self._remodelling_source_sort_key(source_path), node))
+        if not matches:
+            return None
+        return sorted(matches, key=lambda item: (item[0], item[1]))[0][2]
+
+    def _compute_pair_union_remodelling_preview(self, target_ctx, source_path=None):
+        from timelapsedhrpqct.analysis import build_series_common_masks
+
+        source_node = self._find_loaded_interactive_remodelling_node_for_context(
+            target_ctx,
+            preferred_compartment="full",
+        )
+        source_path = str(source_path or "")
+        if not source_path and source_node is None:
+            raise ValueError("No loaded per-ROI remodelling source is available for this pair.")
+        if not source_path:
+            source_path = str(source_node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
+        preview_inputs = self._get_interactive_preview_inputs(source_path)
+        support_t0 = np.asarray(preview_inputs["support_mask_t0"], dtype=bool)
+        support_t1 = np.asarray(preview_inputs["support_mask_t1"], dtype=bool)
+        valid_union = np.zeros_like(support_t0, dtype=bool)
+        compartments = self._pair_metric_compartments(preview_inputs)
+        for compartment in compartments:
+            comp_t0, comp_t1 = self._preview_compartment_masks(preview_inputs, compartment)
+            valid = build_series_common_masks(
+                {
+                    "full": [support_t0, support_t1],
+                    compartment: [comp_t0, comp_t1],
+                },
+                [compartment],
+                int(self._analysis_erosion_voxels),
+                full_mask_dilation_voxels=int(self.analysisFullMaskDilation.value),
+            )[compartment]
+            valid_union |= np.asarray(valid, dtype=bool)
+        preview = self._compute_pair_remodelling_preview_from_cached_delta(
+            preview_inputs,
+            valid_mask=valid_union,
+            label_map=self._interactive_preview_label_map(),
+        )
+        preview_inputs["current_label_arr"] = preview.label_image
+        return preview, preview_inputs, source_node, compartments
+
+    def _scene_status_column(self):
+        return self.sceneRoiTable.columnCount - 1
+
+    def _update_scene_role_status(self, row):
+        if not hasattr(self, "sceneRoiTable") or row < 0:
+            return
+        role = self._scene_role_at_row(row)
+        total = int(self.sceneRegistrationTable.rowCount)
+        present = 0
+        tooltip_lines = []
+        for timepoint_index in range(total):
+            column = 2 + timepoint_index
+            session_item = self.sceneRegistrationTable.item(timepoint_index, 0)
+            session_label = session_item.text() if session_item is not None else f"ses-{timepoint_index + 1}"
+            if role == "initial_transform":
+                node_id = self._scene_selected_node_id(row, column, self.sceneRoiTable)
+                present += 1 if node_id else 0
+                tooltip_lines.append(f"{session_label}: {self._scene_node_name(node_id) if node_id else 'None'}")
+            else:
+                node_id = self._scene_selected_mask_node_id(row, column, self.sceneRoiTable)
+                segment_id = self._scene_selected_mask_segment_id(row, column, self.sceneRoiTable)
+                selected = self._scene_selected_mask_policy(row, column, self.sceneRoiTable) != "none"
+                present += 1 if selected else 0
+                tooltip_lines.append(f"{session_label}: {self._scene_mask_choice_name(node_id, segment_id) if selected else 'None'}")
+        if role == "initial_transform":
+            text = f"Optional {present}/{total}"
+        elif present == total and total:
+            text = f"Ready {present}/{total}"
+        elif present:
+            text = f"Missing {total - present}/{total}"
+        else:
+            text = f"Missing {total}/{total}" if total else "No sessions"
+        status_item = self.sceneRoiTable.item(row, self._scene_status_column())
+        if status_item is None:
+            status_item = qt.QTableWidgetItem("")
+            self.sceneRoiTable.setItem(row, self._scene_status_column(), status_item)
+        status_item.setText(text)
+        tooltip = "\n".join(tooltip_lines)
+        for column in (1, self._scene_status_column()):
+            item = self.sceneRoiTable.item(row, column)
+            if item is not None:
+                item.setToolTip(tooltip)
+        self._update_scene_role_mapping_visibility()
+
+    def _scene_node_name(self, node_id):
+        node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id else None
+        return str(node.GetName() or node_id) if node is not None else str(node_id or "")
+
+    def _scene_mask_choice_name(self, node_id, segment_id):
+        node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id else None
+        if node is None:
+            return str(node_id or "")
+        if segment_id and node.IsA("vtkMRMLSegmentationNode"):
+            segment = node.GetSegmentation().GetSegment(str(segment_id))
+            if segment is not None:
+                return str(segment.GetName() or segment_id)
+        return str(node.GetName() or node_id)
+
+    def _remove_scene_roi(self):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        row = self.sceneRoiTable.currentRow()
+        if row < 0:
+            row = self.sceneRoiTable.rowCount - 1
+        if row >= 0 and self._scene_role_is_analysis_roi(self._scene_role_at_row(row)):
+            self.sceneRoiTable.removeRow(row)
+            self._resize_scene_timepoint_table()
+
+    def _auto_detect_scene_rois(self):
+        discovery = discover_timelapsed_scene_timepoints(self._scene_node_candidates())
+        timepoints = list(discovery.timepoints)
+        self._populate_scene_roi_rows_from_timepoints(timepoints, reapply_existing=True)
+        for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+            source_node = self._scene_selected_table_node(timepoint_index, 2, self.sceneRegistrationTable)
+            self._apply_scene_detected_roles_for_timepoint(timepoint_index, source_node)
+
+    def _scene_selected_table_node(self, row, column, table):
+        selector = table.cellWidget(row, column)
+        if selector is None:
+            return None
+        try:
+            return selector.currentNode()
+        except Exception:
+            return None
+
+    def _populate_scene_roi_rows_from_timepoints(self, timepoints, reapply_existing=False):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        existing_roles = []
+        for row in range(self.sceneRoiTable.rowCount):
+            role = self._scene_role_at_row(row)
+            if role:
+                existing_roles.append(role)
+        for role, attr in (
+            ("roi1", "full_mask_node_id"),
+            ("roi2", "trab_mask_node_id"),
+            ("roi3", "cort_mask_node_id"),
+        ):
+            nodes_by_session = {
+                index: getattr(timepoint, attr, "")
+                for index, timepoint in enumerate(timepoints)
+                if getattr(timepoint, attr, "")
+            }
+            if nodes_by_session and (role not in existing_roles or reapply_existing):
+                if role in existing_roles:
+                    role_row = self._scene_role_row_index(role)
+                    for timepoint_index, node_id in nodes_by_session.items():
+                        column = 2 + timepoint_index
+                        segment_attr = attr.replace("_node_id", "_segment_id")
+                        segment_id = getattr(timepoints[timepoint_index], segment_attr, "")
+                        self._set_scene_mask_row_node(role_row, column, node_id, self.sceneRoiTable, role=role, segment_id=segment_id)
+                        self._set_scene_mask_row_policy(role_row, column, "node", self.sceneRoiTable)
+                    continue
+                self._add_scene_roi(role, nodes_by_session)
+                existing_roles.append(role)
+        for row in range(self.sceneRoiTable.rowCount):
+            self._update_scene_role_status(row)
+        self._update_scene_role_mapping_visibility()
 
     def _add_scene_timepoint(self, timepoint=None):
         if not isinstance(timepoint, TimelapsedSceneTimepoint):
             timepoint = None
-        row = self.sceneTimepointTable.rowCount
-        self.sceneTimepointTable.insertRow(row)
+        row = self.sceneRegistrationTable.rowCount
+        self.sceneRegistrationTable.insertRow(row)
         session_id = timepoint.session_id if timepoint is not None else f"ses-{row + 1}"
-        self.sceneTimepointTable.setItem(row, 0, qt.QTableWidgetItem(session_id))
+        self.sceneRegistrationTable.setItem(row, 0, qt.QTableWidgetItem(session_id))
         image_selector = self._scene_node_selector(["vtkMRMLScalarVolumeNode"])
-        self.sceneTimepointTable.setCellWidget(row, 1, image_selector)
-        for column in range(2, 6):
-            selector = self._scene_mask_selector()
-            selector.currentIndexChanged.connect(
-                lambda _index, selector=selector, column=column: self._on_scene_mask_policy_changed(selector, column)
-            )
-            self.sceneTimepointTable.setCellWidget(row, column, selector)
-        self.sceneTimepointTable.setCellWidget(
-            row,
-            6,
-            self._scene_node_selector(["vtkMRMLTransformNode"]),
-        )
+        self.sceneRegistrationTable.setCellWidget(row, 1, image_selector)
+        self.sceneRegistrationTable.setCellWidget(row, 2, self._scene_segmentation_node_selector())
         if timepoint is not None:
-            self._set_scene_row_node(row, 1, timepoint.image_node_id)
-            self._set_scene_mask_row_node(row, 2, timepoint.full_mask_node_id)
-            self._set_scene_mask_row_node(row, 3, timepoint.trab_mask_node_id)
-            self._set_scene_mask_row_node(row, 4, timepoint.cort_mask_node_id)
-            self._set_scene_mask_row_node(row, 5, timepoint.seg_mask_node_id)
-            self._set_scene_mask_row_policy(row, 2, timepoint.full_mask_policy)
-            self._set_scene_mask_row_policy(row, 3, timepoint.trab_mask_policy)
-            self._set_scene_mask_row_policy(row, 4, timepoint.cort_mask_policy)
-            self._set_scene_mask_row_policy(row, 5, timepoint.seg_mask_policy)
-            self._set_scene_row_node(row, 6, timepoint.transform_node_id)
+            self._set_scene_row_node(row, 1, timepoint.image_node_id, self.sceneRegistrationTable)
+            source_node_id = (
+                timepoint.seg_mask_node_id
+                or timepoint.full_mask_node_id
+                or timepoint.trab_mask_node_id
+                or timepoint.cort_mask_node_id
+                or timepoint.reg_mask_node_id
+            )
+            self._set_scene_row_node(row, 2, source_node_id, self.sceneRegistrationTable)
+        self._refresh_scene_roi_columns()
+        if timepoint is not None:
+            session_index = self.sceneRegistrationTable.rowCount - 1
+            mappings = {
+                "registration_roi": (timepoint.reg_mask_node_id, timepoint.reg_mask_segment_id, timepoint.reg_mask_policy),
+                "segmentation": (timepoint.seg_mask_node_id, timepoint.seg_mask_segment_id, timepoint.seg_mask_policy),
+            }
+            for role, (node_id, segment_id, policy) in mappings.items():
+                role_row = self._scene_role_row_index(role)
+                if role_row >= 0:
+                    column = 2 + session_index
+                    self._set_scene_mask_row_node(role_row, column, node_id, self.sceneRoiTable, role=role, segment_id=segment_id)
+                    self._set_scene_mask_row_policy(role_row, column, policy, self.sceneRoiTable)
+                    self._update_scene_role_status(role_row)
+            transform_row = self._scene_role_row_index("initial_transform")
+            if transform_row >= 0:
+                self._set_scene_row_node(transform_row, 2 + session_index, timepoint.transform_node_id, self.sceneRoiTable)
+                self._update_scene_role_status(transform_row)
         self._resize_scene_timepoint_table()
 
-    def _set_scene_row_node(self, row, column, node_id):
-        if not node_id:
+    def _set_scene_row_node(self, row, column, node_id, table=None):
+        table = table or self.sceneRegistrationTable
+        selector = table.cellWidget(row, column)
+        if selector is None:
             return
-        selector = self.sceneTimepointTable.cellWidget(row, column)
+        if not node_id:
+            selector.setCurrentNode(None)
+            return
         node = slicer.mrmlScene.GetNodeByID(str(node_id)) if selector is not None else None
         if node is not None:
             selector.setCurrentNode(node)
 
-    def _set_scene_mask_row_node(self, row, column, node_id):
-        selector = self.sceneTimepointTable.cellWidget(row, column)
+    def _scene_transform_nodes_by_pair(self):
+        matches = {}
+        scene = slicer.mrmlScene
+        for index in range(scene.GetNumberOfNodes()):
+            node = scene.GetNthNode(index)
+            if node is None or not node.IsA("vtkMRMLTransformNode"):
+                continue
+            if not self._scene_transform_is_supported_initial_transform(node):
+                continue
+            storage_path = self._scene_transform_storage_path(node)
+            if storage_path is None:
+                continue
+            parsed = self._scene_transform_pair_and_kind_from_path(storage_path)
+            if parsed is None:
+                continue
+            moving_session, fixed_session, kind = parsed
+            matches.setdefault((moving_session, fixed_session), []).append((kind, node))
+        return matches
+
+    def _scene_transform_rank_for_registration_reuse(self, kind):
+        kind = str(kind or "").lower()
+        ranks = {"pairwise": 0}
+        return ranks.get(kind, 99)
+
+    def _select_scene_initial_transforms_for_registration_reuse(self):
+        transform_row = self._scene_role_row_index("initial_transform")
+        if transform_row < 0 or self.sceneRegistrationTable.rowCount < 2:
+            return
+        transforms_by_pair = self._scene_transform_nodes_by_pair()
+        session_ids = []
+        for row in range(self.sceneRegistrationTable.rowCount):
+            item = self.sceneRegistrationTable.item(row, 0)
+            session_ids.append(str(item.text() if item is not None else "").strip())
+        for row in range(1, self.sceneRegistrationTable.rowCount):
+            moving_session = session_ids[row]
+            fixed_session = session_ids[row - 1]
+            candidates = transforms_by_pair.get((moving_session, fixed_session), [])
+            candidates = [(kind, node) for kind, node in candidates if str(kind).lower() == "pairwise"]
+            if not candidates:
+                self._set_scene_row_node(transform_row, 2 + row, "", self.sceneRoiTable)
+                continue
+            _rank, selected_node = min(
+                (
+                    (self._scene_transform_rank_for_registration_reuse(kind), node)
+                    for kind, node in candidates
+                ),
+                key=lambda item: item[0],
+            )
+            self._set_scene_row_node(transform_row, 2 + row, selected_node.GetID(), self.sceneRoiTable)
+        self._update_scene_role_status(transform_row)
+
+    def _set_scene_mask_row_node(self, row, column, node_id, table=None, role=None, segment_id=""):
+        table = table or self.sceneRoiTable
+        selector = table.cellWidget(row, column)
         if selector is None:
             return
         if not node_id:
-            index = selector.findData("__generate__")
+            index = selector.findData("__none__")
             if index >= 0:
                 selector.setCurrentIndex(index)
             return
-        index = selector.findData(str(node_id))
+        index = selector.findData(_encode_scene_mask_choice(node_id, segment_id))
         if index >= 0:
             selector.setCurrentIndex(index)
+            return
+        role_segment_id = self._scene_segment_id_for_node_role(node_id, role)
+        if role_segment_id:
+            index = selector.findData(_encode_scene_mask_choice(node_id, role_segment_id))
+            if index >= 0:
+                selector.setCurrentIndex(index)
+                return
+        for item_index in range(selector.count):
+            value_node_id, _segment_id = _decode_scene_mask_choice(selector.itemData(item_index))
+            if value_node_id == str(node_id):
+                selector.setCurrentIndex(item_index)
+                return
 
-    def _set_scene_mask_row_policy(self, row, column, policy):
-        selector = self.sceneTimepointTable.cellWidget(row, column)
+    def _scene_segment_id_for_node_role(self, node_id, role):
+        node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id else None
+        if node is None or not node.IsA("vtkMRMLSegmentationNode"):
+            return ""
+        return (
+            self._segmentation_segment_id_for_role(node, role)
+            or self._segmentation_segment_id_for_role(node, self._scene_default_segment_match_role(role))
+            or ""
+        )
+
+    def _scene_default_segment_match_role(self, role):
+        normalized = self._normalize_scene_role_name(role)
+        return {
+            "roi1": "full",
+            "roi2": "trab",
+            "roi3": "cort",
+        }.get(normalized, normalized)
+
+    def _set_scene_mask_row_policy(self, row, column, policy, table=None):
+        table = table or self.sceneRoiTable
+        selector = table.cellWidget(row, column)
         if selector is None:
             return
         normalized = str(policy or "").strip().lower()
         policy_value = ""
         if normalized == "none":
             policy_value = "__none__"
-        elif normalized == "generate":
-            policy_value = "__generate__"
         if policy_value:
             index = selector.findData(policy_value)
             if index >= 0:
@@ -1871,16 +2699,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 finally:
                     self._syncing_scene_mask_policy = previous
 
-    def _on_scene_mask_policy_changed(self, selector, column):
+    def _on_scene_mask_policy_changed(self, selector, column, table=None):
         if self._syncing_scene_mask_policy:
             return
+        table = table or self.sceneRoiTable
+        if hasattr(self, "sceneRoiTable") and table is self.sceneRoiTable:
+            return
         value = str(selector.currentData or "") if selector is not None else ""
-        if value not in {"__generate__", "__none__"}:
+        if value != "__none__":
             return
         self._syncing_scene_mask_policy = True
         try:
-            for row in range(self.sceneTimepointTable.rowCount):
-                other = self.sceneTimepointTable.cellWidget(row, column)
+            for row in range(table.rowCount):
+                other = table.cellWidget(row, column)
                 if other is None or other is selector:
                     continue
                 index = other.findData(value)
@@ -1890,25 +2721,29 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._syncing_scene_mask_policy = False
 
     def _remove_scene_timepoint(self):
-        row = self.sceneTimepointTable.currentRow()
+        row = self.sceneRegistrationTable.currentRow()
         if row < 0:
-            row = self.sceneTimepointTable.rowCount - 1
+            row = self.sceneRegistrationTable.rowCount - 1
         if row >= 0:
-            self.sceneTimepointTable.removeRow(row)
+            self.sceneRegistrationTable.removeRow(row)
+            self._refresh_scene_roi_columns()
             self._resize_scene_timepoint_table()
 
     def _move_scene_timepoint(self, offset):
-        row = self.sceneTimepointTable.currentRow()
+        row = self.sceneRegistrationTable.currentRow()
         target = row + int(offset)
-        if row < 0 or target < 0 or target >= self.sceneTimepointTable.rowCount:
+        if row < 0 or target < 0 or target >= self.sceneRegistrationTable.rowCount:
             return
         timepoints = list(self._scene_timepoints())
+        rois = list(self._scene_roi_selections())
         moving = timepoints.pop(row)
         timepoints.insert(target, moving)
-        self.sceneTimepointTable.setRowCount(0)
+        self.sceneRegistrationTable.setRowCount(0)
+        self.sceneRoiTable.setRowCount(0)
         for timepoint in timepoints:
             self._add_scene_timepoint(timepoint)
-        self.sceneTimepointTable.selectRow(target)
+        self._set_scene_roi_selections(rois)
+        self.sceneRegistrationTable.selectRow(target)
         self._resize_scene_timepoint_table()
 
     def _scene_node_candidates(self):
@@ -1917,6 +2752,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for index in range(scene.GetNumberOfNodes()):
             node = scene.GetNthNode(index)
             if node is None:
+                continue
+            if node.IsA("vtkMRMLTransformNode") and not self._scene_transform_is_supported_initial_transform(node):
                 continue
             if not (
                 node.IsA("vtkMRMLScalarVolumeNode")
@@ -1953,11 +2790,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return candidates
 
     def _on_discover_scene_timepoints(self):
+        self._remove_scene_run_nonlinear_transform_nodes()
         discovery = discover_timelapsed_scene_timepoints(self._scene_node_candidates())
         if not bool(self.sceneAppendDiscoveryCheck.checked):
-            self.sceneTimepointTable.setRowCount(0)
+            self.sceneRegistrationTable.setRowCount(0)
+            self.sceneRoiTable.setRowCount(0)
         for timepoint in discovery.timepoints:
             self._add_scene_timepoint(timepoint)
+        self._populate_scene_roi_rows_from_timepoints(discovery.timepoints)
+        self._select_scene_initial_transforms_for_registration_reuse()
         self._resize_scene_timepoint_table()
         if discovery.subject_id:
             self._scene_subject_id = discovery.subject_id
@@ -1965,85 +2806,77 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._scene_site = discovery.site
         count = len(discovery.timepoints)
         self.sceneStatusLabel.text = (
-            f"Best guess: {discovery.image_count} image(s), {discovery.matched_mask_count}/"
-            f"{discovery.mask_count} mask(s) matched; added {count} timepoint row(s)."
+            f"Best guess: {discovery.image_count} image node(s), {discovery.mask_count} mask node(s), "
+            f"{discovery.matched_mask_count} matched mask role(s); added {count} timepoint row(s)."
         )
 
-    def _scene_selected_node_id(self, row, column):
-        selector = self.sceneTimepointTable.cellWidget(row, column)
+    def _scene_selected_node_id(self, row, column, table=None):
+        table = table or self.sceneRegistrationTable
+        selector = table.cellWidget(row, column)
         node = selector.currentNode() if selector is not None else None
+        if node is not None and node.IsA("vtkMRMLTransformNode") and not self._scene_transform_is_supported_initial_transform(node):
+            return ""
         return node.GetID() if node is not None else ""
 
-    def _scene_selected_mask_node_id(self, row, column):
-        selector = self.sceneTimepointTable.cellWidget(row, column)
+    def _scene_selected_mask_node_id(self, row, column, table=None):
+        table = table or self.sceneRoiTable
+        selector = table.cellWidget(row, column)
         value = str(selector.currentData or "") if selector is not None else ""
-        if value in {"__generate__", "__none__"}:
+        if value == "__none__":
             return ""
-        if slicer.mrmlScene.GetNodeByID(value) is None:
+        node_id, _segment_id = _decode_scene_mask_choice(value)
+        if slicer.mrmlScene.GetNodeByID(node_id) is None:
             return ""
-        return value
+        return node_id
 
-    def _scene_selected_mask_policy(self, row, column):
-        selector = self.sceneTimepointTable.cellWidget(row, column)
+    def _scene_selected_mask_segment_id(self, row, column, table=None):
+        table = table or self.sceneRoiTable
+        selector = table.cellWidget(row, column)
+        value = str(selector.currentData or "") if selector is not None else ""
+        if value == "__none__":
+            return ""
+        node_id, segment_id = _decode_scene_mask_choice(value)
+        if not segment_id or slicer.mrmlScene.GetNodeByID(node_id) is None:
+            return ""
+        return segment_id
+
+    def _scene_selected_mask_policy(self, row, column, table=None):
+        table = table or self.sceneRoiTable
+        selector = table.cellWidget(row, column)
         value = str(selector.currentData or "") if selector is not None else ""
         if value == "__none__":
             return "none"
-        if value == "__generate__" or not value:
-            return "generate"
-        if slicer.mrmlScene.GetNodeByID(value) is None:
-            return "generate"
+        if not value:
+            return "none"
+        node_id, _segment_id = _decode_scene_mask_choice(value)
+        if slicer.mrmlScene.GetNodeByID(node_id) is None:
+            return "none"
         return "node"
 
-    def _scene_mask_generation_requested(self):
-        if not hasattr(self, "sceneTimepointTable"):
-            return True
-        for row in range(self.sceneTimepointTable.rowCount):
-            for column in range(2, 6):
-                selector = self.sceneTimepointTable.cellWidget(row, column)
-                if selector is not None and str(selector.currentData or "") == "__generate__":
-                    return True
-        return False
-
     def _scene_requested_mask_roles(self):
-        roles = []
-        role_columns = [("full", 2), ("trab", 3), ("cort", 4)]
-        for role, column in role_columns:
-            for row in range(self.sceneTimepointTable.rowCount):
-                if self._scene_selected_mask_policy(row, column) != "none":
-                    roles.append(role)
-                    break
+        roles = [roi.role for roi in self._scene_roi_selections() if any(policy != "none" for policy in roi.policies)]
         return roles or ["full"]
 
     def _scene_segmentation_requested(self):
-        if not hasattr(self, "sceneTimepointTable"):
-            return True
-        for row in range(self.sceneTimepointTable.rowCount):
-            if self._scene_selected_mask_policy(row, 5) != "none":
-                return True
-        return False
-
-    def _scene_segmentation_generation_requested(self):
-        if not hasattr(self, "sceneTimepointTable"):
-            return True
-        for row in range(self.sceneTimepointTable.rowCount):
-            selector = self.sceneTimepointTable.cellWidget(row, 5)
-            if selector is not None and str(selector.currentData or "") == "__generate__":
+        row = self._scene_role_row_index("segmentation")
+        if row < 0:
+            return False
+        for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+            if self._scene_selected_mask_policy(row, 2 + timepoint_index, self.sceneRoiTable) != "none":
                 return True
         return False
 
     def _scene_analysis_compartments(self):
-        roles = self._scene_requested_mask_roles()
-        return [role for role in ("trab", "cort", "full") if role in roles] or ["full"]
+        return self._scene_requested_mask_roles()
 
     def _scene_settings_override(self):
-        settings = self._settings_override()
+        settings = self._settings_override(force_analysis_controls=True)
         masks_cfg = dict(settings.get("masks") or {})
-        scene_generates_masks = self._scene_mask_generation_requested()
-        masks_cfg["generate"] = scene_generates_masks
-        masks_cfg["overwrite"] = scene_generates_masks
+        masks_cfg["generate"] = False
+        masks_cfg["overwrite"] = False
         masks_cfg["roles"] = self._scene_requested_mask_roles()
-        masks_cfg["generate_segmentation"] = self._scene_segmentation_generation_requested()
-        if not any(role in masks_cfg["roles"] for role in ("trab", "cort")):
+        masks_cfg["generate_segmentation"] = False
+        if not any(role in masks_cfg["roles"] for role in ("trab", "cort", "trab_roi", "cort_roi")):
             inner_cfg = dict(masks_cfg.get("inner") or {})
             inner_cfg["contour_method"] = "none"
             masks_cfg["inner"] = inner_cfg
@@ -2067,39 +2900,246 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _scene_timepoints(self):
         timepoints = []
-        for row in range(self.sceneTimepointTable.rowCount):
-            session_item = self.sceneTimepointTable.item(row, 0)
+        registration_row = self._scene_role_row_index("registration_roi")
+        segmentation_row = self._scene_role_row_index("segmentation")
+        transform_row = self._scene_role_row_index("initial_transform")
+        for row in range(self.sceneRegistrationTable.rowCount):
+            session_item = self.sceneRegistrationTable.item(row, 0)
+            role_column = 2 + row
             timepoints.append(
                 TimelapsedSceneTimepoint(
-                    session_id=session_item.text() if session_item is not None else "",
-                    image_node_id=self._scene_selected_node_id(row, 1),
-                    full_mask_node_id=self._scene_selected_mask_node_id(row, 2),
-                    trab_mask_node_id=self._scene_selected_mask_node_id(row, 3),
-                    cort_mask_node_id=self._scene_selected_mask_node_id(row, 4),
-                    seg_mask_node_id=self._scene_selected_mask_node_id(row, 5),
-                    transform_node_id=self._scene_selected_node_id(row, 6),
-                    full_mask_policy=self._scene_selected_mask_policy(row, 2),
-                    trab_mask_policy=self._scene_selected_mask_policy(row, 3),
-                    cort_mask_policy=self._scene_selected_mask_policy(row, 4),
-                    seg_mask_policy=self._scene_selected_mask_policy(row, 5),
+                    session_id=(
+                        session_item.text()
+                        if session_item is not None
+                        else ""
+                    ),
+                    image_node_id=self._scene_selected_node_id(row, 1, self.sceneRegistrationTable),
+                    reg_mask_node_id=(
+                        self._scene_selected_mask_node_id(registration_row, role_column, self.sceneRoiTable)
+                        if registration_row >= 0
+                        else ""
+                    ),
+                    seg_mask_node_id=(
+                        self._scene_selected_mask_node_id(segmentation_row, role_column, self.sceneRoiTable)
+                        if segmentation_row >= 0
+                        else ""
+                    ),
+                    reg_mask_segment_id=(
+                        self._scene_selected_mask_segment_id(registration_row, role_column, self.sceneRoiTable)
+                        if registration_row >= 0
+                        else ""
+                    ),
+                    seg_mask_segment_id=(
+                        self._scene_selected_mask_segment_id(segmentation_row, role_column, self.sceneRoiTable)
+                        if segmentation_row >= 0
+                        else ""
+                    ),
+                    transform_node_id=(
+                        self._scene_selected_node_id(transform_row, role_column, self.sceneRoiTable)
+                        if transform_row >= 0
+                        else ""
+                    ),
+                    reg_mask_policy=(
+                        self._scene_selected_mask_policy(registration_row, role_column, self.sceneRoiTable)
+                        if registration_row >= 0
+                        else "none"
+                    ),
+                    seg_mask_policy=(
+                        self._scene_selected_mask_policy(segmentation_row, role_column, self.sceneRoiTable)
+                        if segmentation_row >= 0
+                        else "none"
+                    ),
                 )
             )
         return timepoints
 
-    def _export_scene_node(self, node_id, path, reference_node_id=None):
+    def _scene_roi_selections(self):
+        rois = []
+        if not hasattr(self, "sceneRoiTable"):
+            return rois
+        timepoint_count = self.sceneRegistrationTable.rowCount
+        for row in range(self.sceneRoiTable.rowCount):
+            role = self._scene_role_at_row(row)
+            if not self._scene_role_is_analysis_roi(role) or not self._scene_role_included(row):
+                continue
+            node_ids = []
+            segment_ids = []
+            policies = []
+            for timepoint_index in range(timepoint_count):
+                column = 2 + timepoint_index
+                node_ids.append(self._scene_selected_mask_node_id(row, column, self.sceneRoiTable))
+                segment_ids.append(self._scene_selected_mask_segment_id(row, column, self.sceneRoiTable))
+                policies.append(self._scene_selected_mask_policy(row, column, self.sceneRoiTable))
+            rois.append(
+                TimelapsedSceneRoiSelection(
+                    role=role,
+                    node_ids=tuple(node_ids),
+                    segment_ids=tuple(segment_ids),
+                    policies=tuple(policies),
+                )
+            )
+        return rois
+
+    def _set_scene_roi_selections(self, rois):
+        if not hasattr(self, "sceneRoiTable"):
+            return
+        self.sceneRoiTable.setRowCount(0)
+        self._refresh_scene_roi_columns()
+        for roi in rois:
+            self._add_scene_roi(roi.role)
+            row = self.sceneRoiTable.rowCount - 1
+            for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+                column = 2 + timepoint_index
+                node_id = roi.node_ids[timepoint_index] if timepoint_index < len(roi.node_ids) else ""
+                segment_id = roi.segment_ids[timepoint_index] if timepoint_index < len(roi.segment_ids) else ""
+                policy = roi.policies[timepoint_index] if timepoint_index < len(roi.policies) else "none"
+                self._set_scene_mask_row_node(
+                    row,
+                    column,
+                    node_id,
+                    self.sceneRoiTable,
+                    role=roi.role,
+                    segment_id=segment_id,
+                )
+                self._set_scene_mask_row_policy(row, column, policy, self.sceneRoiTable)
+
+    def _segmentation_segment_id_for_role(self, segmentation_node, role):
+        segmentation = segmentation_node.GetSegmentation()
+        role_norm = str(role or "").strip().lower()
+        if not role_norm:
+            return None
+        for index in range(segmentation.GetNumberOfSegments()):
+            segment_id = segmentation.GetNthSegmentID(index)
+            segment = segmentation.GetSegment(segment_id)
+            tag_role = ""
+            try:
+                tag_role = str(segment.GetTag("HRpQCT.Role") or segment.GetTag("BoneContouring.Role") or "")
+            except Exception:
+                tag_role = ""
+            name = str(segment.GetName() or "")
+            if scene_segment_matches_role(name, tag_role, role_norm):
+                return segment_id
+        return None
+
+    def _export_segmentation_role_to_labelmap(self, segmentation_node, temporary_node, reference_node, role, segment_id=""):
+        segmentation = segmentation_node.GetSegmentation()
+        selected_segment_id = str(segment_id or "")
+        segment = segmentation.GetSegment(selected_segment_id) if selected_segment_id else None
+        segment_id = selected_segment_id if segment is not None else self._segmentation_segment_id_for_role(segmentation_node, role)
+        if not segment_id and str(role).strip().lower().replace("-", "_") == "regmask":
+            segment_id = self._segmentation_segment_id_for_role(segmentation_node, "full")
+        if not segment_id:
+            raise ValueError(f"Segmentation {segmentation_node.GetName()} does not contain segment role '{role}'.")
+        segment_ids = vtk.vtkStringArray()
+        segment_ids.InsertNextValue(segment_id)
+        logic = slicer.modules.segmentations.logic()
+        try:
+            return logic.ExportSegmentsToLabelmapNode(
+                segmentation_node,
+                segment_ids,
+                temporary_node,
+                reference_node,
+            )
+        except TypeError:
+            return logic.ExportSegmentsToLabelmapNode(
+                segmentation_node,
+                segment_ids,
+                temporary_node,
+                reference_node,
+                slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY,
+            )
+
+    def _detach_scene_export_transforms(self, *nodes):
+        detached = []
+        seen = set()
+        for node in nodes:
+            if node is None:
+                continue
+            node_id = str(node.GetID() or "")
+            if not node_id or node_id in seen:
+                continue
+            seen.add(node_id)
+            if not hasattr(node, "GetTransformNodeID") or not hasattr(node, "SetAndObserveTransformNodeID"):
+                continue
+            transform_id = node.GetTransformNodeID()
+            detached.append((node, transform_id))
+            if transform_id:
+                node.SetAndObserveTransformNodeID(None)
+        return detached
+
+    def _restore_scene_export_transforms(self, detached_transforms):
+        for node, transform_id in reversed(list(detached_transforms or [])):
+            if node is None or not hasattr(node, "SetAndObserveTransformNodeID"):
+                continue
+            try:
+                node.SetAndObserveTransformNodeID(transform_id)
+            except Exception as exc:
+                self._show(f"[scene] could not restore display transform on {self._scene_node_name(node.GetID())}: {exc}")
+
+    def _scene_transform_storage_path(self, transform_node):
+        if transform_node is None:
+            return None
+        try:
+            storage_node = transform_node.GetStorageNode()
+            if storage_node is not None and storage_node.GetFileName():
+                path = Path(str(storage_node.GetFileName()))
+                if path.exists():
+                    return path
+        except Exception:
+            pass
+        return None
+
+    def _remove_scene_run_nonlinear_transform_nodes(self):
+        removed = 0
+        nodes_to_remove = []
+        scene = slicer.mrmlScene
+        for index in range(scene.GetNumberOfNodes()):
+            node = scene.GetNthNode(index)
+            if node is None or not node.IsA("vtkMRMLTransformNode"):
+                continue
+            storage_path = self._scene_transform_storage_path(node)
+            if storage_path is None or storage_path.suffix.lower() != ".h5":
+                continue
+            storage_text = str(storage_path).replace("\\", "/")
+            if "/TimelapsedScene/derivatives/Timelapsed/scene_runs/" not in storage_text:
+                continue
+            nodes_to_remove.append(node)
+        for node in nodes_to_remove:
+            try:
+                scene.RemoveNode(node)
+                removed += 1
+            except Exception:
+                pass
+        if removed:
+            self._show(f"[scene] removed {removed} generated non-linear transform node(s) from the scene.")
+        return removed
+
+    def _export_scene_node(self, node_id, path, reference_node_id=None, role=None, segment_id=""):
         node = slicer.mrmlScene.GetNodeByID(node_id)
         if node is None:
             raise ValueError(f"Selected scene node is no longer available: {node_id}")
         node_to_save = node
         temporary_node = None
+        detached_transforms = []
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            reference_node = (
+                slicer.mrmlScene.GetNodeByID(reference_node_id)
+                if reference_node_id
+                else None
+            )
+            if node.IsA("vtkMRMLTransformNode"):
+                if not self._scene_transform_is_supported_initial_transform(node):
+                    raise ValueError(
+                        f"Initial transform {node.GetName()} is not a linear .tfm transform. "
+                        "Use a Timelapsed .tfm output or a Slicer linear transform."
+                    )
+                stored_transform_path = self._scene_transform_storage_path(node)
+                if stored_transform_path is not None and Path(stored_transform_path).suffix.lower() == ".tfm":
+                    shutil.copy2(stored_transform_path, path)
+                    return
+            detached_transforms = self._detach_scene_export_transforms(node, reference_node)
             if node.IsA("vtkMRMLSegmentationNode"):
-                reference_node = (
-                    slicer.mrmlScene.GetNodeByID(reference_node_id)
-                    if reference_node_id
-                    else None
-                )
                 if reference_node is None:
                     raise ValueError(
                         f"Segmentation export for {node.GetName()} requires a timepoint image geometry."
@@ -2108,19 +3148,69 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     reference_node,
                     f"{node.GetName()}_timelapsed_scene_labelmap",
                 )
-                ok = slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
-                    node,
-                    temporary_node,
-                    slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY,
-                )
+                if role:
+                    ok = self._export_segmentation_role_to_labelmap(
+                        node,
+                        temporary_node,
+                        reference_node,
+                        role,
+                        segment_id=segment_id,
+                    )
+                else:
+                    ok = slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
+                        node,
+                        temporary_node,
+                        slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY,
+                    )
                 if not ok:
                     raise RuntimeError(f"Could not convert {node.GetName()} to a labelmap.")
                 node_to_save = temporary_node
             if not slicer.util.saveNode(node_to_save, str(path)):
                 raise RuntimeError(f"Could not export {node.GetName()} to {path}")
         finally:
+            self._restore_scene_export_transforms(detached_transforms)
             if temporary_node is not None:
                 slicer.mrmlScene.RemoveNode(temporary_node)
+
+    def _read_scene_mask_array(self, path):
+        return sitk.GetArrayFromImage(sitk.ReadImage(str(path))) > 0
+
+    def _validate_scene_analysis_roi_overlap(self, plan):
+        warnings = []
+        for roi in plan.rois:
+            roi_label = self._scene_display_compartment_name(roi.role)
+            for index, (timepoint, roi_path, policy) in enumerate(
+                zip(plan.timepoints, roi.paths, roi.policies)
+            ):
+                if policy == "none" or roi_path is None or timepoint.seg_mask_path is None:
+                    continue
+                if not Path(roi_path).exists() or not Path(timepoint.seg_mask_path).exists():
+                    continue
+                roi_arr = self._read_scene_mask_array(roi_path)
+                seg_arr = self._read_scene_mask_array(timepoint.seg_mask_path)
+                if roi_arr.shape != seg_arr.shape:
+                    warnings.append(
+                        f"Scene ROI '{roi_label}' in session {timepoint.session_id} has shape "
+                        f"{roi_arr.shape}, but the selected segmentation has shape {seg_arr.shape}. "
+                        "Check Role Mapping for that timepoint."
+                    )
+                    continue
+                if np.count_nonzero(roi_arr & seg_arr) == 0:
+                    roi_vox = int(np.count_nonzero(roi_arr))
+                    seg_vox = int(np.count_nonzero(seg_arr))
+                    overlap_vox = 0
+                    warnings.append(
+                        f"Scene ROI '{roi_label}' in session {timepoint.session_id} "
+                        "does not overlap the selected segmentation. "
+                        f"roi_vox={roi_vox}, seg_vox={seg_vox}, overlap_vox={overlap_vox}. "
+                        "Check Role Mapping for that timepoint or choose "
+                        "an ROI that contains bone."
+                    )
+        if warnings:
+            message = "\n".join(warnings)
+            self._show(message)
+            self.sceneStatusLabel.text = "Scene ROI/segmentation overlap warning. Check log."
+            slicer.util.warningDisplay(message)
 
     def _on_run_scene_pipeline(self):
         if not self._require_pipeline_installed():
@@ -2137,38 +3227,44 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 subject_id=self._scene_subject_id,
                 site=self._scene_site,
                 timepoints=self._scene_timepoints(),
+                rois=self._scene_roi_selections(),
                 run_id=datetime.now().strftime("%Y%m%d_%H%M%S_%f"),
             )
             for timepoint in plan.timepoints:
                 self._export_scene_node(timepoint.image_node_id, timepoint.image_path)
-                for node_id, path in [
-                    (timepoint.full_mask_node_id, timepoint.full_mask_path),
-                    (timepoint.trab_mask_node_id, timepoint.trab_mask_path),
-                    (timepoint.cort_mask_node_id, timepoint.cort_mask_path),
-                    (timepoint.seg_mask_node_id, timepoint.seg_mask_path),
-                    (timepoint.transform_node_id, timepoint.transform_path),
+                for node_id, path, role, segment_id in [
+                    (timepoint.reg_mask_node_id, timepoint.reg_mask_path, "regmask", timepoint.reg_mask_segment_id),
+                    (timepoint.seg_mask_node_id, timepoint.seg_mask_path, "seg", timepoint.seg_mask_segment_id),
+                    (timepoint.transform_node_id, timepoint.transform_path, None, ""),
                 ]:
                     if node_id and path is not None:
                         self._export_scene_node(
                             node_id,
                             path,
                             reference_node_id=timepoint.image_node_id,
+                            role=role,
+                            segment_id=segment_id,
                         )
+            for roi in plan.rois:
+                for timepoint, node_id, path, segment_id in zip(
+                    plan.timepoints,
+                    roi.node_ids,
+                    roi.paths,
+                    roi.segment_ids,
+                ):
+                    if node_id and path is not None:
+                        self._export_scene_node(
+                            node_id,
+                            path,
+                            reference_node_id=timepoint.image_node_id,
+                            role=roi.role,
+                            segment_id=segment_id,
+                        )
+            self._validate_scene_analysis_roi_overlap(plan)
             seeded_transforms = self._seed_scene_transform_registry(plan)
             if seeded_transforms:
                 self._show(f"[timelapsed-slicer] seeded {seeded_transforms} scene transform(s) for registration reuse.")
             scene_settings = self._scene_settings_override()
-            scene_masks_cfg = dict(scene_settings.get("masks") or {})
-            scene_outer_cfg = dict(scene_masks_cfg.get("outer") or {})
-            self._show(
-                "[timelapsed-slicer] Scene mask request: "
-                f"generate={bool(scene_masks_cfg.get('generate', False))}, "
-                f"roles={scene_masks_cfg.get('roles', [])}, "
-                f"segmentation={bool(scene_masks_cfg.get('generate_segmentation', False))}, "
-                f"overwrite={bool(scene_masks_cfg.get('overwrite', False))}, "
-                f"outer_kernel={scene_outer_cfg.get('periosteal_kernelsize', 'default')}, "
-                f"outer_open={scene_outer_cfg.get('periosteal_open_radius', 'default')}."
-            )
             cfg = self.logic.create_override_config(scene_settings, results_root=plan.output_root)
         except Exception as exc:
             self.sceneStatusLabel.text = f"Scene run could not start: {exc}"
@@ -2177,24 +3273,20 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         self._is_full_pipeline_run = True
-        self._run_skips_mask_generation = not self._scene_generate_missing_masks()
+        self._run_skips_mask_generation = True
         self._run_includes_analysis = True
         self._last_scene_plan = plan
         self._set_stage_status("dataset", "done")
         self._set_stage_status("parse", "done")
-        for stage in ("masks", "registration", "analysis"):
+        for stage in ("registration", "analysis"):
             self._set_stage_status(stage, "pending")
-        if self._run_skips_mask_generation:
-            self._set_stage_status("masks", "done")
-            self._active_stage = "registration"
-        else:
-            self._active_stage = "masks"
+        self._active_stage = "registration"
         self._run(
             timelapsed_scene_run_args(
                 plan,
                 mode="regular",
                 config_path=cfg,
-                generate_missing_masks=self._scene_generate_missing_masks(),
+                generate_missing_masks=False,
             )
         )
 
@@ -2208,22 +3300,19 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         root = self._dataset_root()
         if root is None:
             return None
-        # Explicit user override wins.
         override = self.resultsRootPath.currentPath.strip() if hasattr(self, "resultsRootPath") else ""
-        if override:
-            return Path(override)
-        # If the selected folder is already a dataset root, keep it.
-        if root.name == "TimelapsedHRpQCT":
-            return root
-        return root / "TimelapsedHRpQCT"
+        selected = Path(override).expanduser() if override else root
+        if selected.name == "TimelapsedHRpQCT":
+            return selected
+        if selected.name == "derivatives":
+            return selected / "TimelapsedHRpQCT"
+        return selected / "derivatives" / "TimelapsedHRpQCT"
 
     def _derivatives_root(self):
         imported = self._imported_dataset_root()
         if imported is None:
             return None
-        if imported.name == "TimelapsedHRpQCT":
-            return imported
-        return imported / "TimelapsedHRpQCT"
+        return imported
 
     def _show(self, text):
         message = text.rstrip()
@@ -2241,7 +3330,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         def mark_running(stage):
-            order = ["dataset", "parse", "masks", "registration", "analysis"]
+            order = ["dataset", "parse", "registration", "analysis"]
             if stage not in order:
                 return
             for previous in order[: order.index(stage)]:
@@ -2253,16 +3342,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         if "discovered" in text or "scene run from loaded nodes" in text or "import" in text:
             mark_running("parse")
-            return
-
-        if (
-            "mask generation for" in text
-            or "generate-masks" in text
-            or "reading stack image" in text
-            or "segmentation method" in text
-        ):
-            if not getattr(self, "_run_skips_mask_generation", False):
-                mark_running("masks")
             return
 
         if (
@@ -2320,7 +3399,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._update_progress_ui()
 
     def _update_progress_ui(self):
-        order = ["dataset", "parse", "masks", "registration", "analysis"]
+        order = ["dataset", "parse", "registration", "analysis"]
         done = sum(1 for k in order if self._stage_states.get(k) == "done")
         if hasattr(self, "progressBar") and self.progressBar is not None:
             self.progressBar.value = int(done)
@@ -2330,7 +3409,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         label_map = {
             "dataset": "dataset selection",
             "parse": "parse",
-            "masks": "mask generation",
             "registration": "registration",
             "analysis": "analysis",
         }
@@ -2437,7 +3515,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _infer_stage_statuses_from_artifacts(self):
         statuses = {
             "parse": "pending",
-            "masks": "pending",
             "registration": "pending",
             "analysis": "pending",
         }
@@ -2466,8 +3543,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         existing_imported = [record for record in imported_records if self._record_image_exists(record)]
         if existing_imported:
             statuses["parse"] = "done"
-            if all(self._imported_stack_masks_complete(record) for record in existing_imported):
-                statuses["masks"] = "done"
 
         existing_fused = [record for record in fused_records if self._fused_session_complete(record)]
         existing_filled = [
@@ -2518,7 +3593,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self._set_stage_status("dataset", "done" if dataset_text else "pending")
         artifact_statuses = self._infer_stage_statuses_from_artifacts()
-        for stage in ("parse", "masks", "registration", "analysis"):
+        for stage in ("parse", "registration", "analysis"):
             self._set_stage_status(stage, artifact_statuses.get(stage, "pending"))
         self._update_progress_ui()
 
@@ -2539,6 +3614,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         data = self.studyProfileCombo.currentData
         return str(data or "standard")
 
+    def _selected_profile_is_custom(self):
+        return self._selected_config_profile() == "__custom__"
+
     def _available_config_profiles(self):
         try:
             from timelapsedhrpqct.config.profiles import list_config_profiles
@@ -2555,8 +3633,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         combo.clear()
         for profile in self._available_config_profiles():
             combo.addItem(profile, profile)
+        combo.addItem("Custom", "__custom__")
 
     def _profile_cli_args(self):
+        if self._selected_profile_is_custom():
+            return []
         profile = self._selected_config_profile()
         return ["--profile", profile] if profile else []
 
@@ -2599,6 +3680,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return str(profile or "").strip()
 
     def _selected_profile_config_dict(self):
+        if self._selected_profile_is_custom():
+            return {}
         try:
             from dataclasses import asdict
             from timelapsedhrpqct.config.loader import load_config
@@ -2741,6 +3824,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_user_message("info", "Profile applied", source_label)
 
     def _on_apply_study_profile(self, *_args):
+        if self._selected_profile_is_custom():
+            self._update_batch_analysis_options_visibility()
+            self._set_user_message(
+                "info",
+                "Custom analysis settings",
+                "Batch runs will use the analysis options shown below instead of a bundled profile preset.",
+            )
+            return
         if not self.logic.is_pipeline_available():
             _ok, detail = self.logic.pipeline_status()
             self._set_user_message("warn", "Pipeline needs update", detail)
@@ -2773,6 +3864,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.warningDisplay(f"Could not apply profile:\n{exc}")
         finally:
             self._suppress_interactive_preview_updates = False
+            self._update_batch_analysis_options_visibility()
         if applied:
             self._on_apply_interactive_remodelling()
 
@@ -3003,7 +4095,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if queue_update:
             self._queue_interactive_preview_update()
 
-    def _settings_override(self, multistack_enabled=None):
+    def _settings_override(self, multistack_enabled=None, force_analysis_controls=False):
         label_map = {
             "resorption": 1,
             "demineralisation": 2,
@@ -3085,7 +4177,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         masks_override = {
             "outer": outer_cfg,
             "segmentation": segmentation_cfg,
-            "overwrite": not bool(getattr(self, "doNotGenerateMasksCheck", None) and self.doNotGenerateMasksCheck.checked),
+            "generate": False,
+            "overwrite": False,
         }
         if isinstance(profile_masks_cfg.get("roles"), list):
             masks_override["roles"] = list(profile_masks_cfg["roles"])
@@ -3109,7 +4202,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             if isinstance(profile_initial_translation, (list, tuple)) and len(profile_initial_translation) >= 3:
                 initial_translation_voxels = [float(v) for v in profile_initial_translation[:3]]
 
-        return {
+        settings = {
             "import": {
                 # Do not fail when z-slices are not perfectly divisible by stack depth.
                 # Keep the last partial stack to preserve data coverage.
@@ -3131,16 +4224,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "overlap_crop_buffer_voxels": int(self.msOverlapBuffer.value),
                 "initial_translation_voxels": initial_translation_voxels,
             },
-            "analysis": self._analysis_config_from_controls(pair_mode),
             "fusion": {
                 "enable_filling": False,
             },
-            "visualization": {
+        }
+        if self._selected_profile_is_custom() or bool(force_analysis_controls):
+            settings["analysis"] = self._analysis_config_from_controls(pair_mode)
+            settings["visualization"] = {
                 "threshold": float(self.analysisThreshold.value),
                 "cluster_size": int(self.analysisCluster.value),
                 "label_map": label_map,
-            },
-        }
+            }
+        return settings
 
     def _run(self, args):
         try:
@@ -3181,7 +4276,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.applyAnalysisSettingsBtn,
             self.runAnalysisBtn,
             self.seriesSummaryExportBtn,
+            self.clearLoadedResultsBtn,
             self.sceneExportCsvButton,
+            self.sceneClearLoadedButton,
             self.saveAnalysisScenarioBtn,
         ]:
             if btn is not None:
@@ -3963,54 +5060,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return None
 
     def _on_run_masks(self):
-        if not self._require_pipeline_installed():
-            return
-        source_root = self._require_dataset_root()
-        if source_root is None:
-            return
-        try:
-            raw_ingest_mode = self._raw_ingest_mode()
-        except ValueError as exc:
-            slicer.util.errorDisplay(str(exc))
-            return
-        scoped_sessions, scoped_subject, scoped_site = self._sessions_for_processing_scope()
-        if (scoped_subject or scoped_site) and not scoped_sessions:
-            slicer.util.errorDisplay("No parsed sessions available for the selected processing scope.")
-            return
-        run_root = self._make_run_input_root_for_sessions(
-            source_root,
-            ingest_mode=raw_ingest_mode,
-            sessions=scoped_sessions,
-            force_virtual_root=bool(scoped_subject or scoped_site),
+        self._set_user_message(
+            "info",
+            "Mask generation moved to Bone Contouring",
+            "Timelapsed now only consumes existing registration masks, analysis ROIs, and bone segmentations.",
         )
-        if run_root is None:
-            return
-
-        imported = self._require_results_root("Could not resolve imported dataset path.")
-        if imported is None:
-            return
-        cfg = self.logic.create_override_config(self._settings_override(), results_root=imported)
-        self._set_stage_status("masks", "pending")
-        self._is_full_pipeline_run = False
-        self._run_skips_mask_generation = False
-        self._run_includes_analysis = False
-        self._run_sequence(
-            [
-                [
-                    "import",
-                    str(run_root),
-                    "--output-root",
-                    str(imported),
-                    *self._raw_ingest_cli_flags(raw_ingest_mode),
-                    *self._storage_cli_flags(),
-                    *self._raw_discovery_cli_flags(),
-                    *self._profile_cli_args(),
-                    "--config",
-                    cfg,
-                ],
-                ["generate-masks", str(imported), *self._profile_cli_args(), "--config", cfg],
-            ],
-            stages=["masks", "masks"],
+        slicer.util.infoDisplay(
+            "Mask generation moved to Bone Contouring. Timelapsed will not generate masks."
         )
 
     def _on_run_timelapse(self):
@@ -4045,7 +5101,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("analysis", "pending")
         self._active_stage = "registration"
         self._is_full_pipeline_run = False
-        self._run_skips_mask_generation = False
+        self._run_skips_mask_generation = True
         self._run_includes_analysis = True
         cfg = self.logic.create_override_config(
             self._settings_override(multistack_enabled=(mode == "multistack")),
@@ -4084,22 +5140,26 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("analysis", "pending")
         self._active_stage = "analysis"
         self._is_full_pipeline_run = False
-        self._run_skips_mask_generation = False
+        self._run_skips_mask_generation = True
         self._run_includes_analysis = False
         cfg = self.logic.create_override_config(self._settings_override(), results_root=imported)
-        self._run([
+        run_args = [
             "analyse",
             str(imported),
             *(["--subject", str(scoped_subject)] if scoped_subject is not None else []),
             *(["--site", str(scoped_site)] if scoped_site else []),
-            "--thr",
-            str(float(self.analysisThreshold.value)),
-            "--clusters",
-            str(int(self.analysisCluster.value)),
             *self._profile_cli_args(),
             "--config",
             cfg,
-        ])
+        ]
+        if self._selected_profile_is_custom():
+            run_args.extend([
+                "--thr",
+                str(float(self.analysisThreshold.value)),
+                "--clusters",
+                str(int(self.analysisCluster.value)),
+            ])
+        self._run(run_args)
 
     def _current_analysis_requires_segmentation(self):
         return self._current_analysis_method() in {"grayscale_and_binary", "grayscale_marrow_mask"}
@@ -4169,6 +5229,176 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             scoped_site=scoped_site,
         )
 
+    def _batch_required_analysis_roles(self, settings):
+        analysis_cfg = settings.get("analysis") or {}
+        if not analysis_cfg:
+            profile_cfg = self._selected_profile_config_dict()
+            analysis_cfg = (profile_cfg.get("analysis") or {}) if isinstance(profile_cfg, dict) else {}
+        roles = analysis_cfg.get("compartments")
+        if not isinstance(roles, list) or not roles:
+            roles = ((settings.get("masks") or {}).get("roles") or ["full", "trab", "cort"])
+        normalized = []
+        for role in roles:
+            role_text = str(role or "").strip().lower()
+            if role_text and role_text not in normalized:
+                normalized.append(role_text)
+        return normalized or ["full", "trab", "cort"]
+
+    def _session_preflight_key(self, obj):
+        subject = str(getattr(obj, "subject_id", "") or "").strip()
+        site = str(getattr(obj, "site", "") or "").strip().lower()
+        session_id = str(getattr(obj, "session_id", "") or "").strip()
+        stack_index = getattr(obj, "stack_index", None)
+        try:
+            stack_index = int(stack_index) if stack_index is not None else None
+        except Exception:
+            stack_index = None
+        return subject, site, session_id, stack_index
+
+    def _session_preflight_label(self, key):
+        subject, site, session_id, stack_index = key
+        stack_text = "" if stack_index is None else f" stack-{int(stack_index):02d}"
+        return f"sub-{subject} site-{site} ses-{session_id}{stack_text}"
+
+    def _matching_preflight_entry(self, entries, key):
+        if key in entries:
+            return entries[key]
+        subject, site, session_id, stack_index = key
+        candidates = []
+        if stack_index is None:
+            candidates.append((subject, site, session_id, 1))
+        else:
+            candidates.append((subject, site, session_id, None))
+        for candidate in candidates:
+            if candidate in entries:
+                return entries[candidate]
+        return None
+
+    def _mask_role_exists_for_preflight(self, masks, role):
+        role = str(role or "").strip().lower()
+        if role == "full":
+            return (
+                self._path_exists(masks.get("full"))
+                or self._path_exists(masks.get("regmask"))
+                or any(str(name).lower().startswith("roi") and self._path_exists(path) for name, path in masks.items())
+                or (self._path_exists(masks.get("trab")) and self._path_exists(masks.get("cort")))
+            )
+        return self._path_exists(masks.get(role))
+
+    def _registration_mask_exists_for_preflight(self, masks):
+        return (
+            self._path_exists(masks.get("regmask"))
+            or self._path_exists(masks.get("full"))
+            or (self._path_exists(masks.get("trab")) and self._path_exists(masks.get("cort")))
+            or any(str(role).lower().startswith("roi") and self._path_exists(path) for role, path in masks.items())
+        )
+
+    def _resolve_batch_effective_analysis_roles(self, entries, configured_roles):
+        role_sets = []
+        for entry in entries:
+            roles = {
+                str(role).lower()
+                for role, path in (entry.get("masks") or {}).items()
+                if self._path_exists(path)
+            }
+            role_sets.append(roles)
+        if not role_sets:
+            return []
+        common_roles = set(role_sets[0])
+        for roles in role_sets[1:]:
+            common_roles &= roles
+        roi_roles = sorted(role for role in common_roles if role.startswith("roi"))
+        if roi_roles:
+            return roi_roles
+        if "regmask" in common_roles:
+            return ["regmask"]
+        available_configured = [
+            role for role in configured_roles
+            if all(self._mask_role_exists_for_preflight(entry.get("masks") or {}, role) for entry in entries)
+        ]
+        if available_configured:
+            return available_configured
+        fallback = [
+            role for role in ("trab", "cort", "full")
+            if all(self._mask_role_exists_for_preflight(entry.get("masks") or {}, role) for entry in entries)
+        ]
+        return fallback
+
+    def _missing_batch_required_inputs(self, imported, sessions=None, scoped_subject=None, scoped_site=None, settings=None):
+        settings = settings or self._settings_override()
+        configured_roles = self._batch_required_analysis_roles(settings)
+        sessions = list(sessions or self._last_parsed_sessions or [])
+        entries = {}
+
+        for session in sessions:
+            key = self._session_preflight_key(session)
+            if not key[0] or not key[1] or not key[2]:
+                continue
+            raw_masks = {
+                str(role).lower(): Path(path)
+                for role, path in (getattr(session, "raw_mask_paths", {}) or {}).items()
+                if path is not None
+            }
+            entries[key] = {
+                "label": self._session_preflight_label(key),
+                "masks": raw_masks,
+                "seg": Path(getattr(session, "raw_seg_path")) if getattr(session, "raw_seg_path", None) else None,
+            }
+
+        try:
+            from timelapsedhrpqct.dataset.artifacts import iter_imported_stack_records
+        except Exception as exc:
+            self._show(f"[preflight] could not inspect imported masks: {exc}")
+            imported_records = []
+        else:
+            imported_records = list(iter_imported_stack_records(imported))
+
+        for record in imported_records:
+            key = self._session_preflight_key(record)
+            if scoped_subject is not None and str(key[0]) != str(scoped_subject):
+                continue
+            if scoped_site is not None and str(key[1]).strip().lower() != str(scoped_site):
+                continue
+            entry = self._matching_preflight_entry(entries, key)
+            if entry is None:
+                if sessions:
+                    continue
+                entry = {
+                    "label": self._session_preflight_label(key),
+                    "masks": {},
+                    "seg": None,
+                }
+                entries[key] = entry
+            for role, path in (getattr(record, "mask_paths", {}) or {}).items():
+                if self._path_exists(path):
+                    entry["masks"][str(role).lower()] = Path(path)
+            seg_path = getattr(record, "seg_path", None)
+            if self._path_exists(seg_path):
+                entry["seg"] = Path(seg_path)
+
+        missing = []
+        for key, entry in sorted(entries.items(), key=lambda item: item[0]):
+            if not self._registration_mask_exists_for_preflight(entry.get("masks") or {}):
+                missing.append(f"{entry['label']}: registration mask/ROI")
+            if self._current_analysis_requires_segmentation() and not self._path_exists(entry.get("seg")):
+                missing.append(f"{entry['label']}: bone segmentation")
+
+        groups = {}
+        for key, entry in entries.items():
+            subject, site, _session_id, stack_index = key
+            groups.setdefault((subject, site, stack_index), []).append(entry)
+        for (subject, site, stack_index), group_entries in sorted(groups.items(), key=lambda item: item[0]):
+            if len(group_entries) < 2:
+                continue
+            effective_roles = self._resolve_batch_effective_analysis_roles(group_entries, configured_roles)
+            if not effective_roles:
+                stack_text = "" if stack_index is None else f" stack-{int(stack_index):02d}"
+                missing.append(
+                    f"sub-{subject} site-{site}{stack_text}: analysis ROI "
+                    f"(configured roles: {', '.join(configured_roles)})"
+                )
+        return missing
+
     def _auto_mode_from_sessions(self, sessions=None):
         candidate_sessions = sessions if sessions is not None else (self._last_parsed_sessions or [])
         has_multistack = any(
@@ -4205,22 +5435,36 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if imported is None:
             return
         mode = self._selected_run_mode(scoped_sessions)
-        skip_mask_generation = bool(getattr(self, "doNotGenerateMasksCheck", None) and self.doNotGenerateMasksCheck.checked)
-        if skip_mask_generation and not self._can_skip_mask_generation(
+        settings_override = self._settings_override(multistack_enabled=(mode == "multistack"))
+        missing_inputs = self._missing_batch_required_inputs(
             imported,
             sessions=scoped_sessions,
             scoped_subject=scoped_subject,
             scoped_site=scoped_site,
-        ):
-            slicer.util.errorDisplay(
-                "Cannot skip mask generation with the current analysis options.\n\n"
-                "The selected analysis settings require segmentation masks. "
-                "Provide raw *_SEG.AIM files, use an existing imported dataset with generated segmentations, "
-                "or uncheck 'Do not generate masks'. Raw provided masks/SEG files are imported and used as-is."
+            settings=settings_override,
+        )
+        if missing_inputs:
+            details = "\n".join(f"- {item}" for item in missing_inputs[:12])
+            if len(missing_inputs) > 12:
+                details += f"\n- ... {len(missing_inputs) - 12} more"
+            message = (
+                "Missing required Timelapsed input(s):\n"
+                f"{details}\n\n"
+                "Generate missing masks, ROIs, or bone segmentations in Bone Contouring before running Timelapsed."
             )
+            self._set_user_message(
+                "error",
+                "Missing required inputs",
+                (
+                    "Timelapsed no longer generates masks automatically. "
+                    "Prepare the missing masks, ROIs, or segmentations in Bone Contouring first."
+                ),
+            )
+            self._show("[preflight] " + message.replace("\n", " "))
+            slicer.util.errorDisplay(message)
             return
         cfg = self.logic.create_override_config(
-            self._settings_override(multistack_enabled=(mode == "multistack")),
+            settings_override,
             results_root=imported,
         )
         self._set_user_message(
@@ -4228,22 +5472,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Running full pipeline",
             (
                 f"Mode: <b>{mode}</b>. "
-                + (
-                    "Using existing/provided masks and segmentations; automatic mask generation is disabled."
-                    if skip_mask_generation
-                    else "Automatic mask generation is enabled; raw provided masks/SEG files are preserved and used as inputs."
-                )
+                "Using existing/provided masks, segmentations, and ROI inputs. "
+                "Generate missing inputs in Bone Contouring before running Timelapsed."
             ),
         )
-        for s in ("masks", "registration", "analysis"):
+        for s in ("registration", "analysis"):
             self._set_stage_status(s, "pending")
-        if skip_mask_generation:
-            self._set_stage_status("masks", "done")
-            self._active_stage = "registration"
-        else:
-            self._active_stage = "masks"
+        self._active_stage = "registration"
         self._is_full_pipeline_run = True
-        self._run_skips_mask_generation = skip_mask_generation
+        self._run_skips_mask_generation = True
         self._run_includes_analysis = True
         run_args = [
             "run",
@@ -4259,8 +5496,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "--config",
             cfg,
         ]
-        if skip_mask_generation:
-            run_args.insert(6, "--skip-mask-generation")
+        run_args.append("--skip-mask-generation")
         self._run(run_args)
 
     def _on_finished(self, exit_code, exit_status):
@@ -4293,23 +5529,26 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._queued_commands = []
         self._queued_stages = []
         if self._is_full_pipeline_run and int(exit_code) == 0:
-            for s in ("masks", "registration", "analysis"):
+            for s in ("registration", "analysis"):
                 self._set_stage_status(s, "done")
         elif self._run_includes_analysis and int(exit_code) == 0:
             # Timelapse pipeline commands internally perform discovery/import
             # and analysis, so mark all stages complete for clear 100% progress.
-            for s in ("dataset", "parse", "masks", "registration", "analysis"):
+            for s in ("dataset", "parse", "registration", "analysis"):
                 self._set_stage_status(s, "done")
         self._active_stage = None
         scene_plan = self._last_scene_plan
         self._is_full_pipeline_run = False
-        self._run_skips_mask_generation = False
+        self._run_skips_mask_generation = True
         self._run_includes_analysis = False
         self._last_scene_plan = None
         self.logic.cleanup_temp_files(remove_fallback=False)
         if scene_plan is not None:
             self._adopt_scene_run_as_current_dataset(scene_plan)
             self._load_scene_run_outputs(scene_plan)
+            for s in ("dataset", "parse", "registration", "analysis"):
+                self._set_stage_status(s, "done")
+            self._set_scene_stage_message("Current step: complete")
         else:
             self._refresh_patient_list()
         self._set_user_message("success", "Completed", "Requested step(s) finished successfully.")
@@ -4402,7 +5641,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         is_remodelling_load = (
             hasattr(self, "loadTypeCombo")
-            and self.loadTypeCombo.currentText == "remodelling image (full)"
+            and self.loadTypeCombo.currentText == "remodelling image"
         )
         self.remodellingComparisonCombo.enabled = bool(is_remodelling_load)
         if not is_remodelling_load:
@@ -4426,8 +5665,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception:
             viz_dir = (
                 imported
-                / "derivatives"
-                / "TimelapsedHRpQCT"
                 / f"sub-{subject_id}"
                 / f"site-{site}"
                 / "analysis"
@@ -4439,13 +5676,25 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 viz_dir.glob("*_remodelling.mha")
             )
 
+        remodelling_candidates = []
         for path in candidates:
             ctx = self._parse_remodelling_source_context(path)
             if ctx is None:
                 continue
-            if str(ctx.get("compartment", "")).strip().lower() != "full":
-                continue
-            label = f"{ctx['t0']} -> {ctx['t1']}"
+            remodelling_candidates.append((ctx, Path(path)))
+
+        def remodelling_sort_key(item):
+            ctx, path = item
+            return (
+                str(ctx.get("t0", "")),
+                str(ctx.get("t1", "")),
+                0 if str(ctx.get("compartment", "")).strip().lower() == "full" else 1,
+                str(ctx.get("compartment", "")),
+                str(path),
+            )
+
+        for ctx, path in sorted(remodelling_candidates, key=remodelling_sort_key):
+            label = f"{ctx['t0']} -> {ctx['t1']} ({self._scene_display_compartment_name(ctx.get('compartment', 'full'))})"
             self._remodelling_comparison_items.append((label, Path(path)))
             self.remodellingComparisonCombo.addItem(label)
 
@@ -4703,6 +5952,23 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_pair_metric_labels(None, None)
         self._set_series_summary_labels(None)
 
+    def _on_clear_loaded_timelapsed_results(self):
+        if self.logic.is_running():
+            slicer.util.warningDisplay("Stop the running Timelapsed pipeline before clearing loaded results.")
+            return
+        self._clear_loaded_review_nodes()
+        self._remove_scene_run_nonlinear_transform_nodes()
+        self._interactive_preview_cache = {}
+        self._last_scene_results_plan = None
+        if hasattr(self, "sceneStatusLabel"):
+            self.sceneStatusLabel.text = "Cleared loaded Timelapsed results and preview cache."
+        try:
+            self._set_scene_comparison_rows([])
+        except Exception:
+            pass
+        gc.collect()
+        self._show("[scene] cleared loaded Timelapsed result nodes and preview cache.")
+
     def _session_base_color(self, session_id):
         token = str(session_id).upper()
         if token in {"T1", "BL", "BASELINE"}:
@@ -4731,6 +5997,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         node.SetSpacing(float(spacing_xyz[0]), float(spacing_xyz[1]), float(spacing_xyz[2]))
         node.SetOrigin(float(origin_xyz[0]), float(origin_xyz[1]), float(origin_xyz[2]))
         return node
+
+    def _copy_volume_geometry(self, source_node, target_node):
+        if source_node is None or target_node is None:
+            return
+        try:
+            matrix = vtk.vtkMatrix4x4()
+            source_node.GetIJKToRASMatrix(matrix)
+            target_node.SetIJKToRASMatrix(matrix)
+            return
+        except Exception:
+            pass
+        try:
+            target_node.SetSpacing(*source_node.GetSpacing())
+            target_node.SetOrigin(*source_node.GetOrigin())
+        except Exception:
+            pass
 
     def _configure_segmentation_display(self, seg_node):
         if seg_node is None:
@@ -4813,13 +6095,34 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._place_node_in_folder(node, folder_item_id)
         return node
 
-    def _style_remodelling_labelmap(self, label_node, *, activate_display=True):
-        if label_node is None:
+    def _create_remodelling_scalar_node_from_label_array(
+        self,
+        name,
+        label_arr_zyx,
+        spacing_xyz,
+        origin_xyz,
+        folder_item_id=None,
+        activate_display=True,
+    ):
+        node = self._create_scalar_node_from_array(
+            name,
+            label_arr_zyx.astype(np.uint8, copy=False),
+            spacing_xyz,
+            origin_xyz,
+        )
+        node.CreateDefaultDisplayNodes()
+        self._style_remodelling_scalar_volume(node, activate_display=activate_display)
+        if folder_item_id is not None:
+            self._place_node_in_folder(node, folder_item_id)
+        return node
+
+    def _style_remodelling_scalar_volume(self, volume_node, *, activate_display=True):
+        if volume_node is None:
             return
-        display = label_node.GetDisplayNode()
+        display = volume_node.GetDisplayNode()
         if display is None:
-            label_node.CreateDefaultDisplayNodes()
-            display = label_node.GetDisplayNode()
+            volume_node.CreateDefaultDisplayNodes()
+            display = volume_node.GetDisplayNode()
         if display is None:
             return
         color_node = self._remodelling_color_node()
@@ -4828,11 +6131,25 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         display.SetVisibility(True)
         if hasattr(display, "SetOpacity"):
             display.SetOpacity(1.0)
+        if hasattr(display, "SetInterpolate"):
+            display.SetInterpolate(False)
+        elif hasattr(display, "InterpolateOff"):
+            display.InterpolateOff()
+        if hasattr(display, "AutoWindowLevelOff"):
+            display.AutoWindowLevelOff()
+        if hasattr(display, "SetWindowLevel"):
+            display.SetWindowLevel(5.0, 2.5)
+        elif hasattr(display, "SetWindow") and hasattr(display, "SetLevel"):
+            display.SetWindow(5.0)
+            display.SetLevel(2.5)
         if activate_display:
             try:
-                slicer.util.setSliceViewerLayers(label=label_node, fit=False)
+                slicer.util.setSliceViewerLayers(foreground=volume_node, foregroundOpacity=0.65, fit=False)
             except Exception:
                 pass
+
+    def _style_remodelling_labelmap(self, label_node, *, activate_display=True):
+        self._style_remodelling_scalar_volume(label_node, activate_display=activate_display)
 
     def _on_interactive_preview_control_changed(self, *_args):
         if getattr(self, "_suppress_interactive_preview_updates", False):
@@ -4874,7 +6191,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception:
             net = ""
         return [
-            str(metric_row.get("compartment", "full")),
+            self._scene_display_compartment_name(metric_row.get("compartment", "full")),
             self._format_scene_result_fraction(formation),
             self._format_scene_result_fraction(resorption),
             self._format_scene_result_fraction(activity),
@@ -4925,6 +6242,67 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._latest_pair_metric_rows = normalized_rows
         self._update_current_comparison_table(normalized_rows)
 
+    def _csv_float_or_nan(self, value):
+        text = str(value if value is not None else "").strip()
+        if not text:
+            return float("nan")
+        return float(text)
+
+    def _metric_rows_have_finite_fractions(self, rows):
+        for row in list(rows or []):
+            for key in ("formation_frac_bv0", "resorption_frac_bv0"):
+                try:
+                    if np.isfinite(float(row.get(key))):
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    def _saved_pair_metric_rows_for_context(self, ctx):
+        if not ctx:
+            return []
+        imported = self._imported_dataset_root()
+        if imported is None:
+            return []
+        subject_id = str(ctx.get("subject_id") or "").strip()
+        site = str(ctx.get("site") or "").strip()
+        t0 = str(ctx.get("t0") or "").strip()
+        t1 = str(ctx.get("t1") or "").strip()
+        if not subject_id or not site or not t0 or not t1:
+            return []
+        try:
+            from timelapsedhrpqct.dataset.derivative_paths import pairwise_remodelling_csv_path
+
+            pairwise_path = pairwise_remodelling_csv_path(imported, subject_id, site)
+        except Exception as exc:
+            self._show(f"[load] could not resolve saved remodelling metrics: {exc}")
+            return []
+        if not pairwise_path.exists():
+            return []
+
+        rows = []
+        try:
+            with pairwise_path.open("r", encoding="utf-8", newline="") as f:
+                for row in csv.DictReader(f):
+                    if str(row.get("t0") or "").strip() != t0:
+                        continue
+                    if str(row.get("t1") or "").strip() != t1:
+                        continue
+                    compartment = str(row.get("compartment") or "").strip()
+                    if not compartment:
+                        continue
+                    rows.append(
+                        {
+                            "compartment": compartment,
+                            "formation_frac_bv0": self._csv_float_or_nan(row.get("formation_frac_bv0")),
+                            "resorption_frac_bv0": self._csv_float_or_nan(row.get("resorption_frac_bv0")),
+                        }
+                    )
+        except Exception as exc:
+            self._show(f"[load] could not read saved remodelling metrics: {exc}")
+            return []
+        return rows
+
     def _scene_result_row_from_metric(self, ctx, metric_row):
         formation = metric_row.get("formation_frac_bv0")
         resorption = metric_row.get("resorption_frac_bv0")
@@ -4938,7 +6316,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             net = ""
         return [
             f"{str(ctx.get('t0', '')).strip()} -> {str(ctx.get('t1', '')).strip()}",
-            str(metric_row.get("compartment", "full")),
+            self._scene_display_compartment_name(metric_row.get("compartment", "full")),
             self._format_scene_result_fraction(formation),
             self._format_scene_result_fraction(resorption),
             self._format_scene_result_fraction(activity),
@@ -5280,21 +6658,27 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         img_t0 = sitk.GetArrayFromImage(ref_img).astype(np.float32, copy=False)
         img_t1_ref = sitk.ReadImage(str(t1.image_path))
         img_t1 = sitk.GetArrayFromImage(img_t1_ref).astype(np.float32, copy=False)
+        delta_zyx = (img_t1 - img_t0).astype(np.float32, copy=False)
         seg_t0 = self._read_seg_array_for_preview(t0, ref_img)
         seg_t1 = self._read_seg_array_for_preview(t1, img_t1_ref)
 
         support_t0 = self._load_support_mask_array(t0.mask_paths, t0.image_path)
         support_t1 = self._load_support_mask_array(t1.mask_paths, t1.image_path)
         compartment = str(ctx["compartment"])
-        if compartment == "full":
+        compartment_for_valid_mask = "full"
+        if compartment == "roi_union":
+            compartment_for_valid_mask = "full"
+        elif compartment:
+            compartment_for_valid_mask = compartment
+        if compartment_for_valid_mask == "full":
             comp_t0 = support_t0
             comp_t1 = support_t1
         else:
-            comp_path_t0 = t0.mask_paths.get(compartment)
-            comp_path_t1 = t1.mask_paths.get(compartment)
+            comp_path_t0 = t0.mask_paths.get(compartment_for_valid_mask)
+            comp_path_t1 = t1.mask_paths.get(compartment_for_valid_mask)
             if comp_path_t0 is None or comp_path_t1 is None:
                 raise ValueError(
-                    f"Interactive preview requires mask role '{compartment}' in both selected sessions."
+                    f"Interactive preview requires mask role '{compartment_for_valid_mask}' in both selected sessions."
                 )
             comp_t0 = (sitk.GetArrayFromImage(sitk.ReadImage(str(comp_path_t0))) > 0).astype(bool, copy=False)
             comp_t1 = (sitk.GetArrayFromImage(sitk.ReadImage(str(comp_path_t1))) > 0).astype(bool, copy=False)
@@ -5302,11 +6686,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         valid_mask = build_series_common_masks(
             {
                 "full": [support_t0, support_t1],
-                compartment: [comp_t0, comp_t1],
+                compartment_for_valid_mask: [comp_t0, comp_t1],
             },
-            [compartment],
+            [compartment_for_valid_mask],
             int(self._analysis_erosion_voxels),
-        )[compartment]
+        )[compartment_for_valid_mask]
 
         cached = {
             "cache_key": cache_key,
@@ -5315,6 +6699,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "origin_xyz": tuple(float(x) for x in ref_img.GetOrigin()),
             "image_arr_t0": img_t0,
             "image_arr_t1": img_t1,
+            "delta_zyx": delta_zyx,
             "seg_arr_t0": seg_t0,
             "seg_arr_t1": seg_t1,
             "support_mask_t0": support_t0,
@@ -5379,11 +6764,77 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 )
         return compute_pair_remodelling_preview(**kwargs)
 
+    def _preview_delta_for_current_settings(self, preview_inputs):
+        delta_cache = preview_inputs.setdefault("delta_cache", {})
+        gaussian_enabled = bool(self.analysisGaussianFilterCheck.checked)
+        sigma = float(self.analysisGaussianSigma.value)
+        cache_key = ("gaussian", round(sigma, 6)) if gaussian_enabled else ("raw", 0.0)
+        if cache_key in delta_cache:
+            return delta_cache[cache_key]
+        raw_delta = preview_inputs.get("delta_zyx")
+        if raw_delta is None:
+            raw_delta = np.asarray(preview_inputs["image_arr_t1"], dtype=np.float32) - np.asarray(
+                preview_inputs["image_arr_t0"],
+                dtype=np.float32,
+            )
+            preview_inputs["delta_zyx"] = raw_delta.astype(np.float32, copy=False)
+        if gaussian_enabled:
+            from timelapsedhrpqct.analysis import maybe_smooth_density
+
+            delta = maybe_smooth_density(
+                np.asarray(raw_delta, dtype=np.float32),
+                gaussian_filter=True,
+                gaussian_sigma=sigma,
+            )
+        else:
+            delta = np.asarray(raw_delta, dtype=np.float32)
+        delta_cache[cache_key] = delta
+        return delta
+
+    def _compute_pair_remodelling_preview_from_cached_delta(self, preview_inputs, *, valid_mask, label_map):
+        try:
+            from timelapsedhrpqct.analysis import compute_pair_remodelling_preview_from_delta
+
+            delta = self._preview_delta_for_current_settings(preview_inputs)
+            return self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview_from_delta,
+                delta=delta,
+                seg_arr_t0=preview_inputs["seg_arr_t0"],
+                seg_arr_t1=preview_inputs["seg_arr_t1"],
+                valid_mask=valid_mask,
+                threshold=float(self.analysisThreshold.value),
+                cluster_size=int(self.analysisCluster.value),
+                method=self._current_analysis_method(),
+                label_map=label_map,
+                support_mask_t0=preview_inputs.get("support_mask_t0"),
+                support_mask_t1=preview_inputs.get("support_mask_t1"),
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
+                marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
+            )
+        except ImportError:
+            from timelapsedhrpqct.analysis import compute_pair_remodelling_preview
+
+            return self._compute_pair_remodelling_preview_compat(
+                compute_pair_remodelling_preview,
+                image_arr_t0=preview_inputs["image_arr_t0"],
+                image_arr_t1=preview_inputs["image_arr_t1"],
+                seg_arr_t0=preview_inputs["seg_arr_t0"],
+                seg_arr_t1=preview_inputs["seg_arr_t1"],
+                valid_mask=valid_mask,
+                threshold=float(self.analysisThreshold.value),
+                cluster_size=int(self.analysisCluster.value),
+                method=self._current_analysis_method(),
+                gaussian_filter=bool(self.analysisGaussianFilterCheck.checked),
+                gaussian_sigma=float(self.analysisGaussianSigma.value),
+                label_map=label_map,
+                support_mask_t0=preview_inputs.get("support_mask_t0"),
+                support_mask_t1=preview_inputs.get("support_mask_t1"),
+                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
+                marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
+            )
+
     def _compute_pair_metric_rows(self, preview_inputs):
-        from timelapsedhrpqct.analysis import (
-            build_series_common_masks,
-            compute_pair_remodelling_preview,
-        )
+        from timelapsedhrpqct.analysis import build_series_common_masks
 
         support_t0 = np.asarray(preview_inputs["support_mask_t0"], dtype=bool)
         support_t1 = np.asarray(preview_inputs["support_mask_t1"], dtype=bool)
@@ -5399,23 +6850,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 int(self._analysis_erosion_voxels),
                 full_mask_dilation_voxels=int(self.analysisFullMaskDilation.value),
             )[compartment]
-            preview = self._compute_pair_remodelling_preview_compat(
-                compute_pair_remodelling_preview,
-                image_arr_t0=preview_inputs["image_arr_t0"],
-                image_arr_t1=preview_inputs["image_arr_t1"],
-                seg_arr_t0=preview_inputs["seg_arr_t0"],
-                seg_arr_t1=preview_inputs["seg_arr_t1"],
+            preview = self._compute_pair_remodelling_preview_from_cached_delta(
+                preview_inputs,
                 valid_mask=valid_mask,
-                threshold=float(self.analysisThreshold.value),
-                cluster_size=int(self.analysisCluster.value),
-                method=self._current_analysis_method(),
-                gaussian_filter=bool(self.analysisGaussianFilterCheck.checked),
-                gaussian_sigma=float(self.analysisGaussianSigma.value),
                 label_map=self._interactive_preview_label_map(),
-                support_mask_t0=support_t0,
-                support_mask_t1=support_t1,
-                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
-                marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             rows.append(
                 {
@@ -5427,33 +6865,28 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return rows
 
     def _refresh_pair_metrics_for_current_selection(self, *_args):
-        from timelapsedhrpqct.analysis import compute_pair_remodelling_preview
-
         node_id = self.remodellingFullSegCombo.currentData
         full_seg = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id is not None else None
         source_path = str(full_seg.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "") if full_seg is not None else ""
         if not source_path:
             self._set_pair_metric_labels(None, None)
             return
+        ctx = self._parse_remodelling_source_context(source_path)
+        if ctx is None:
+            ctx = {}
+        saved_rows = self._saved_pair_metric_rows_for_context(ctx)
+        if self._metric_rows_have_finite_fractions(saved_rows):
+            self._set_pair_metric_rows(saved_rows)
+            return
+        if not self._scene_compartment_is_interactive_source(ctx.get("compartment", "")):
+            self._set_pair_metric_labels(None, None, compartment=self._scene_display_compartment_name(ctx.get("compartment", "")))
+            return
         try:
             preview_inputs = self._get_interactive_preview_inputs(source_path)
-            preview = self._compute_pair_remodelling_preview_compat(
-                compute_pair_remodelling_preview,
-                image_arr_t0=preview_inputs["image_arr_t0"],
-                image_arr_t1=preview_inputs["image_arr_t1"],
-                seg_arr_t0=preview_inputs["seg_arr_t0"],
-                seg_arr_t1=preview_inputs["seg_arr_t1"],
+            preview = self._compute_pair_remodelling_preview_from_cached_delta(
+                preview_inputs,
                 valid_mask=self._display_valid_mask_for_preview_inputs(preview_inputs),
-                threshold=float(self.analysisThreshold.value),
-                cluster_size=int(self.analysisCluster.value),
-                method=self._current_analysis_method(),
-                gaussian_filter=bool(self.analysisGaussianFilterCheck.checked),
-                gaussian_sigma=float(self.analysisGaussianSigma.value),
                 label_map=self._interactive_preview_label_map(),
-                support_mask_t0=preview_inputs.get("support_mask_t0"),
-                support_mask_t1=preview_inputs.get("support_mask_t1"),
-                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
-                marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
             compartment = str((preview_inputs.get("context") or {}).get("compartment", "full"))
             self._set_pair_metric_labels(
@@ -5478,7 +6911,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return False
         try:
             scene = slicer.mrmlScene
-            for class_name in ("vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
+            for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
                 for index in range(scene.GetNumberOfNodesByClass(class_name)):
                     other_node = scene.GetNthNodeByClass(index, class_name)
                     if other_node is None:
@@ -5491,8 +6924,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         display = other_node.GetDisplayNode()
                     if display is not None:
                         display.SetVisibility(other_node is node)
-            self._style_remodelling_labelmap(node, activate_display=False)
-            slicer.util.setSliceViewerLayers(label=node, fit=False)
+            self._style_remodelling_scalar_volume(node, activate_display=False)
+            slicer.util.setSliceViewerLayers(foreground=node, foregroundOpacity=0.65, fit=False)
             self._center_slices_on_node(node, fit_to_bounds=True)
             return True
         except Exception as exc:
@@ -5539,7 +6972,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
         return ordered
 
-    def _create_remodelling_segmentations_from_array(
+    def _create_remodelling_display_from_array(
         self,
         segmentation_name,
         label_arr_zyx,
@@ -5550,6 +6983,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         source_path=None,
         interactive_cache_key=None,
         valid_mask_zyx=None,
+        geometry_source_node=None,
         center_slices=True,
         activate_display=True,
     ):
@@ -5557,7 +6991,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         full_seg = None
 
         if create_full:
-            full_seg = self._create_labelmap_from_label_array(
+            full_seg = self._create_remodelling_scalar_node_from_label_array(
                 name=f"{segmentation_name}_full",
                 label_arr_zyx=filtered_arr,
                 spacing_xyz=spacing_xyz,
@@ -5565,6 +6999,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 folder_item_id=folder_item_id,
                 activate_display=activate_display,
             )
+            self._copy_volume_geometry(geometry_source_node, full_seg)
             full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingFull", "1")
             if source_path is not None:
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(source_path).resolve()))
@@ -5575,6 +7010,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self._refresh_remodelling_full_selector()
         return full_seg, None
+
+    def _create_remodelling_segmentations_from_array(self, *args, **kwargs):
+        return self._create_remodelling_display_from_array(*args, **kwargs)
 
     def _selected_remodelling_source_path(self):
         if not hasattr(self, "remodellingFullSegCombo"):
@@ -5711,7 +7149,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_stage_status("analysis", "pending")
         self._active_stage = "analysis"
         self._is_full_pipeline_run = False
-        self._run_skips_mask_generation = False
+        self._run_skips_mask_generation = True
         self._run_includes_analysis = True
         self._last_scene_plan = plan
         self._run([
@@ -5732,7 +7170,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.remodellingFullSegCombo.clear()
         scene = slicer.mrmlScene
         entries = []
-        for class_name in ("vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
+        for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
             for i in range(scene.GetNumberOfNodesByClass(class_name)):
                 node = scene.GetNthNodeByClass(i, class_name)
                 if node is None:
@@ -5767,32 +7205,76 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not source_path:
             slicer.util.warningDisplay("Selected remodelling segmentation is missing source metadata.")
             return
+        ctx = self._parse_remodelling_source_context(source_path)
+        if ctx is None:
+            ctx = {}
+        if not self._scene_compartment_is_interactive_source(ctx.get("compartment", "")):
+            view_state = self._capture_slice_view_state()
+            self._set_interactive_preview_busy(True, "Updating remodelling ROI union...")
+            try:
+                preview, preview_inputs, _source_node, compartments = self._compute_pair_union_remodelling_preview(
+                    ctx,
+                    source_path=source_path,
+                )
+                sh = self._subject_hierarchy()
+                folder_id = None
+                if sh is not None:
+                    item_id = sh.GetItemByDataNode(full_seg)
+                    if item_id:
+                        folder_id = sh.GetItemParent(item_id)
+                base_name = str(full_seg.GetName() or "")
+                if base_name.endswith("_full"):
+                    base_name = base_name[:-5]
+                new_full, _preview = self._create_remodelling_display_from_array(
+                    segmentation_name=base_name,
+                    label_arr_zyx=preview.label_image,
+                    spacing_xyz=preview_inputs["spacing_xyz"],
+                    origin_xyz=preview_inputs["origin_xyz"],
+                    folder_item_id=folder_id,
+                    create_full=True,
+                    source_path=source_path,
+                    interactive_cache_key=preview_inputs["cache_key"],
+                    valid_mask_zyx=preview.valid_mask,
+                    geometry_source_node=full_seg,
+                    center_slices=False,
+                )
+                slicer.mrmlScene.RemoveNode(full_seg)
+                if new_full is not None:
+                    idx = self.remodellingFullSegCombo.findData(new_full.GetID())
+                    if idx >= 0:
+                        self.remodellingFullSegCombo.setCurrentIndex(idx)
+                    self._activate_remodelling_display_for_current_selection()
+                self._restore_slice_view_state(view_state)
+            except Exception as exc:
+                self._set_interactive_preview_busy(False, "Update failed")
+                slicer.util.warningDisplay(f"Interactive remodelling ROI-union update failed:\n{exc}")
+                return
+            metric_rows = self._compute_pair_metric_rows(preview_inputs)
+            self._set_pair_metric_rows(metric_rows)
+            self._refresh_scene_results_table_from_loaded_remodelling()
+            self._set_interactive_preview_busy(False, "Ready")
+            self._show(
+                "[preview] remodelling ROI union updated "
+                f"from {len(compartments)} ROI(s) "
+                f"(thr={float(self.analysisThreshold.value):g}, "
+                f"cluster={int(self.analysisCluster.value)}, "
+                f"method={self._current_analysis_method()}, "
+                f"gauss={'on' if self.analysisGaussianFilterCheck.checked else 'off'}, "
+                f"sigma={float(self.analysisGaussianSigma.value):g})."
+            )
+            return
 
         view_state = self._capture_slice_view_state()
         self._set_interactive_preview_busy(True, "Updating remodelling preview...")
         try:
             preview_inputs = self._get_interactive_preview_inputs(source_path)
-            from timelapsedhrpqct.analysis import compute_pair_remodelling_preview
 
             valid_mask = self._display_valid_mask_for_preview_inputs(preview_inputs)
 
-            preview = self._compute_pair_remodelling_preview_compat(
-                compute_pair_remodelling_preview,
-                image_arr_t0=preview_inputs["image_arr_t0"],
-                image_arr_t1=preview_inputs["image_arr_t1"],
-                seg_arr_t0=preview_inputs["seg_arr_t0"],
-                seg_arr_t1=preview_inputs["seg_arr_t1"],
+            preview = self._compute_pair_remodelling_preview_from_cached_delta(
+                preview_inputs,
                 valid_mask=valid_mask,
-                threshold=float(self.analysisThreshold.value),
-                cluster_size=int(self.analysisCluster.value),
-                method=self._current_analysis_method(),
-                gaussian_filter=bool(self.analysisGaussianFilterCheck.checked),
-                gaussian_sigma=float(self.analysisGaussianSigma.value),
                 label_map=self._interactive_preview_label_map(),
-                support_mask_t0=preview_inputs.get("support_mask_t0"),
-                support_mask_t1=preview_inputs.get("support_mask_t1"),
-                marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
-                marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
         except Exception as exc:
             self._set_interactive_preview_busy(False, "Update failed")
@@ -5810,7 +7292,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             if base_name.endswith("_full"):
                 base_name = base_name[:-5]
 
-            new_full, _preview = self._create_remodelling_segmentations_from_array(
+            new_full, _preview = self._create_remodelling_display_from_array(
                 segmentation_name=base_name,
                 label_arr_zyx=preview.label_image,
                 spacing_xyz=preview_inputs["spacing_xyz"],
@@ -5820,6 +7302,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 source_path=source_path,
                 interactive_cache_key=preview_inputs["cache_key"],
                 valid_mask_zyx=preview.valid_mask,
+                geometry_source_node=full_seg,
                 center_slices=False,
             )
             slicer.mrmlScene.RemoveNode(full_seg)
@@ -6357,8 +7840,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         scenario_dir = (
             imported
-            / "derivatives"
-            / "TimelapsedHRpQCT"
             / f"sub-{subject_id}"
             / f"site-{site}"
             / "analysis"
@@ -6444,48 +7925,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         activate_display=True,
     ):
         try:
-            remodelling_img = sitk.ReadImage(str(labelmap_path))
-            remodelling_arr = sitk.GetArrayFromImage(remodelling_img)  # z, y, x
+            ok, remodelling_node = self._load_volume_node(labelmap_path)
         except Exception as exc:
-            self._show(f"[load] failed to read remodelling labelmap from {labelmap_path}: {exc}")
+            self._show(f"[load] failed to load remodelling volume from {labelmap_path}: {exc}")
             return False
-
-        spacing = remodelling_img.GetSpacing()
-        origin = remodelling_img.GetOrigin()
-        spacing_xyz = (float(spacing[0]), float(spacing[1]), float(spacing[2]))
-        origin_xyz = (float(origin[0]), float(origin[1]), float(origin[2]))
-        valid_mask = self._get_valid_mask_for_source(labelmap_path)
-        reference_node = None
-        try:
-            reference_node = self._create_scalar_node_from_array(
-                f"{segmentation_name}_slice_reference",
-                np.zeros_like(remodelling_arr, dtype=np.uint8),
-                spacing_xyz,
-                origin_xyz,
-            )
-            reference_node.SetAttribute("TimelapsedHRpQCT.SliceReference", "1")
-            if folder_item_id is not None:
-                self._place_node_in_folder(reference_node, folder_item_id)
-            display = reference_node.GetDisplayNode()
-            if display is not None:
-                display.SetVisibility(False)
-            slicer.util.setSliceViewerLayers(background=reference_node, fit=False)
-        except Exception as exc:
-            self._show(f"[load] could not create remodelling slice reference: {exc}")
-        self._create_remodelling_segmentations_from_array(
-            segmentation_name=segmentation_name,
-            label_arr_zyx=remodelling_arr,
-            spacing_xyz=spacing_xyz,
-            origin_xyz=origin_xyz,
-            folder_item_id=folder_item_id,
-            create_full=create_full,
-            source_path=labelmap_path,
-            valid_mask_zyx=valid_mask,
-            center_slices=False,
-            activate_display=activate_display,
-        )
-        if reference_node is not None and activate_display:
-            self._center_slices_on_node(reference_node, fit_to_bounds=True)
+        if not ok or remodelling_node is None:
+            self._show(f"[load] failed to load remodelling volume from {labelmap_path}")
+            return False
+        remodelling_node.SetName(f"{segmentation_name}_full" if create_full else str(segmentation_name))
+        remodelling_node.SetAttribute("TimelapsedHRpQCT.RemodellingFull", "1")
+        remodelling_node.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(labelmap_path).resolve()))
+        self._style_remodelling_scalar_volume(remodelling_node, activate_display=activate_display)
+        if folder_item_id is not None:
+            self._place_node_in_folder(remodelling_node, folder_item_id)
+        if remodelling_node is not None and activate_display:
+            self._center_slices_on_node(remodelling_node, fit_to_bounds=True)
         return True
 
     def _center_slices_on_segmentation(self, seg_node):
@@ -6879,6 +8333,96 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return loaded, None
         return loaded is not None, loaded
 
+    def _scene_baseline_transform_key(self, path):
+        if Path(path).suffix.lower() != ".tfm":
+            return None
+        parsed = self._scene_transform_pair_and_kind_from_path(path)
+        if parsed is None:
+            return None
+        moving_session, _fixed_session, kind = parsed
+        if kind not in {"baseline", "final"}:
+            return None
+        rank = 0 if kind == "final" else 1
+        return moving_session, rank
+
+    def _scene_transform_pair_and_kind_from_path(self, path):
+        if Path(path).suffix.lower() != ".tfm":
+            return None
+        match = re.search(
+            r"from-ses-(?P<moving>.+?)_to-ses-(?P<fixed>.+?)_(?P<kind>baseline|final|pairwise)\.tfm$",
+            Path(path).name,
+        )
+        if match is None:
+            return None
+        return str(match.group("moving")), str(match.group("fixed")), str(match.group("kind")).lower()
+
+    def _scene_transform_pair_from_path(self, path):
+        parsed = self._scene_transform_pair_and_kind_from_path(path)
+        if parsed is None:
+            return None
+        moving_session, fixed_session, _kind = parsed
+        return moving_session, fixed_session
+
+    def _scene_transformable_node_ids_for_timepoint(self, plan, timepoint_index):
+        timepoint = plan.timepoints[timepoint_index]
+        node_ids = {
+            timepoint.image_node_id,
+            timepoint.reg_mask_node_id,
+            timepoint.full_mask_node_id,
+            timepoint.trab_mask_node_id,
+            timepoint.cort_mask_node_id,
+            timepoint.seg_mask_node_id,
+        }
+        for roi in plan.rois:
+            if timepoint_index < len(roi.node_ids):
+                node_ids.add(roi.node_ids[timepoint_index])
+        return {str(node_id) for node_id in node_ids if str(node_id or "").strip()}
+
+    def _apply_scene_baseline_transforms(self, plan, loaded_transform_nodes):
+        transforms_by_session = {}
+        for path, transform_node in (loaded_transform_nodes or {}).items():
+            if transform_node is None:
+                continue
+            parsed = self._scene_baseline_transform_key(path)
+            if parsed is None:
+                continue
+            moving_session, rank = parsed
+            current = transforms_by_session.get(moving_session)
+            if current is None or rank < current[0]:
+                transforms_by_session[moving_session] = (rank, transform_node)
+
+        applied = 0
+        applied_node_transforms = {}
+        for timepoint_index, timepoint in enumerate(plan.timepoints):
+            transform_entry = transforms_by_session.get(str(timepoint.session_id))
+            if transform_entry is None:
+                continue
+            _rank, transform_node = transform_entry
+            transform_id = transform_node.GetID()
+            for node_id in sorted(self._scene_transformable_node_ids_for_timepoint(plan, timepoint_index)):
+                node = slicer.mrmlScene.GetNodeByID(node_id)
+                if node is None or node is transform_node:
+                    continue
+                if not hasattr(node, "SetAndObserveTransformNodeID"):
+                    continue
+                previous_transform_id = applied_node_transforms.get(node_id)
+                if previous_transform_id is not None and previous_transform_id != transform_id:
+                    self._show(
+                        "[scene] skipped transform assignment for shared node "
+                        f"{self._scene_node_name(node_id)}; it is mapped to multiple timepoints."
+                    )
+                    continue
+                try:
+                    if hasattr(node, "GetTransformNodeID") and node.GetTransformNodeID() == transform_id:
+                        applied_node_transforms[node_id] = transform_id
+                        continue
+                    node.SetAndObserveTransformNodeID(transform_node.GetID())
+                    applied_node_transforms[node_id] = transform_id
+                    applied += 1
+                except Exception as exc:
+                    self._show(f"[scene] could not apply baseline transform to {self._scene_node_name(node_id)}: {exc}")
+        return applied
+
     def _set_path_without_immediate_reset(self, widget, path):
         previous = widget.blockSignals(True)
         try:
@@ -6898,7 +8442,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             if index >= 0:
                 self.patientCombo.setCurrentIndex(index)
         if hasattr(self, "loadTypeCombo"):
-            idx = self.loadTypeCombo.findText("remodelling image (full)")
+            idx = self.loadTypeCombo.findText("remodelling image")
             if idx >= 0:
                 self.loadTypeCombo.setCurrentIndex(idx)
         self._show(
@@ -6939,6 +8483,31 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             transform_path = current.transform_path
             if transform_path is None or not Path(transform_path).exists():
                 continue
+            moving_session = str(current.session_id)
+            fixed_session = str(previous.session_id)
+            parsed_transform = self._scene_transform_pair_and_kind_from_path(transform_path)
+            if parsed_transform is not None:
+                parsed_moving, parsed_fixed, parsed_kind = parsed_transform
+                if parsed_kind != "pairwise":
+                    self._show(
+                        "[scene] skipped selected transform for "
+                        f"ses-{moving_session}; file encodes a {parsed_kind} transform, "
+                        "but registration reuse needs adjacent pairwise transforms."
+                    )
+                    continue
+                if parsed_moving != moving_session:
+                    self._show(
+                        "[scene] skipped selected transform for "
+                        f"ses-{moving_session}; file encodes ses-{parsed_moving} -> ses-{parsed_fixed}."
+                    )
+                    continue
+                moving_session = parsed_moving
+                fixed_session = parsed_fixed
+                if fixed_session != str(previous.session_id):
+                    self._show(
+                        "[scene] registered selected transform "
+                        f"{moving_session} -> {fixed_session} from filename; it will only be reused for that pair."
+                    )
             try:
                 upsert_transform_registry_record(
                     Path(plan.output_root),
@@ -6946,8 +8515,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         subject_id=subject_id,
                         site=site,
                         stack_index=1,
-                        moving_session=str(current.session_id),
-                        fixed_session=str(previous.session_id),
+                        moving_session=moving_session,
+                        fixed_session=fixed_session,
                         transform_kind="pairwise",
                         internal_path=Path(transform_path),
                         source_format="slicer_tfm",
@@ -6963,7 +8532,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception as exc:
                 self._show(
                     "[scene] could not seed transform registry for "
-                    f"{current.session_id} -> {previous.session_id}: {exc}"
+                    f"{moving_session} -> {fixed_session}: {exc}"
                 )
         return seeded
 
@@ -7028,6 +8597,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         dataset_root = Path(plan.output_root)
         loaded_masks = 0
         seen_paths = set()
+        selected_roles = set(self._scene_requested_mask_roles())
+        selected_roles.update({"regmask", "seg"})
         processed_subject_id, processed_site = self._scene_processed_subject_site(plan)
         try:
             from timelapsedhrpqct.dataset.artifacts import iter_imported_stack_records
@@ -7055,6 +8626,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 role_to_path.setdefault("seg", Path(seg_path))
 
             for role, path in sorted(role_to_path.items()):
+                if str(role) not in selected_roles:
+                    continue
                 path = Path(path)
                 resolved = path.resolve()
                 if resolved in seen_paths or not path.exists():
@@ -7125,7 +8698,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     rows.append(
                         [
                             f"{t0} -> {t1}",
-                            compartment,
+                            self._scene_display_compartment_name(compartment),
                             self._format_scene_result_fraction(formation),
                             self._format_scene_result_fraction(resorption),
                             self._format_scene_result_fraction(activity),
@@ -7138,9 +8711,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return self._detect_missing_scene_baseline_pairs(rows)
 
     def _scene_result_rows_from_loaded_remodelling(self):
-        source_paths = []
+        source_by_pair = {}
         scene = slicer.mrmlScene
-        for class_name in ("vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
+        for class_name in ("vtkMRMLScalarVolumeNode", "vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"):
             for index in range(scene.GetNumberOfNodesByClass(class_name)):
                 node = scene.GetNthNodeByClass(index, class_name)
                 if node is None:
@@ -7148,16 +8721,36 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 if str(node.GetAttribute("TimelapsedHRpQCT.RemodellingFull") or "") != "1":
                     continue
                 source_path = str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
-                if source_path and source_path not in source_paths:
-                    source_paths.append(source_path)
+                if not source_path:
+                    continue
+                ctx = self._parse_remodelling_source_context(source_path)
+                if ctx is None:
+                    continue
+                pair_key = (
+                    str(ctx.get("subject_id", "")),
+                    str(ctx.get("site", "")),
+                    str(ctx.get("t0", "")),
+                    str(ctx.get("t1", "")),
+                )
+                rank = 0 if self._scene_compartment_is_interactive_source(ctx.get("compartment", "")) else 1
+                current = source_by_pair.get(pair_key)
+                candidate = (rank, source_path, ctx)
+                if current is None or candidate[0] < current[0]:
+                    source_by_pair[pair_key] = candidate
 
         rows = []
-        for source_path in sorted(source_paths, key=self._remodelling_source_sort_key):
+        for _pair_key, (_rank, source_path, ctx) in sorted(
+            source_by_pair.items(),
+            key=lambda item: self._remodelling_source_sort_key(item[1][1]),
+        ):
             try:
-                preview_inputs = self._get_interactive_preview_inputs(source_path)
-                ctx = preview_inputs.get("context") or {}
-                if str(ctx.get("compartment", "")) != "full":
-                    continue
+                if self._scene_compartment_is_interactive_source(ctx.get("compartment", "")):
+                    preview_inputs = self._get_interactive_preview_inputs(source_path)
+                else:
+                    _preview, preview_inputs, _source_node, _compartments = self._compute_pair_union_remodelling_preview(
+                        ctx,
+                        source_path=source_path,
+                    )
                 for metric_row in self._compute_pair_metric_rows(preview_inputs):
                     row = self._scene_result_row_from_metric(ctx, metric_row)
                     rows.append(row)
@@ -7249,8 +8842,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not rows:
             return 0
 
-        table_node = self._load_scene_results_table_node(rows, plan)
         if show:
+            # Scene result table node is only created when explicitly shown.
+            table_node = self._load_scene_results_table_node(rows, plan)
             self._show_scene_results_table_node(table_node)
         self._show(f"[scene] Loaded scene results table with {len(rows)} row(s) from {rows_source}.")
         return len(rows)
@@ -7269,7 +8863,30 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.remodellingFullSegCombo.setCurrentIndex(0)
             self._activate_remodelling_display_for_current_selection()
 
+    def _prewarm_selected_scene_preview_cache(self):
+        source_path = self._selected_remodelling_source_path()
+        if not source_path:
+            return False
+        ctx = self._parse_remodelling_source_context(source_path)
+        if ctx is None:
+            return False
+        try:
+            if self._scene_compartment_is_interactive_source(ctx.get("compartment", "")):
+                preview_inputs = self._get_interactive_preview_inputs(source_path)
+                _ = self._preview_delta_for_current_settings(preview_inputs)
+            else:
+                source_node = self._find_loaded_interactive_remodelling_node_for_context(ctx, preferred_compartment="full")
+                if source_node is None:
+                    self._show(f"[preview] prewarming display-union output from saved scene data: {Path(source_path).name}.")
+                self._compute_pair_union_remodelling_preview(ctx, source_path=source_path)
+            self._show(f"[preview] prewarmed interactive cache for {Path(source_path).name}.")
+            return True
+        except Exception as exc:
+            self._show(f"[preview] could not prewarm interactive cache: {exc}")
+            return False
+
     def _load_scene_run_outputs(self, plan):
+        self._remove_scene_run_nonlinear_transform_nodes()
         output_root = Path(plan.output_root)
         if not output_root.exists():
             self._show(f"[scene] output folder not found for load-back: {output_root}")
@@ -7279,14 +8896,30 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._last_scene_results_plan = plan
         processed_subject_id, processed_site = self._scene_processed_subject_site(plan)
         folder_item_id = self._ensure_load_folder(processed_subject_id, processed_site)
-        loaded_masks = self._load_scene_run_masks(plan)
+        debug_load_masks = str(os.environ.get("SLICER_TIMELAPSED_DEBUG_LOAD_MASKS", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        loaded_masks = self._load_scene_run_masks(plan) if debug_load_masks else 0
+        if not debug_load_masks:
+            self._show("[scene] skipped mask load-back; using already loaded scene masks.")
+        apply_scene_transforms = str(os.environ.get("SLICER_TIMELAPSED_APPLY_SCENE_TRANSFORMS", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         loaded_transforms = 0
+        loaded_transform_nodes = {}
+        applied_transforms = 0
         loaded_remodelling = 0
         loaded_result_rows = 0
 
         transform_paths = sorted(
             path
-            for pattern in ("*.tfm", "*.h5")
+            for pattern in ("*.tfm",)
             for path in output_root.rglob(pattern)
             if path.is_file()
         )
@@ -7295,9 +8928,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 ok, node = self._load_transform_node(path)
                 if ok and node is not None:
                     self._place_node_in_folder(node, folder_item_id)
+                    loaded_transform_nodes[Path(path)] = node
                     loaded_transforms += 1
             except Exception as exc:
                 self._show(f"[scene] could not load transform {path.name}: {exc}")
+        if apply_scene_transforms:
+            applied_transforms = self._apply_scene_baseline_transforms(plan, loaded_transform_nodes)
+        else:
+            self._show("[scene] skipped transform application to loaded scene nodes; keeping scene inputs native.")
 
         remodelling_paths = sorted(
             {
@@ -7324,15 +8962,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         loaded_result_rows = self._load_scene_results_table(plan, prefer_saved=True)
         self.sceneStatusLabel.text = (
             f"Loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
+            f"applied {applied_transforms} to loaded scene node(s), "
             f"{loaded_remodelling} remodelling output(s), and "
             f"{loaded_result_rows} result row(s) from the scene run."
         )
         self._show(
             f"[scene] loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
+            f"applied {applied_transforms} to loaded scene node(s), "
             f"{loaded_remodelling} remodelling output(s), "
             f"{loaded_result_rows} result row(s) from {output_root}"
         )
         self._select_first_scene_remodelling_output()
+        self._prewarm_selected_scene_preview_cache()
         self._refresh_pair_metrics_for_current_selection()
 
     def _maybe_apply_raw_stack_offset(self, node, record):
@@ -7375,11 +9016,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
 
         data_type = self.loadTypeCombo.currentText
-        is_remodelling_load = data_type == "remodelling image (full)"
+        is_remodelling_load = data_type == "remodelling image"
         load_masks_with_images = data_type in {"raw", "transformed"}
 
         candidates = []
         image_records = []
+        loaded_remodelling_source_path = None
         try:
             from timelapsedhrpqct.dataset.artifacts import (
                 iter_fused_session_records,
@@ -7489,7 +9131,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     )
                     if ok:
                         loaded += 1
-                        self._show(f"[load] {Path(p).name} loaded as full remodelling segmentation.")
+                        loaded_remodelling_source_path = str(Path(p).resolve())
+                        self._show(f"[load] {Path(p).name} loaded as remodelling segmentation.")
                 else:
                     ok, node = self._load_volume_node(p)
                     if ok and node is not None:
@@ -7513,6 +9156,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if first_loaded_node is not None:
             self._center_slices_on_node(first_loaded_node, fit_to_bounds=True)
         if is_remodelling_load and loaded:
+            if loaded_remodelling_source_path:
+                self._set_remodelling_selector_by_source_path(loaded_remodelling_source_path)
             if self.remodellingFullSegCombo.count > 0 and self.remodellingFullSegCombo.currentIndex < 0:
                 self.remodellingFullSegCombo.setCurrentIndex(0)
             try:
@@ -7521,7 +9166,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception as exc:
                 self._show(f"[series] could not build adjacent-pair selector: {exc}")
                 self._rebuild_series_summary_pair_selector([])
-            self._refresh_pair_metrics_for_current_selection()
+            if loaded_remodelling_source_path:
+                ctx = self._parse_remodelling_source_context(loaded_remodelling_source_path)
+                saved_rows = self._saved_pair_metric_rows_for_context(ctx)
+                if self._metric_rows_have_finite_fractions(saved_rows):
+                    self._set_pair_metric_rows(saved_rows)
+                else:
+                    self._refresh_pair_metrics_for_current_selection()
+            else:
+                self._refresh_pair_metrics_for_current_selection()
             self._refresh_saved_cohort_summary()
 
     def _load_masks_as_segmentation(

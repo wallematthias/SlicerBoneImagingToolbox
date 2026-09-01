@@ -104,7 +104,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         notes="Plate/rod thinning and morphometry core package with compiled backend.",
     ),
     PackageSpec(
-        display_name="ParOSol FEA",
+        display_name="ParOsol-FEA",
         package_name="parosol-py",
         import_name="parosol_py",
         minimum_version="0.1.22",

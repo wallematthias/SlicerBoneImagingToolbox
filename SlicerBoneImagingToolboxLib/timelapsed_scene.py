@@ -20,21 +20,38 @@ class TimelapsedSceneNodeCandidate:
 class TimelapsedSceneTimepoint:
     session_id: str
     image_node_id: str
+    reg_mask_node_id: str = ""
     full_mask_node_id: str = ""
     trab_mask_node_id: str = ""
     cort_mask_node_id: str = ""
     seg_mask_node_id: str = ""
+    reg_mask_segment_id: str = ""
+    full_mask_segment_id: str = ""
+    trab_mask_segment_id: str = ""
+    cort_mask_segment_id: str = ""
+    seg_mask_segment_id: str = ""
     transform_node_id: str = ""
-    full_mask_policy: str = "generate"
-    trab_mask_policy: str = "generate"
-    cort_mask_policy: str = "generate"
-    seg_mask_policy: str = "generate"
+    reg_mask_policy: str = "none"
+    full_mask_policy: str = "none"
+    trab_mask_policy: str = "none"
+    cort_mask_policy: str = "none"
+    seg_mask_policy: str = "none"
     image_path: Path | None = None
+    reg_mask_path: Path | None = None
     full_mask_path: Path | None = None
     trab_mask_path: Path | None = None
     cort_mask_path: Path | None = None
     seg_mask_path: Path | None = None
     transform_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class TimelapsedSceneRoiSelection:
+    role: str
+    node_ids: tuple[str, ...] = ()
+    segment_ids: tuple[str, ...] = ()
+    policies: tuple[str, ...] = ()
+    paths: tuple[Path | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,6 +63,7 @@ class TimelapsedScenePlan:
     input_root: Path
     output_root: Path
     timepoints: tuple[TimelapsedSceneTimepoint, ...]
+    rois: tuple[TimelapsedSceneRoiSelection, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,13 +88,14 @@ def discover_timelapsed_scene_timepoints(
     for candidate in candidates:
         if _is_generated_timelapsed_display_artifact(candidate):
             continue
-        role = _infer_scene_role(candidate)
+        roles = _infer_scene_roles(candidate)
+        role = roles[0] if roles else ""
         if role == "image":
             scalar_candidates.append(candidate)
         elif role and role != "transform":
             mask_count += 1
         session_id = _infer_scene_session(candidate)
-        if not role or not session_id:
+        if not roles or not session_id:
             continue
         subject = _infer_scene_token(candidate, "subject", "sub")
         site = _infer_scene_token(candidate, "site", "site")
@@ -85,8 +104,9 @@ def discover_timelapsed_scene_timepoints(
         if site:
             sites.append(site)
         group = groups.setdefault(session_id, {})
-        if role not in group:
-            group[role] = candidate.node_id
+        for candidate_role in roles:
+            if candidate_role not in group:
+                group[candidate_role] = candidate.node_id
 
     timepoints: list[TimelapsedSceneTimepoint] = []
     matched_mask_count = 0
@@ -100,15 +120,17 @@ def discover_timelapsed_scene_timepoints(
             TimelapsedSceneTimepoint(
                 session_id=session_id,
                 image_node_id=image_node_id,
+                reg_mask_node_id=group.get("regmask", "") or group.get("full", ""),
                 full_mask_node_id=group.get("full", ""),
                 trab_mask_node_id=group.get("trab", ""),
                 cort_mask_node_id=group.get("cort", ""),
                 seg_mask_node_id=group.get("seg", ""),
                 transform_node_id=group.get("transform", ""),
-                full_mask_policy="node" if group.get("full") else "generate",
-                trab_mask_policy="node" if group.get("trab") else "generate",
-                cort_mask_policy="node" if group.get("cort") else "generate",
-                seg_mask_policy="node" if group.get("seg") else "generate",
+                reg_mask_policy="node" if (group.get("regmask") or group.get("full")) else "none",
+                full_mask_policy="node" if group.get("full") else "none",
+                trab_mask_policy="node" if group.get("trab") else "none",
+                cort_mask_policy="node" if group.get("cort") else "none",
+                seg_mask_policy="node" if group.get("seg") else "none",
             )
         )
     if not timepoints and scalar_candidates:
@@ -132,6 +154,7 @@ def build_timelapsed_scene_plan(
     site: str,
     timepoints: Iterable[TimelapsedSceneTimepoint],
     run_id: str,
+    rois: Iterable[TimelapsedSceneRoiSelection] | None = None,
 ) -> TimelapsedScenePlan:
     """Plan deterministic scene-run paths without interacting with Slicer."""
     clean_subject = _clean_token(subject_id, "sub") or "SceneSubject"
@@ -153,6 +176,11 @@ def build_timelapsed_scene_plan(
         _plan_timepoint(input_root, clean_subject, clean_site, timepoint)
         for timepoint in selected_timepoints
     )
+    selected_rois = tuple(rois) if rois is not None else _legacy_rois_from_timepoints(selected_timepoints)
+    planned_rois = tuple(
+        _plan_roi(input_root, clean_subject, clean_site, planned_timepoints, roi)
+        for roi in selected_rois
+    )
     return TimelapsedScenePlan(
         results_root=root,
         subject_id=clean_subject,
@@ -161,6 +189,7 @@ def build_timelapsed_scene_plan(
         input_root=input_root,
         output_root=scene_root / "output",
         timepoints=planned_timepoints,
+        rois=planned_rois,
     )
 
 
@@ -169,7 +198,7 @@ def timelapsed_scene_run_args(
     *,
     mode: str,
     config_path: str | Path,
-    generate_missing_masks: bool = True,
+    generate_missing_masks: bool = False,
 ) -> list[str]:
     """Return the existing Timelapsed CLI arguments for a scene plan."""
     args = [
@@ -188,6 +217,40 @@ def timelapsed_scene_run_args(
     return args
 
 
+def scene_segment_matches_role(segment_name: str, segment_role: str, requested_role: str) -> bool:
+    """Return whether a readable Slicer segment name/tag matches a Timelapsed role."""
+    requested = _normalize_scene_role_token(requested_role)
+    if not requested:
+        return False
+    aliases = _scene_role_aliases(requested)
+    tokens = {
+        _normalize_scene_role_token(segment_name),
+        _normalize_scene_role_token(segment_role),
+    }
+    tokens = {token for token in tokens if token}
+    return bool(tokens & aliases)
+
+
+def _scene_role_aliases(role: str) -> set[str]:
+    role = _normalize_scene_role_token(role)
+    aliases = {role, f"mask_{role}", f"{role}_mask"}
+    if role in {"full", "full_roi"}:
+        aliases.update({"full", "full_mask", "periosteal", "periosteal_contour", "full_roi", "support", "support_roi"})
+    elif role in {"trab", "trab_roi"}:
+        aliases.update({"trab", "trab_mask", "trabecular", "trabecular_mask", "trabecular_roi", "trab_roi"})
+    elif role in {"cort", "cort_roi"}:
+        aliases.update({"cort", "cort_mask", "cortical", "cortical_mask", "cortical_roi", "cort_roi"})
+    elif role in {"seg", "segmentation"}:
+        aliases.update({"bone", "bone_seg", "bone_segmentation", "segmentation", "bone_mask"})
+    elif role in {"regmask", "registration_roi"}:
+        aliases.update({"reg", "registration_mask", "registration_roi", "reg_mask", "full", "full_mask", "support_roi"})
+    return aliases
+
+
+def _normalize_scene_role_token(value: str) -> str:
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())).strip("_")
+
+
 def _plan_timepoint(
     input_root: Path,
     subject_id: str,
@@ -203,6 +266,9 @@ def _plan_timepoint(
         timepoint,
         session_id=session_id,
         image_path=directory / f"{stem}_image.nii.gz",
+        reg_mask_path=_mask_path_for_policy(
+            directory, stem, "regmask", timepoint.reg_mask_node_id, timepoint.reg_mask_policy
+        ),
         full_mask_path=_mask_path_for_policy(
             directory, stem, "mask-full", timepoint.full_mask_node_id, timepoint.full_mask_policy
         ),
@@ -219,6 +285,73 @@ def _plan_timepoint(
     )
 
 
+def _legacy_rois_from_timepoints(
+    timepoints: tuple[TimelapsedSceneTimepoint, ...],
+) -> tuple[TimelapsedSceneRoiSelection, ...]:
+    rois: list[TimelapsedSceneRoiSelection] = []
+    for role, node_attr, segment_attr, policy_attr in (
+        ("full", "full_mask_node_id", "full_mask_segment_id", "full_mask_policy"),
+        ("trab", "trab_mask_node_id", "trab_mask_segment_id", "trab_mask_policy"),
+        ("cort", "cort_mask_node_id", "cort_mask_segment_id", "cort_mask_policy"),
+    ):
+        node_ids = tuple(str(getattr(timepoint, node_attr, "") or "") for timepoint in timepoints)
+        segment_ids = tuple(str(getattr(timepoint, segment_attr, "") or "") for timepoint in timepoints)
+        policies = tuple(str(getattr(timepoint, policy_attr, "none") or "none") for timepoint in timepoints)
+        if any(node_ids):
+            rois.append(
+                TimelapsedSceneRoiSelection(
+                    role=role,
+                    node_ids=node_ids,
+                    segment_ids=segment_ids,
+                    policies=policies,
+                )
+            )
+    return tuple(rois)
+
+
+def _plan_roi(
+    input_root: Path,
+    subject_id: str,
+    site: str,
+    timepoints: tuple[TimelapsedSceneTimepoint, ...],
+    roi: TimelapsedSceneRoiSelection,
+) -> TimelapsedSceneRoiSelection:
+    role = _clean_roi_role(roi.role)
+    node_ids = _pad_tuple(roi.node_ids, len(timepoints), "")
+    segment_ids = _pad_tuple(roi.segment_ids, len(timepoints), "")
+    policies = _pad_tuple(roi.policies, len(timepoints), "none")
+    paths: list[Path | None] = []
+    for index, timepoint in enumerate(timepoints):
+        directory = timepoint.image_path.parent if timepoint.image_path is not None else (
+            input_root / f"sub-{subject_id}" / f"site-{site}" / "native_space" / f"ses-{timepoint.session_id}"
+        )
+        stem = f"sub-{subject_id}_ses-{timepoint.session_id}_site-{site}"
+        paths.append(_mask_path_for_policy(directory, stem, f"mask-{role}", node_ids[index], policies[index]))
+    return replace(
+        roi,
+        role=role,
+        node_ids=node_ids,
+        segment_ids=segment_ids,
+        policies=policies,
+        paths=tuple(paths),
+    )
+
+
+def _pad_tuple(values: tuple[str, ...], length: int, fill: str) -> tuple[str, ...]:
+    padded = [str(value or fill) for value in values[:length]]
+    padded.extend([fill] * (length - len(padded)))
+    return tuple(padded)
+
+
+def _clean_roi_role(role: str) -> str:
+    value = _safe_token(role).lower()
+    if value in {"", "roi"}:
+        return "roi1"
+    if value in {"full", "trab", "cort", "full_roi", "trab_roi", "cort_roi", "regmask"} or value.startswith("roi"):
+        return value
+    return f"roi_{value}"
+
+
 def _optional_path(directory: Path, stem: str, suffix: str, node_id: str, *, suffix_ext: str = ".nii.gz") -> Path | None:
     return directory / f"{stem}_{suffix}{suffix_ext}" if node_id.strip() else None
 
@@ -231,7 +364,7 @@ def _mask_path_for_policy(
     policy: str,
 ) -> Path | None:
     normalized = str(policy or "").strip().lower()
-    if node_id.strip() or normalized == "generate":
+    if node_id.strip():
         return directory / f"{stem}_{suffix}.nii.gz"
     return None
 
@@ -250,6 +383,11 @@ def _safe_token(value: str) -> str:
 
 def _is_generated_timelapsed_display_artifact(candidate: TimelapsedSceneNodeCandidate) -> bool:
     attributes = candidate.attributes or {}
+    is_transform_node = "Transform" in str(candidate.node_class or "")
+    if is_transform_node:
+        return False
+    if attributes.get("BoneImaging.MaskRoles") or attributes.get("BoneContouring.Role"):
+        return False
     if attributes.get("TimelapsedHRpQCT.GeneratedMask") == "1":
         return True
     storage_path = str(attributes.get("StorageFileName", "") or "").replace("\\", "/")
@@ -267,6 +405,42 @@ def _is_generated_timelapsed_display_artifact(candidate: TimelapsedSceneNodeCand
     )
 
 
+def _infer_scene_roles(candidate: TimelapsedSceneNodeCandidate) -> list[str]:
+    attributes = candidate.attributes or {}
+    role_text = str(
+        attributes.get("BoneImaging.MaskRoles")
+        or attributes.get("BoneContouring.Role")
+        or ""
+    )
+    if role_text:
+        roles = []
+        for token in re.split(r"[,;\s]+", role_text):
+            role = _normalize_scene_role(token)
+            if role and role not in roles:
+                roles.append(role)
+        if roles:
+            return roles
+    role = _infer_scene_role(candidate)
+    return [role] if role else []
+
+
+def _normalize_scene_role(role: str) -> str:
+    role_lower = str(role or "").strip().lower().replace("-", "_")
+    if role_lower in {"full", "full_mask", "mask_full", "periosteal"}:
+        return "full"
+    if role_lower in {"trab", "trabecular", "trab_mask", "mask_trab"}:
+        return "trab"
+    if role_lower in {"cort", "cortical", "cort_mask", "mask_cort"}:
+        return "cort"
+    if role_lower in {"seg", "bone_seg", "bone_segmentation", "segmentation", "mask_seg"}:
+        return "seg"
+    if role_lower in {"reg", "regmask", "registration_mask", "mask_reg"}:
+        return "regmask"
+    if re.fullmatch(r"roi[0-9a-z]*", role_lower):
+        return role_lower
+    return ""
+
+
 def _infer_scene_role(candidate: TimelapsedSceneNodeCandidate) -> str:
     attributes = candidate.attributes or {}
     role_text = " ".join(
@@ -274,11 +448,14 @@ def _infer_scene_role(candidate: TimelapsedSceneNodeCandidate) -> str:
         for key, value in attributes.items()
         if key.lower().endswith("role") or "role" in key.lower()
     ).lower()
-    text = f"{candidate.name} {role_text}".lower()
+    text = f"{_candidate_search_text(candidate)} {role_text}".lower()
     node_class = str(candidate.node_class or "")
     is_scalar = "ScalarVolume" in node_class
     is_mask_node = "LabelMapVolume" in node_class or "Segmentation" in node_class
     if "Transform" in node_class:
+        storage_path = str((candidate.attributes or {}).get("StorageFileName", "") or "")
+        if storage_path and Path(storage_path).suffix.lower() not in {"", ".tfm"}:
+            return ""
         return "transform"
     if is_mask_node:
         if any(token in text for token in ("mask-full", "full-mask", "periosteal", "peri", "mask_full")):
@@ -300,7 +477,7 @@ def _infer_scene_session(candidate: TimelapsedSceneNodeCandidate) -> str:
         value = attributes.get(key)
         if value:
             return _clean_token(value, "ses")
-    text = str(candidate.name or "")
+    text = _candidate_search_text(candidate)
     patterns = (
         r"(?i)(?:^|[^A-Za-z0-9])ses[-_]?([A-Za-z0-9.]+)",
         r"(?i)(?:^|[^A-Za-z0-9])session[-_]?([A-Za-z0-9.]+)",
@@ -325,10 +502,24 @@ def _infer_scene_token(candidate: TimelapsedSceneNodeCandidate, attribute_name: 
         value = attributes.get(key)
         if value:
             return _clean_token(value, prefix)
-    pattern = rf"(?i)(?:^|[^A-Za-z0-9]){re.escape(prefix)}[-_]?([A-Za-z0-9.]+)"
-    match = re.search(pattern, str(candidate.name or ""))
+    text = _candidate_search_text(candidate)
+    if attribute_name == "subject":
+        subject_match = re.search(r"(?i)(?:^|[^A-Za-z0-9])sub[-_]?(.+?)_ses[-_]?", text)
+        if subject_match:
+            return _safe_token(subject_match.group(1))
+    if attribute_name == "site":
+        site_match = re.search(
+            r"(?i)(?:^|[^A-Za-z0-9])site[-_]?(.+?)(?:_(?:image|mask[-_](?:full|trab|cort|seg)|seg|transform)|$)",
+            text,
+        )
+        if site_match:
+            return _safe_token(site_match.group(1))
+    pattern = rf"(?i)(?:^|[^A-Za-z0-9]){re.escape(prefix)}[-_]?([A-Za-z0-9_.-]+)"
+    match = re.search(pattern, text)
     if match:
-        return _safe_token(match.group(1))
+        value = match.group(1)
+        value = re.sub(r"(?i)[_-](?:image|mask[-_](?:full|trab|cort|seg)|seg|transform)$", "", value)
+        return _safe_token(value)
     study_match = re.search(
         r"(?i)^([A-Za-z][A-Za-z0-9]+)_([0-9]+)_([A-Za-z]+)_Y[0-9]+(?:[^A-Za-z0-9]|$)",
         str(candidate.name or ""),
@@ -340,6 +531,15 @@ def _infer_scene_token(candidate: TimelapsedSceneNodeCandidate, attribute_name: 
     if attribute_name == "site":
         return _safe_token(study_match.group(3))
     return ""
+
+
+def _candidate_search_text(candidate: TimelapsedSceneNodeCandidate) -> str:
+    attributes = candidate.attributes or {}
+    path_text = " ".join(
+        str(attributes.get(key, "") or "")
+        for key in ("StorageFileName", "FileName", "filename", "path")
+    )
+    return f"{candidate.name or ''} {Path(path_text).name if path_text else ''} {path_text}"
 
 
 def _scene_session_sort_key(session_id: str) -> tuple[int, int | str]:

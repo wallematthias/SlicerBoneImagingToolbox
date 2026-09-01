@@ -1,1 +1,1 @@
-"""Support modules for the ParOSol FEA scripted Slicer module."""
+"""Support modules for the ParOsol-FEA scripted Slicer module."""

@@ -20,6 +20,38 @@ def test_motionscore_module_exposes_scene_and_batch_modes():
     assert "Batch" in source
     assert "def onRunScenePredict" in source
     assert "build_motionscore_scene_plan" in source
+    assert 'self.motionScoreModeTabs.addTab(self.batchModePage, "Batch")' in source
+    assert 'self.motionScoreModeTabs.addTab(self.sceneModePage, "Scene")' in source
+    assert source.index('self.motionScoreModeTabs.addTab(self.batchModePage, "Batch")') < source.index(
+        'self.motionScoreModeTabs.addTab(self.sceneModePage, "Scene")'
+    )
+
+
+def test_motionscore_scene_is_lightweight_prediction_only():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "MotionScoreHRpQCT"
+        / "MotionScoreHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    scene_setup = source.split("    def _setup_scene_mode(self):", 1)[1].split("\n    def ", 1)[0]
+    scene_run = source.split("    def onRunScenePredict(self):", 1)[1].split("\n    def ", 1)[0]
+
+    assert "sceneScanIdEdit" not in scene_setup
+    assert "sceneSubjectIdEdit" not in scene_setup
+    assert "sceneSiteEdit" not in scene_setup
+    assert "sceneSessionIdEdit" not in scene_setup
+    assert "sceneResultsRootEdit" not in scene_setup
+    assert "sceneReviewerEdit" not in scene_setup
+    assert "sceneRunModeCombo" not in scene_setup
+    assert "AI Assisted" not in scene_setup
+    assert "Reviewer" not in scene_setup
+    assert 'self.sceneRunButton = qt.QPushButton("Run")' in scene_setup
+    assert "self.sceneResultLabel" in scene_setup
+    assert "self.sceneProfileLabel" in scene_setup
+    assert "self._default_scene_results_root()" in scene_run
+    assert "manual_only=False" in scene_run
+    assert "self._on_scene_prediction_finished" in scene_run
 
 
 def test_motionscore_scene_setup_does_not_capture_cleanup():
@@ -40,25 +72,19 @@ def test_motionscore_scene_plan_uses_derivative_scene_folder(tmp_path):
     plan = build_motionscore_scene_plan(
         results_root=tmp_path,
         scan_id="scan-1",
-        subject_id="SAMPLE001",
-        site="tibia",
-        session_id="ses-1",
         volume_node_id="node-1",
         run_id="scene-test",
     )
 
     assert plan.input_root.name == "input"
     assert "scene_runs" in str(plan.input_root)
-    assert plan.volume_npz_path.name == "sub-SAMPLE001_ses-1_site-tibia_scan-scan-1_volume.npz"
+    assert plan.volume_npz_path.name == "sub-scene_ses-scene_site-scene_scan-scan-1_volume.npz"
 
 
 def test_motionscore_scene_runner_args_can_run_manual_only(tmp_path):
     plan = build_motionscore_scene_plan(
         results_root=tmp_path,
         scan_id="scan-1",
-        subject_id="SAMPLE001",
-        site="radius",
-        session_id="ses-1",
         volume_node_id="node-1",
         run_id="scene-test",
     )
@@ -83,9 +109,6 @@ def test_motionscore_scene_predict_args_aliases_runner_args(tmp_path):
     plan = build_motionscore_scene_plan(
         results_root=tmp_path,
         scan_id="scan-1",
-        subject_id="SAMPLE001",
-        site="radius",
-        session_id="ses-1",
         volume_node_id="node-1",
         run_id="scene-test",
     )

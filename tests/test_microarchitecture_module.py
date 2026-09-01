@@ -2,10 +2,46 @@ from __future__ import annotations
 
 from pathlib import Path
 import importlib.util
+import sys
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "HRpQCTTools" / "BoneMicroarchitecture" / "BoneMicroarchitecture.py"
+
+
+def _install_slicer_import_stubs(monkeypatch) -> None:
+    qt = types.ModuleType("qt")
+    ctk = types.ModuleType("ctk")
+    vtk = types.ModuleType("vtk")
+    slicer = types.ModuleType("slicer")
+    scripted = types.ModuleType("slicer.ScriptedLoadableModule")
+
+    class _Base:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    scripted.ScriptedLoadableModule = _Base
+    scripted.ScriptedLoadableModuleWidget = _Base
+    scripted.ScriptedLoadableModuleLogic = _Base
+    scripted.ScriptedLoadableModuleTest = _Base
+    slicer.ScriptedLoadableModule = scripted
+    slicer.util = types.SimpleNamespace()
+    slicer.app = types.SimpleNamespace()
+
+    monkeypatch.setitem(sys.modules, "qt", qt)
+    monkeypatch.setitem(sys.modules, "ctk", ctk)
+    monkeypatch.setitem(sys.modules, "vtk", vtk)
+    monkeypatch.setitem(sys.modules, "slicer", slicer)
+    monkeypatch.setitem(sys.modules, "slicer.ScriptedLoadableModule", scripted)
+
+
+def _load_microarchitecture_module(monkeypatch, name: str):
+    _install_slicer_import_stubs(monkeypatch)
+    spec = importlib.util.spec_from_file_location(name, MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_microarchitecture_module_is_registered_with_toolbox_manifest_and_cmake() -> None:
@@ -14,8 +50,17 @@ def test_microarchitecture_module_is_registered_with_toolbox_manifest_and_cmake(
 
     assert "add_subdirectory(HRpQCTTools/BoneMicroarchitecture)" in cmake
     assert '"path": "HRpQCTTools/BoneMicroarchitecture"' in manifest
-    assert '"title": "Bone Microarchitecture"' in manifest
-    assert '"section": "Analysis Methods"' in manifest
+    assert '"title": "Microarchitecture"' in manifest
+    assert '"section": "Microstructural Analysis"' in manifest
+
+
+def test_microarchitecture_module_has_custom_icon_and_author_credit() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    icon_path = ROOT / "HRpQCTTools" / "BoneMicroarchitecture" / "Resources" / "Icons" / "BoneMicroarchitecture.png"
+
+    assert icon_path.is_file()
+    assert "parent.icon = qt.QIcon(str(Path(__file__).with_name(\"Resources\") / \"Icons\" / \"BoneMicroarchitecture.png\"))" in source
+    assert "Author: Matthias Walle" in source
 
 
 def test_microarchitecture_module_wraps_toolbox_microarchitecture_api() -> None:
@@ -123,7 +168,9 @@ def test_microarchitecture_loads_maps_for_cortical_thickness_and_masked_bmd() ->
 
 def test_microarchitecture_widget_exposes_minimal_clean_inputs_and_outputs() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
-    widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
+    setup_start = source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget"))
+    setup_end = source.index("    def _run_folder_batch(self):", setup_start)
+    widget_setup = source[setup_start:setup_end]
 
     assert "Grayscale/BMD volume" in source
     assert widget_setup.index("Grayscale/BMD volume") < widget_setup.index("Bone segmentation")
@@ -131,12 +178,15 @@ def test_microarchitecture_widget_exposes_minimal_clean_inputs_and_outputs() -> 
     assert "Full/periosteal mask" in source
     assert "Trabecular compartment mask" in source
     assert "Cortical compartment mask" in source
-    assert "Common scan region mask" in source
+    assert "Analysis mask" in widget_setup
+    assert "Common scan region mask" not in widget_setup
     assert "self.commonRegionMaskSelector" in widget_setup
     assert "BMD measures use the full compartment regions." in source
     assert "Segment" in source
-    assert "Image units" in source
-    assert "BMD Calibration" in source
+    assert "Image units" not in widget_setup
+    assert "Grayscale Calibration" in source
+    assert "Calibration source" in source
+    assert "Auto / already calibrated" in source
     assert "Thickness Settings" in source
     assert "Bounded EDT" in source
     assert "Exact sphere fitting" in source
@@ -186,9 +236,32 @@ def test_microarchitecture_exports_last_measurements_from_button() -> None:
     assert "self.exportCsvButton.clicked.connect(self._export_measurements_csv)" in source
     assert "def _export_measurements_csv(self):" in source
     assert "write_measurement_csv(path, self._lastMetrics, self._lastMaps)" in source
+    assert "self._write_filtered_measurement_csv(path)" in source
     assert 'path = f"{path}.csv"' in source
     assert "self._lastMetrics" in source
     assert "self._lastMaps" in source
+
+
+def test_microarchitecture_measurement_table_has_excel_style_filter() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
+
+    assert "self.measurementFilterEdit = qt.QLineEdit()" in widget_setup
+    assert 'self.measurementFilterEdit.placeholderText = "Filter rows, e.g. Tb.BMD or cortical"' in widget_setup
+    assert "self.measurementFilterEdit.textChanged.connect(self._apply_measurement_filter)" in widget_setup
+    assert "self.clearMeasurementFilterButton = qt.QPushButton(\"Clear\")" in widget_setup
+    assert "self.clearMeasurementFilterButton.clicked.connect(self.measurementFilterEdit.clear)" in widget_setup
+    assert 'form.addRow("Filter results", filter_widget)' in widget_setup
+    assert "self._lastMeasurementRows = []" in widget_setup
+    assert "self._lastMeasurementColumns = []" in widget_setup
+    assert "self._lastFilteredTableNode = None" in widget_setup
+    assert "def _filtered_measurement_rows(self):" in source
+    assert "def _apply_measurement_filter(self" in source
+    assert "def _measurement_table_from_rows(self, rows, name):" in source
+    assert "def _cache_measurement_rows_from_table(self, table_node):" in source
+    assert "def _write_filtered_measurement_csv(self, path):" in source
+    assert "self._cache_measurement_rows_from_table(loaded_table)" in source
+    assert "self._apply_measurement_filter()" in source
 
 
 def test_microarchitecture_module_records_measurement_provenance_attributes() -> None:
@@ -197,7 +270,8 @@ def test_microarchitecture_module_records_measurement_provenance_attributes() ->
     assert 'SetAttribute("BoneImaging.Microarchitecture.Engine", "bone_microarchitecture")' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.ThicknessMethod"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.ThicknessBackend"' in source
-    assert 'SetAttribute("BoneImaging.Microarchitecture.CommonRegionNode"' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.AnalysisMaskNode"' in source
+    assert 'SetAttribute("BoneImaging.Microarchitecture.AnalysisMaskName"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.TrabecularSegmentationID"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.PeriostealMaskID"' in source
     assert 'SetAttribute("BoneImaging.Microarchitecture.MapRole", map_role)' in source
@@ -206,15 +280,17 @@ def test_microarchitecture_module_records_measurement_provenance_attributes() ->
 def test_registered_series_mode_uses_timelapsed_discovery_and_slicer_timelapsed_layout() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 
-    assert 'REGISTERED_MICROARCHITECTURE_DIR_NAME = "RegisteredMicroarchitecture"' in source
+    assert 'REGISTERED_MICROARCHITECTURE_DIR_NAME = "registered"' in source
     assert "TIMELAPSED_LOCAL_SRC" in source
     assert "from timelapsedhrpqct.config.models import DiscoveryConfig" in source
     assert "from timelapsedhrpqct.dataset.discovery import discover_raw_sessions" in source
     assert "discover_registered_series(" in source
-    assert "canonicalize_sessions=True" in source
+    assert "canonicalize_sessions=False" in source
     assert "registered_microarchitecture_root(" in source
-    assert 'dataset_root / REGISTERED_MICROARCHITECTURE_DIR_NAME' in source
-    assert 'dataset_root / "derivatives" / REGISTERED_MICROARCHITECTURE_DIR_NAME' not in source
+    assert 'return self._derivative_family_root(root, "Microarchitecture") / REGISTERED_MICROARCHITECTURE_DIR_NAME' in source
+    assert '/ "derivatives" / family' in source
+    assert 'if root.name == "derivatives":' in source
+    assert 'if root.name == family:' in source
     assert "registered_session_output_dir(" in source
     assert '"native_space"' in source
     assert '"microarchitecture"' in source
@@ -224,47 +300,49 @@ def test_registered_series_mode_uses_timelapsed_discovery_and_slicer_timelapsed_
     assert "No registered series measurements were run" in source
 
 
-def test_registered_series_widget_has_dedicated_tab_and_review_table() -> None:
+def test_registered_microarchitecture_reuses_shared_timelapsed_registration_derivatives() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
-    widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
-    registered_tab = source[source.index("    def _setup_registered_series_tab(self, layout):") :]
+
+    assert "timelapse_pairwise_transform_path" in source
+    assert "timelapse_baseline_transform_path" in source
+    assert '/ "Registration"' in source
+    assert "_read_existing_registered_transform(" in source
+    assert "dataset_root=dataset_root" in source
+    assert 'source = "reused_registration"' in source
+
+
+def test_registered_series_is_exposed_as_batch_register_option() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    setup_start = source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget"))
+    setup_end = source.index("    def _run_folder_batch(self):", setup_start)
+    widget_setup = source[setup_start:setup_end]
 
     assert "class BoneMicroarchitecture(ScriptedLoadableModule):" in source
     assert "class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):" in source
     assert "class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):" in source
     assert "class BoneMicroarchitectureTest(ScriptedLoadableModuleTest):" in source
-    assert 'parent.categories = ["Bone Imaging.Analysis Methods"]' in source
+    assert 'parent.categories = ["Bone Imaging.Microstructural Analysis"]' in source
 
     assert "self.modeTabs = qt.QTabWidget()" in widget_setup
     assert 'self.modeTabs.addTab(single_tab, "Scene")' in widget_setup
-    assert 'self.modeTabs.addTab(series_tab, "Registered Series")' in widget_setup
-    assert "RegisteredMicroarchitecture" in widget_setup
-    assert "self.seriesDatasetRootEdit" in widget_setup
-    assert "self.seriesOutputRootEdit" in widget_setup
-    assert "self.seriesSubjectCombo" in widget_setup
-    assert "self.seriesSiteCombo" in widget_setup
-    assert "All subjects" in widget_setup
-    assert "All sites" in widget_setup
-    assert "self.seriesSubjectFilterEdit" not in registered_tab
-    assert "self.seriesSiteFilterEdit" not in registered_tab
-    assert '"Subject filter"' not in registered_tab
-    assert '"Site filter"' not in registered_tab
-    assert "self.discoverSeriesButton" in widget_setup
-    assert "self.runRegisteredSeriesButton" in widget_setup
+    assert 'self.modeTabs.addTab(batch_tab, "Batch")' in widget_setup
+    assert "Registered Series" not in widget_setup
+    assert "series_tab" not in widget_setup
+    assert "self.folderRegisteredCheck" in widget_setup
+    assert 'workflow_form.addRow("Register", self.folderRegisteredCheck)' in widget_setup
+    assert "self.folderRegisteredWorkflowCombo" in widget_setup
+    assert '"Measure microarchitecture", "measure"' in widget_setup
+    assert '"Prepare common region only", "common_region_only"' in widget_setup
+    assert "self.folderThicknessMethodCombo" in widget_setup
+    assert "self.folderThicknessBackendCombo" in widget_setup
+    assert "self.folderBatchLogText" in widget_setup
+    assert "self.discoverSeriesButton" not in widget_setup
+    assert "self.runRegisteredSeriesButton" not in widget_setup
     assert "self.prepareRegisteredSeriesButton" not in widget_setup
-    assert widget_setup.index("self.discoverSeriesButton") < widget_setup.index("form.addRow(\"Subject\"")
-    assert widget_setup.index("form.addRow(\"Subject\"") < widget_setup.index("form.addRow(\"Missing masks\"")
-    assert 'qt.QPushButton("Run Registered Series")' in widget_setup
-    assert "def _prepare_registered_series(self):" in source
-    assert "if not self._lastRegisteredRows:" in source[source.index("    def _run_registered_series(self):") :]
-    assert "self.seriesTable.setHorizontalHeaderLabels" in widget_setup
-    assert '"Subject", "Site", "Session", "Image", "Bone seg", "Full", "Trab", "Cort", "Status"' in widget_setup
-    assert "_discover_registered_series" in source
-    assert "_populate_registered_series_filters" in source
-    assert "_filtered_registered_rows" in source
-    assert "_refresh_registered_series_table" in source
-    assert "_prepare_registered_series" in source
-    assert "_run_registered_series" in source
+    assert "def _prepare_registered_series(self):" not in source
+    assert "def _run_registered_series(self):" not in source
+    assert "_write_registered_series_job_for_rows" in source
+    assert "self.logic.run_registered_series_job(" in source[source.index("    def _start_next_folder_batch_job(self):") :]
 
 
 def test_microarchitecture_batch_ui_uses_discovery_table_and_release_labels() -> None:
@@ -277,55 +355,141 @@ def test_microarchitecture_batch_ui_uses_discovery_table_and_release_labels() ->
     assert 'qt.QGroupBox("Workflow")' in widget_setup
     assert "self.folderDiscoverButton" in widget_setup
     assert "self.folderBatchTable" in widget_setup
-    assert 'self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])' in widget_setup
-    assert 'self.folderRunButton = qt.QPushButton("Run Batch")' in widget_setup
-    assert "Subject filter" in widget_setup
-    assert "Site filter" in widget_setup
+    assert "self.folderBrowseDatasetButton" in widget_setup
+    assert "self._configure_folder_batch_table_for_mode()" in widget_setup
+    assert 'headers = ["Action", "Subject", "Site", "Sessions", "Status"]' in source
+    assert 'headers = ["Action", "Image", "Subject", "Site", "Session", "Status"]' in source
+    assert "self.folderRegisteredCheck" in widget_setup
+    assert 'workflow_form.addRow("Register", self.folderRegisteredCheck)' in widget_setup
+    assert 'workflow_form.addRow("Registered workflow", self.folderRegisteredWorkflowCombo)' in widget_setup
+    assert "self.folderRegisteredWorkflowCombo.enabled = registered" in source
+    assert "self.folderRegisteredCheck.toggled.connect(self._update_folder_registered_options)" in widget_setup
+    assert "self.folderUseCommonRegionCheck" not in widget_setup
+    assert "Use common region" not in widget_setup
+    assert "self.folderSkipExistingCheck" in widget_setup
+    assert 'workflow_form.addRow("Skip existing", self.folderSkipExistingCheck)' in widget_setup
+    assert "force=not bool(self.folderSkipExistingCheck.checked)" in source
+    assert "_configure_folder_batch_table_for_mode" in source
+    assert 'self.folderRunButton = qt.QPushButton("Run all")' in widget_setup
+    assert "_queue_folder_batch_row" in source
+    assert "_start_next_folder_batch_job" in source
+    assert "_load_folder_batch_outputs" in source
+    assert "slicer.util.loadTable(long_csv)" in source
+    assert 'loaded_table.SetName(Path(long_csv).stem)' in source
+    assert 'self._table_count(self.folderBatchTable, "rowCount")' in source
+    assert 'self._table_count(self.folderBatchTable, "columnCount")' in source
+    assert "_folderBatchQueue" in source
+    assert "Subject filter" not in widget_setup
+    assert "Site filter" not in widget_setup
+    assert "self.folderSubjectEdit" not in widget_setup
+    assert "self.folderSiteEdit" not in widget_setup
 
 
-def test_registered_series_prepare_can_generate_missing_masks() -> None:
+def test_microarchitecture_independent_batch_rows_queue_and_load_existing_results() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
-    widget_setup = source[source.index("    def _setup_registered_series_tab(self, layout):") :]
-    prepare_method = source[source.index("    def _prepare_registered_series(self):") :]
+    queue_method = source[source.index("    def _queue_folder_batch_row(self, row_index):") : source.index("    def _start_next_folder_batch_job(self):")]
+    start_method = source[source.index("    def _start_next_folder_batch_job(self):") : source.index("    def _on_folder_batch_job_finished", source.index("    def _start_next_folder_batch_job(self):"))]
+    finish_method = source[source.index("    def _on_folder_batch_job_finished", source.index("    def _start_next_folder_batch_job(self):")) : source.index("    def _load_folder_batch_outputs", source.index("    def _on_folder_batch_job_finished"))]
+    discovery = source[source.index("    def _discover_folder_batch_groups(self):") : source.index("    def _set_folder_group_status(self, row_index, status):")]
+
+    assert '"mode": "independent"' in queue_method
+    assert "self._folderBatchQueue.append(queued)" in queue_method
+    assert "Folder batch is already running" not in queue_method
+    assert "self.logic.run_folder_batch_job(" in start_method
+    assert "self._folderBatchProcess = self.logic.run_folder_batch_job(" in start_method
+    assert "self._folderBatchProcess = self.logic.run_registered_series_job(" in start_method
+    assert "job.get(\"mode\") == \"independent\"" in start_method
+    assert "subject_id=str(job[\"group\"].get(\"subject\", \"\"))" in start_method
+    assert "site=str(job[\"group\"].get(\"site\", \"\"))" in start_method
+    assert "session_id=str(job[\"group\"].get(\"session\", \"\"))" in start_method
+    assert "self._folderBatchGroups[int(row_index)][\"result_path\"]" in finish_method
+    assert "self._folder_result_path_for_group(root, group)" in discovery
+    assert 'self._set_folder_group_action(row_index, "Load")' in discovery
+    assert 'self._set_folder_group_action(row_index, "Run")' in discovery
+    assert "self.logic.discover_independent_cases(" in discovery
+    assert 'group.get("status") != "Ready"' in queue_method
+    assert "Microarchitecture batch row is missing required masks" in queue_method
+
+
+def test_microarchitecture_logic_merges_independent_discovery_with_core_complete_cases() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    method = source[source.index("    def discover_independent_cases(") : source.index("    def sequential_registration_pairs", source.index("    def discover_independent_cases("))]
+
+    assert "microarchitecture_batch._discover_cases(Path(str(dataset_root)).expanduser())" in method
+    assert '"status": "Ready"' in method
+    assert "ready_by_key.get(key, row)" in method
+
+
+def test_microarchitecture_folder_batch_process_finish_slot_handles_qt_signal_variants() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    logic_method = source[source.index("    def run_folder_batch_job(") : source.index("    def run_registered_series_job(")]
+
+    assert "def _finished(*signal_args):" in logic_method
+    assert "proc.finished.connect(_finished)" in logic_method
+    assert "proc.exitCode()" in logic_method
+    assert "on_finished(exit_code, exit_status)" in logic_method
+
+
+def test_microarchitecture_independent_batch_does_not_fall_back_to_recursive_file_sweep() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    discovery = source[source.index("    def _discover_folder_batch_groups(self):") : source.index("    def _set_folder_group_status(self, row_index, status):")]
+
+    assert "root.rglob" not in discovery
+    assert "for path in root.iterdir()" in discovery
+    assert "self._is_folder_batch_image_path(path)" in discovery
+    assert "_is_folder_batch_image_path" in source
+
+
+def test_registered_series_consumes_existing_masks_without_generation_controls() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    setup_start = source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget"))
+    setup_end = source.index("    def _run_folder_batch(self):", setup_start)
+    widget_setup = source[setup_start:setup_end]
+    prepare_start = source.index("    def prepare_registered_series_workspace(")
+    prepare_end = source.index("    def _registered_progress(", prepare_start)
+    prepare_method = source[prepare_start:prepare_end]
+    worker_method = source[source.index("def _run_registered_series_worker(job_path):") :]
 
     assert "prepare_registered_series_workspace(" in source
-    assert "_complete_registered_series_masks" in source
-    assert "_derive_registered_compartment_masks" in source
-    assert "_generate_registered_bone_segmentation" in source
-    assert "_generate_registered_contours" in source
-    assert "from timelapsedhrpqct.processing.masks import resolve_masks" in source
-    assert "resolved, provenance = resolve_masks(" in source
-    assert 'source.startswith("derived_from_")' in source
-    assert 'provenance.get(role, "provided")' in source
-    assert "sitk.WriteImage" in source
-    assert "self.seriesSegmentationMethodCombo" in widget_setup
-    assert "self.seriesPeriostealContourCombo" in widget_setup
-    assert "self.seriesEndostealContourCombo" in widget_setup
-    assert "Missing masks" in widget_setup
-    assert "segmentation_method=str(self.seriesSegmentationMethodCombo.currentData)" in prepare_method
-    assert "periosteal_contour_method=str(self.seriesPeriostealContourCombo.currentData)" in prepare_method
-    assert "endosteal_contour_method=str(self.seriesEndostealContourCombo.currentData)" in prepare_method
+    assert '"common_region_only"' in source
+    assert "common-region-only workflow complete; measurements skipped" in source
+    assert "registered_session_masks_dir(" not in source
+    assert "registered_session_mask_path(" not in source
+    assert "_write_registered_mask(" not in source
+    assert "_complete_registered_series_masks(" not in prepare_method
+    assert "_complete_registered_series_masks(" not in source
+    assert "_generate_registered_contours(" not in source
+    assert "_generate_registered_bone_segmentation(" not in source
+    assert "self.seriesSegmentationMethodCombo" not in widget_setup
+    assert "self.seriesPeriostealContourCombo" not in widget_setup
+    assert "self.seriesEndostealContourCombo" not in widget_setup
+    assert "Missing masks" not in widget_setup
+    assert "segmentation_method=" not in prepare_method
+    assert "periosteal_contour_method=" not in prepare_method
+    assert "endosteal_contour_method=" not in prepare_method
+    assert 'job["segmentation_method"]' not in worker_method
+    assert "generate missing masks" not in widget_setup.lower()
 
 
 def test_registered_series_run_reports_measured_and_skipped_sessions() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     run_logic = source[source.index("    def run_registered_series_microarchitecture(") :]
-    run_widget = source[source.index("    def _run_registered_series(self):") :]
+    worker_method = source[source.index("def _run_registered_series_worker(job_path):") :]
 
     assert "skipped_rows = []" in run_logic
     assert "skipped_rows.append(" in run_logic
     assert '"skipped_rows": skipped_rows' in run_logic
-    assert "measured_count = len(outputs.get(\"session_csvs\", []))" in run_widget
-    assert "skipped_count = len(outputs.get(\"skipped_rows\", []))" in run_widget
-    assert "skipped_count" in run_widget
-    assert "[registered] skipped" in run_widget
+    assert "measured_count = len(outputs.get(\"session_csvs\", []))" in worker_method
+    assert "skipped_count = len(outputs.get(\"skipped_rows\", []))" in worker_method
+    assert "skipped_count" in worker_method
+    assert "[registered] skipped" in worker_method
 
 
 def test_registered_series_run_uses_background_qprocess_with_streamed_updates() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     logic_source = source[source.index("class BoneMicroarchitectureLogic") :]
-    run_start = source.index("    def _run_registered_series(self):")
-    run_end = source.index("    def _on_registered_series_finished", run_start)
+    run_start = source.index("    def _start_next_folder_batch_job(self):")
+    run_end = source.index("    def _on_folder_batch_job_finished", run_start)
     run_widget = source[run_start:run_end]
 
     assert "qt.QProcess()" in logic_source
@@ -333,10 +497,9 @@ def test_registered_series_run_uses_background_qprocess_with_streamed_updates() 
     assert "proc.readyRead.connect(_read_output)" in logic_source
     assert "proc.finished.connect(_finished)" in logic_source
     assert "def run_registered_series_job(" in logic_source
-    assert "_write_registered_series_job(" in source
-    assert "_on_registered_series_finished" in source
+    assert "_write_registered_series_job_for_rows(" in source
+    assert "_on_folder_batch_job_finished" in source
     assert "self.logic.run_registered_series_job(" in run_widget
-    assert "self._set_registered_series_running(True)" in run_widget
     assert "self._with_wait_cursor(" not in run_widget
     assert "--registered-series-job" in source
     assert "progress_callback=print_progress" in source
@@ -352,13 +515,29 @@ def test_registered_series_preparation_builds_common_regions_before_measurement(
     source = MODULE_PATH.read_text(encoding="utf-8")
     prepare_logic = source[source.index("    def prepare_registered_series_workspace(") :]
     run_logic = source[source.index("    def run_registered_series_microarchitecture(") :]
+    manifest_start = source.index("    def write_registered_series_manifest(")
+    manifest_end = source.index("    def prepare_registered_series_workspace(", manifest_start)
+    manifest_logic = source[manifest_start:manifest_end]
 
     assert "_build_registered_common_regions(" in prepare_logic
     assert "_register_to_baseline(" in source
     assert "_resample_registered_mask(" in source
     assert "sitk.WriteTransform" in source
     assert "common_space" in source
-    assert "common_masks" in source
+    assert "common_masks" not in source
+    assert 'workflow="CommonRegion"' in source
+    assert '_shared_common_region_root(' in source
+    assert '_shared_common_region_common_mask_path(' in source
+    assert '_shared_common_region_native_mask_path(' in source
+    assert "_registered_common_mask_path(" not in source
+    assert "_registered_common_session_mask_path(" not in source
+    assert '"registration/adjacent"' not in manifest_logic
+    assert '"registration/composed"' not in manifest_logic
+    assert '"common_space/common_masks"' not in manifest_logic
+    assert 'f"native_space/ses-{row[\'session_id\']}/masks"' not in manifest_logic
+    assert 'f"native_space/ses-{row[\'session_id\']}/microarchitecture/maps"' in manifest_logic
+    assert 'write_manifest(' in prepare_logic
+    assert '"producer": "registered_microarchitecture"' in prepare_logic
     assert "native_common" in source
     assert "row[\"native_common_scan_region_path\"]" in source
     assert "measurement_space" in source
@@ -393,9 +572,12 @@ def test_registered_series_common_regions_use_sequential_composed_transforms() -
 
     assert "PairwiseTransform" in source
     assert "compose_sequential_to_baseline(" in source
-    assert "_registered_pairwise_transform_path(" in source
+    assert "_registered_pairwise_transform_path(" not in source
+    assert "_registered_transform_path(" not in source
+    assert "_shared_timelapsed_pairwise_transform_path(" in source
+    assert "_shared_timelapsed_baseline_transform_path(" in source
     assert '"pairwise"' in source
-    assert '"composed"' in source
+    assert '"baseline"' in source
     assert "fixed_image=previous_image" in source
     assert "moving_image=image" in source
 
@@ -408,9 +590,7 @@ def test_microarchitecture_batch_delegates_to_package_batch_api() -> None:
 
 
 def test_microarchitecture_folder_batch_action_executes_package_api(monkeypatch, tmp_path: Path) -> None:
-    spec = importlib.util.spec_from_file_location("microarchitecture_batch_test", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_microarchitecture_module(monkeypatch, "microarchitecture_batch_test")
     received = {}
     monkeypatch.setattr(module, "run_microarchitecture_batch", lambda root, **kwargs: received.update(root=root, **kwargs) or ["done"])
 
@@ -420,10 +600,8 @@ def test_microarchitecture_folder_batch_action_executes_package_api(monkeypatch,
     assert received == {"root": tmp_path, "use_common_region": False, "force": True, "progress": None}
 
 
-def test_microarchitecture_background_batch_command_carries_folder_options(tmp_path: Path) -> None:
-    spec = importlib.util.spec_from_file_location("microarchitecture_batch_command_test", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_microarchitecture_background_batch_command_carries_folder_options(monkeypatch, tmp_path: Path) -> None:
+    module = _load_microarchitecture_module(monkeypatch, "microarchitecture_batch_command_test")
 
     command = module.BoneMicroarchitectureLogic.folder_batch_command(
         tmp_path, subject_id="S1", site="tibia", use_common_region=False,
@@ -432,15 +610,39 @@ def test_microarchitecture_background_batch_command_carries_folder_options(tmp_p
 
     assert command == [
         "-m", "bone_microarchitecture.cli", "run-batch", str(tmp_path.resolve()),
+        "--subject", "S1", "--site", "tibia",
         "--no-common-region", "--force",
         "--thickness-method", "edt", "--thickness-backend", "opencl",
     ]
 
 
+def test_microarchitecture_folder_result_path_accepts_session_aliases(monkeypatch, tmp_path: Path) -> None:
+    module = _load_microarchitecture_module(monkeypatch, "microarchitecture_result_alias_test")
+    widget = object.__new__(module.BoneMicroarchitectureWidget)
+    output = (
+        tmp_path
+        / "derivatives"
+        / "Microarchitecture"
+        / "sub-STRAMBO_0001"
+        / "site-radius_left"
+        / "native_space"
+        / "ses-Y00"
+        / "measurements"
+        / "sub-STRAMBO_0001_ses-Y00_site-radius_left_measurements.csv"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_text("Parameter,Mean\nTb.BV/TV,0.1\n", encoding="utf-8")
+
+    resolved = widget._folder_result_path_for_group(
+        tmp_path,
+        {"subject": "STRAMBO_0001", "site": "radius_left", "session": "00", "mode": "independent"},
+    )
+
+    assert resolved == output
+
+
 def test_microarchitecture_background_job_launches_with_pythonslicer(monkeypatch, tmp_path: Path) -> None:
-    spec = importlib.util.spec_from_file_location("microarchitecture_batch_launch_test", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_microarchitecture_module(monkeypatch, "microarchitecture_batch_launch_test")
     started = []
 
     class Signal:

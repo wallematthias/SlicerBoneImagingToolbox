@@ -145,7 +145,9 @@ class PlateRodMorphometryHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Plate/Rod Morphometry"
-        parent.categories = ["Bone Imaging.Analysis Methods"]
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "PlateRodMorphometryHRpQCT.png"))
+        parent.index = 80
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -154,6 +156,7 @@ class PlateRodMorphometryHRpQCT(ScriptedLoadableModule):
             f"Citation: {PLATE_ROD_CITATION}"
         )
         parent.acknowledgementText = (
+            "Author: Matthias Walle. "
             "This module wraps the separate plate_rod_thinning core package. "
             f"Please cite: {PLATE_ROD_CITATION}"
         )

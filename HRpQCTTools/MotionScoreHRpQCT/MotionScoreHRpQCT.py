@@ -72,14 +72,15 @@ class MotionScoreHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Motion Scoring"
-        parent.categories = ["Bone Imaging.Quality Control"]
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.index = 10
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "GUI wrapper for motionscore core CLI.\n"
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = """Built for streamlined HR-pQCT motion grading workflows.
+        parent.acknowledgementText = """Author: Matthias Walle. Built for streamlined HR-pQCT motion grading workflows.
 
 If you use Motion Scoring, please cite:
 Walle M, Eggemann D, Atkins PR, Kendall JJ, Stock K, Müller R, Collins CJ. Motion grading of high-resolution quantitative computed tomography supported by deep convolutional neural networks. Bone. 2023;166:116607. doi: 10.1016/j.bone.2022.116607."""
@@ -333,8 +334,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.batchModePage = qt.QWidget()
         self.sceneModeLayout = qt.QVBoxLayout(self.sceneModePage)
         self.batchModeLayout = qt.QVBoxLayout(self.batchModePage)
-        self.motionScoreModeTabs.addTab(self.sceneModePage, "Scene")
         self.motionScoreModeTabs.addTab(self.batchModePage, "Batch")
+        self.motionScoreModeTabs.addTab(self.sceneModePage, "Scene")
         self.layout.addWidget(self.motionScoreModeTabs)
         self._setup_scene_mode()
 
@@ -787,8 +788,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.cacheAheadSpin.valueChanged.connect(self._on_preload_setting_changed)
         self.reviewerEdit.editingFinished.connect(self._persist_reviewer_setting)
         self.deviceCombo.currentTextChanged.connect(self._persist_runtime_settings)
+        self.sceneDeviceCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.runModeCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.modelProfileCombo.currentTextChanged.connect(self._persist_runtime_settings)
+        self.sceneModelProfileCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.retrainBaseModelCombo.currentTextChanged.connect(self._persist_runtime_settings)
         self.profileModelCombo.currentTextChanged.connect(self.onProfileModelChanged)
         self.sliceStepSpin.valueChanged.connect(self._persist_runtime_settings)
@@ -837,44 +840,32 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.sceneVolumeSelector, "Loaded scalar volume to score from the current Slicer scene.")
         sceneForm.addRow("Scalar Volume", self.sceneVolumeSelector)
 
-        self.sceneScanIdEdit = qt.QLineEdit()
-        self.sceneScanIdEdit.placeholderText = "scan id"
-        self.sceneSubjectIdEdit = qt.QLineEdit()
-        self.sceneSubjectIdEdit.placeholderText = "subject id"
-        self.sceneSiteEdit = qt.QLineEdit()
-        self.sceneSiteEdit.placeholderText = "site"
-        self.sceneSessionIdEdit = qt.QLineEdit()
-        self.sceneSessionIdEdit.placeholderText = "session id"
-        sceneForm.addRow("Scan ID", self.sceneScanIdEdit)
-        sceneForm.addRow("Subject ID", self.sceneSubjectIdEdit)
-        sceneForm.addRow("Site", self.sceneSiteEdit)
-        sceneForm.addRow("Session ID", self.sceneSessionIdEdit)
-
-        self.sceneResultsRootEdit = ctk.ctkPathLineEdit()
-        self.sceneResultsRootEdit.filters = ctk.ctkPathLineEdit.Dirs
-        self.sceneResultsRootEdit.settingKey = "MotionScore/SceneResultsRoot"
-        self.sceneResultsRootEdit.currentPath = str(self._settings().value("MotionScore/SceneResultsRoot", "") or "")
-        self._tip(self.sceneResultsRootEdit, "Root folder for scene-run derivatives.")
-        sceneForm.addRow("Results Root", self.sceneResultsRootEdit)
-
         self.sceneModelProfileCombo = qt.QComboBox()
         self._tip(self.sceneModelProfileCombo, "Model profile used for scene prediction.")
         sceneForm.addRow("Model Profile", self.sceneModelProfileCombo)
 
-        self.sceneRunModeCombo = qt.QComboBox()
-        self.sceneRunModeCombo.addItems([self.RUN_MODE_AI, self.RUN_MODE_MANUAL])
-        self._tip(self.sceneRunModeCombo, "Choose AI prediction or create manual review records only.")
-        sceneForm.addRow("Run Mode", self.sceneRunModeCombo)
+        self.sceneDeviceCombo = qt.QComboBox()
+        self.sceneDeviceCombo.addItems(["auto", "mps", "cpu", "cuda"])
+        saved_device = str(self._settings().value("MotionScore/SceneTorchDevice", "auto") or "auto").strip().lower()
+        if saved_device not in {"auto", "mps", "cpu", "cuda"}:
+            saved_device = "auto"
+        self.sceneDeviceCombo.setCurrentText(saved_device)
+        self._tip(self.sceneDeviceCombo, "Torch device used for this loaded-volume prediction.")
+        sceneForm.addRow("Device", self.sceneDeviceCombo)
 
-        self.sceneReviewerEdit = qt.QLineEdit()
-        self.sceneReviewerEdit.placeholderText = "reviewer id"
-        self.sceneReviewerEdit.setText(str(self._settings().value("MotionScore/Reviewer", "") or ""))
-        self._tip(self.sceneReviewerEdit, "Reviewer identifier used when grading the scene result.")
-        sceneForm.addRow("Reviewer", self.sceneReviewerEdit)
-
-        self.sceneRunButton = qt.QPushButton("Run Scene Prediction")
+        self.sceneRunButton = qt.QPushButton("Run")
         self._tip(self.sceneRunButton, "Export the selected scene volume and run MotionScore in the background.")
         self.sceneModeLayout.addWidget(self.sceneRunButton)
+        self.sceneResultLabel = qt.QLabel("Result: not run")
+        self.sceneResultLabel.setWordWrap(True)
+        self._tip(self.sceneResultLabel, "Automatic MotionScore grade and confidence for the selected scene volume.")
+        self.sceneModeLayout.addWidget(self.sceneResultLabel)
+        self.sceneProfileLabel = qt.QLabel("Motion grading profile: -")
+        self.sceneProfileLabel.setMinimumHeight(180)
+        self.sceneProfileLabel.setAlignment(qt.Qt.AlignCenter)
+        self.sceneProfileLabel.setStyleSheet("QLabel { background: #ffffff; color: #333333; border: 1px solid #cfcfcf; }")
+        self._tip(self.sceneProfileLabel, "MotionScore slice profile generated for the selected scene volume.")
+        self.sceneModeLayout.addWidget(self.sceneProfileLabel)
         self.sceneModeLayout.addStretch(1)
 
     def _install_profile_wheel_filter(self):
@@ -912,6 +903,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _persist_runtime_settings(self):
         self._settings().setValue("MotionScore/TorchDevice", self._combo_text(self.deviceCombo))
+        if hasattr(self, "sceneDeviceCombo"):
+            self._settings().setValue("MotionScore/SceneTorchDevice", self._combo_text(self.sceneDeviceCombo))
         self._settings().setValue("MotionScore/RunMode", self._combo_text(self.runModeCombo))
         self._settings().setValue("MotionScore/ModelProfile", self._selected_model_id())
         self._settings().setValue("MotionScore/SliceStep", int(self.sliceStepSpin.value))
@@ -1456,11 +1449,19 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _derivatives_root(self):
         if self._review_output_root is not None:
-            return Path(self._review_output_root) / "MotionScore"
+            return self._derivative_family_root(self._review_output_root, "MotionScore")
         dataset = self.datasetPathEdit.currentPath.strip()
         if not dataset:
             return None
-        return Path(dataset) / "MotionScore"
+        return self._derivative_family_root(dataset, "MotionScore")
+
+    def _derivative_family_root(self, root_text, family):
+        root = Path(str(root_text)).expanduser()
+        if root.name == family:
+            return root
+        if root.name == "derivatives":
+            return root / family
+        return root / "derivatives" / family
 
     def _models_dir(self):
         path = str(self.modelsPathEdit.currentPath).strip()
@@ -1470,6 +1471,9 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         models_dir = Path(path).resolve()
         models_dir.mkdir(parents=True, exist_ok=True)
         return models_dir
+
+    def _default_scene_results_root(self):
+        return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "MotionScoreScene"
 
     def _has_local_models(self, models_dir=None):
         models_dir = models_dir or self._models_dir()
@@ -1676,14 +1680,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modelProfileCombo.enabled = enabled
         self.sceneRunButton.enabled = enabled
         self.sceneVolumeSelector.enabled = enabled
-        self.sceneScanIdEdit.enabled = enabled
-        self.sceneSubjectIdEdit.enabled = enabled
-        self.sceneSiteEdit.enabled = enabled
-        self.sceneSessionIdEdit.enabled = enabled
-        self.sceneResultsRootEdit.enabled = enabled
         self.sceneModelProfileCombo.enabled = enabled
-        self.sceneRunModeCombo.enabled = enabled
-        self.sceneReviewerEdit.enabled = enabled
+        self.sceneDeviceCombo.enabled = enabled
         self.retrainBaseModelCombo.enabled = enabled
         self.sliceStepSpin.enabled = enabled
         self.runScopeCombo.enabled = enabled
@@ -1859,26 +1857,19 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         if volume_node is None:
             slicer.util.errorDisplay("Please choose a scalar volume from the scene")
             return
-        results_root = str(self.sceneResultsRootEdit.currentPath).strip()
-        if not results_root:
-            slicer.util.errorDisplay("Please choose Results Root")
-            return
 
-        manual_only = self._combo_text(self.sceneRunModeCombo) == self.RUN_MODE_MANUAL
         if not self._core_package_ready() and not self._ensure_core_package():
             return
         models_dir = self._models_dir()
-        if not manual_only and (models_dir is None or not self._has_local_models(models_dir)):
-            slicer.util.errorDisplay("Local MotionScore models are required for AI prediction")
+        if models_dir is None or not self._has_local_models(models_dir):
+            slicer.util.errorDisplay("Local MotionScore models are required for prediction")
             return
 
+        scan_id = str(volume_node.GetName() or volume_node.GetID() or "scene-volume").strip()
         try:
             plan = build_motionscore_scene_plan(
-                results_root=Path(results_root),
-                scan_id=self.sceneScanIdEdit.text.strip(),
-                subject_id=self.sceneSubjectIdEdit.text.strip(),
-                site=self.sceneSiteEdit.text.strip(),
-                session_id=self.sceneSessionIdEdit.text.strip(),
+                results_root=self._default_scene_results_root(),
+                scan_id=scan_id,
                 volume_node_id=volume_node.GetID(),
                 run_id=f"scene-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}",
             )
@@ -1887,21 +1878,57 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay(f"Could not prepare scene run: {exc}")
             return
 
-        reviewer = self.sceneReviewerEdit.text.strip()
-        self.reviewerEdit.setText(reviewer)
-        self._persist_reviewer_setting()
         self._review_output_root = plan.output_root
         args = motionscore_scene_runner_args(
             plan,
             model_root=models_dir,
             model_id=self._selected_scene_model_id(),
-            manual_only=manual_only,
+            manual_only=False,
             confidence_threshold=int(self.confidenceSpin.value),
             slice_step=int(self.sliceStepSpin.value),
-            device=(self._combo_text(self.deviceCombo) or "auto").lower(),
+            device=(self._combo_text(self.sceneDeviceCombo) or "auto").lower(),
         )
+        self.sceneResultLabel.setText("Result: running...")
+        self.sceneProfileLabel.setText("Motion grading profile: running...")
         self.progressLabel.setText("Running scene prediction...")
-        self._run_cli(args, on_finish=self.refreshReview, scene_runner=True, task_name="scene-predict")
+        self._run_cli(
+            args,
+            on_finish=lambda: self._on_scene_prediction_finished(plan),
+            scene_runner=True,
+            task_name="scene-predict",
+        )
+
+    def _on_scene_prediction_finished(self, plan):
+        self.refreshReview(quiet=True)
+        self._update_scene_prediction_result(plan)
+
+    def _update_scene_prediction_result(self, plan):
+        derivatives = self._derivative_family_root(plan.output_root, "MotionScore")
+        index_path = derivatives / "index.tsv"
+        if not index_path.exists():
+            self.sceneResultLabel.setText("Result: no prediction index found")
+            self.sceneProfileLabel.setText("Motion grading profile: -")
+            return
+        rows = read_tsv(index_path)
+        row = next((r for r in rows if str(r.get("scan_id", "")).strip() == plan.scan_id), rows[0] if rows else {})
+        grade = str(row.get("automatic_grade", "") or "-").strip() or "-"
+        confidence = str(row.get("automatic_confidence", "") or "-").strip() or "-"
+        model_id = str(row.get("model_id", "") or "-").strip() or "-"
+        self.sceneResultLabel.setText(f"Result: grade {grade} | confidence {confidence} | model {model_id}")
+        rel_png = self._resolve_slice_profile_png_relpath(row, derivatives)
+        png_path = (derivatives / rel_png).resolve() if rel_png else None
+        if png_path is None or not png_path.exists():
+            self.sceneProfileLabel.setText("Motion grading profile: not available")
+            return
+        pix = qt.QPixmap(str(png_path))
+        if pix.isNull():
+            self.sceneProfileLabel.setText("Motion grading profile: could not load PNG")
+            return
+        label_width_attr = self.sceneProfileLabel.width
+        label_width = int(label_width_attr() if callable(label_width_attr) else label_width_attr)
+        width = max(240, min(720, label_width - 8))
+        scaled = pix.scaledToWidth(width, qt.Qt.SmoothTransformation)
+        self.sceneProfileLabel.setPixmap(scaled)
 
     def _export_scene_volume(self, volume_node, output_path):
         volume_kji = np.asarray(slicer.util.arrayFromVolume(volume_node))

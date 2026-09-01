@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 
 
@@ -14,13 +15,12 @@ DEFAULT_BUILTIN_MODULE_DIRS = (
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
     "HRpQCTTools/DeriveLabelsHRpQCT",
-    "CTTools/SpineSegmentationCT",
     "HRpQCTTools/TimelapsedHRpQCT",
     "HRpQCTTools/MechanoregulationHRpQCT",
-    "HRpQCTTools/RegisteredCommonRegion",
     "HRpQCTTools/BoneMicroarchitecture",
     "HRpQCTTools/PlateRodMorphometryHRpQCT",
     "HRpQCTTools/ParOSolFEA",
+    "CTTools/SpineSegmentationCT",
 )
 DEFAULT_EXTERNAL_MODULE_ROOTS = ("ExternalModules",)
 
@@ -31,6 +31,7 @@ class ToolboxModule:
     title: str
     section: str
     source: str = "built-in"
+    order: float = math.inf
 
 
 def _read_manifest(root: Path) -> dict:
@@ -52,12 +53,21 @@ def builtin_module_dirs(root: str | Path) -> tuple[str, ...]:
     if not isinstance(modules, list):
         return DEFAULT_BUILTIN_MODULE_DIRS
     paths = []
-    for module in modules:
+    for fallback_order, module in enumerate(modules):
         if isinstance(module, dict) and module.get("source", "built-in") == "built-in":
             path = str(module.get("path") or "").strip()
             if path:
-                paths.append(path)
-    return tuple(paths) or DEFAULT_BUILTIN_MODULE_DIRS
+                paths.append((_module_order(module, fallback_order), path))
+    paths.sort(key=lambda item: item[0])
+    return tuple(path for _order, path in paths) or DEFAULT_BUILTIN_MODULE_DIRS
+
+
+def _module_order(module: dict, fallback_order: int) -> tuple[float, int]:
+    raw_order = module.get("order")
+    try:
+        return (float(raw_order), fallback_order)
+    except (TypeError, ValueError):
+        return (math.inf, fallback_order)
 
 
 def external_module_roots(root: str | Path) -> tuple[str, ...]:
@@ -78,7 +88,7 @@ def listed_modules(root: str | Path) -> tuple[ToolboxModule, ...]:
             for path in DEFAULT_BUILTIN_MODULE_DIRS
         )
     listed: list[ToolboxModule] = []
-    for module in modules:
+    for fallback_order, module in enumerate(modules):
         if not isinstance(module, dict):
             continue
         path = str(module.get("path") or "").strip()
@@ -90,9 +100,10 @@ def listed_modules(root: str | Path) -> tuple[ToolboxModule, ...]:
                 title=str(module.get("title") or path).strip(),
                 section=str(module.get("section") or "Other").strip(),
                 source=str(module.get("source") or "built-in").strip(),
+                order=_module_order(module, fallback_order)[0],
             )
         )
-    return tuple(listed)
+    return tuple(sorted(listed, key=lambda module: module.order))
 
 
 def is_slicer_scripted_module_dir(path: str | Path) -> bool:

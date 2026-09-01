@@ -13,7 +13,6 @@ MODULES = (
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "SegmentationHRpQCT",
-    "RegisteredCommonRegion",
     "BoneMicroarchitecture",
     "PlateRodMorphometryHRpQCT",
     "ParOSolFEA",

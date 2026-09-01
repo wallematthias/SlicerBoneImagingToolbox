@@ -128,14 +128,15 @@ class DeriveLabelsHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Mask and Label Algebra"
-        parent.categories = ["Bone Imaging.Segmentation Methods"]
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.index = 30
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "Derive masks and material labelmaps from existing bone segmentation and ROI masks. "
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
+        parent.acknowledgementText = "Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer."
 
 
 class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):

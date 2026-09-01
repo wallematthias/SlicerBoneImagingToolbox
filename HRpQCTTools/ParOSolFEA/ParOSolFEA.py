@@ -439,15 +439,17 @@ DEFAULT_PROFILES = (PREFERRED_WORKFLOW,)
 class ParOSolFEA(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "ParOSol FEA"
-        parent.categories = ["Bone Imaging.Analysis Methods"]
+        parent.title = "ParOsol-FEA"
+        parent.categories = ["Bone Imaging.FE Analysis"]
+        parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "ParOSolFEA.png"))
+        parent.index = 10
         parent.dependencies = ["Segmentations"]
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "ParOSol-py finite-element model editor and runner.\n"
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Built for visual ParOSol-py model authoring."
+        parent.acknowledgementText = "Author: Matthias Walle. Built for visual ParOSol-py model authoring."
 
 
 class ParOSolFEALogic(ScriptedLoadableModuleLogic):

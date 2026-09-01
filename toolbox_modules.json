@@ -6,72 +6,77 @@
       "path": "Setup/BoneImagingToolboxSetup",
       "title": "Toolbox Setup",
       "section": "Setup",
+      "order": 10,
       "source": "built-in"
     },
     {
       "path": "IOTools/ScancoIO",
       "title": "Scanco I/O",
       "section": "I/O",
+      "order": 20,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/MotionScoreHRpQCT",
       "title": "Motion Scoring",
-      "section": "Quality Control",
+      "section": "Microstructural Analysis",
+      "order": 30,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/SegmentationHRpQCT",
-      "title": "Bone Contours",
-      "section": "Segmentation Methods",
+      "title": "Contouring",
+      "section": "Microstructural Analysis",
+      "order": 40,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/DeriveLabelsHRpQCT",
       "title": "Mask and Label Algebra",
-      "section": "Segmentation Methods",
-      "source": "built-in"
-    },
-    {
-      "path": "CTTools/SpineSegmentationCT",
-      "title": "Spine Segmentation",
-      "section": "Segmentation Methods",
+      "section": "Microstructural Analysis",
+      "order": 50,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/TimelapsedHRpQCT",
       "title": "Timelapsed Remodelling",
-      "section": "Timelapsed Methods",
+      "section": "Microstructural Analysis",
+      "order": 60,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/MechanoregulationHRpQCT",
-      "title": "Bone Mechanoregulation",
-      "section": "Timelapsed Methods",
-      "source": "built-in"
-    },
-    {
-      "path": "HRpQCTTools/RegisteredCommonRegion",
-      "title": "Registered Common Region",
-      "section": "Timelapsed Methods",
+      "title": "Mechanoregulation",
+      "section": "Microstructural Analysis",
+      "order": 70,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/BoneMicroarchitecture",
-      "title": "Bone Microarchitecture",
-      "section": "Analysis Methods",
+      "title": "Microarchitecture",
+      "section": "Microstructural Analysis",
+      "order": 80,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/PlateRodMorphometryHRpQCT",
       "title": "Plate/Rod Morphometry",
-      "section": "Analysis Methods",
+      "section": "Microstructural Analysis",
+      "order": 90,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/ParOSolFEA",
-      "title": "ParOSol FEA",
-      "section": "Analysis Methods",
+      "title": "ParOsol-FEA",
+      "section": "FE Analysis",
+      "order": 100,
+      "source": "built-in"
+    },
+    {
+      "path": "CTTools/SpineSegmentationCT",
+      "title": "Spine Segmentation",
+      "section": "CT Analysis",
+      "order": 110,
       "source": "built-in"
     }
   ],

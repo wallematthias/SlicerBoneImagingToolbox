@@ -159,7 +159,8 @@ class SpineSegmentationCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Spine Segmentation"
-        parent.categories = ["Bone Imaging.Segmentation Methods"]
+        parent.categories = ["Bone Imaging.CT Analysis"]
+        parent.index = 10
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -167,7 +168,7 @@ class SpineSegmentationCT(ScriptedLoadableModule):
             "process/body, and cortical/trabecular outputs into Slicer. "
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = """Part of the Bone Imaging Toolbox for 3D Slicer.
+        parent.acknowledgementText = """Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer.
 
 Spine Segmentation is backed by the spine-segment Python package.
 

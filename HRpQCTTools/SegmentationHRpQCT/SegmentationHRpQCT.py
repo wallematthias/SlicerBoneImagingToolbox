@@ -366,15 +366,17 @@ def _material_labels_from_arrays(seg, trab, cort, *, trab_label=126, cort_label=
 class SegmentationHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
-        parent.title = "Bone Contours"
-        parent.categories = ["Bone Imaging.Segmentation Methods"]
+        parent.title = "Contouring"
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "SegmentationHRpQCT.png"))
+        parent.index = 20
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "Generate bone full, trabecular, cortical, and binary segmentation "
             f"masks using site presets and standard segmentation methods. Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
+        parent.acknowledgementText = "Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer."
 
 
 class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
@@ -1963,7 +1965,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.batchSummaryTable = qt.QTableWidget()
         self.batchSummaryTable.setColumnCount(6)
-        self.batchSummaryTable.setHorizontalHeaderLabels(["Image", "Subject", "Session", "Site", "Action", "Status"])
+        self.batchSummaryTable.setHorizontalHeaderLabels(["Action", "Image", "Subject", "Session", "Site", "Status"])
         self.batchSummaryTable.setMaximumHeight(220)
         self.batchSummaryTable.setMinimumHeight(120)
         self.batchSummaryTable.horizontalHeader().setStretchLastSection(True)
@@ -2425,7 +2427,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _is_batch_image_path(self, path):
         name = path.name.lower()
-        if "_mask-" in name or "_seg" in name:
+        if any(token in name for token in ("_mask-", "_seg", "_map", "manifest", "measurements", "slicer_run_config")):
             return False
         if name.endswith((".nii", ".nii.gz", ".nrrd", ".mha", ".mhd")):
             return True
@@ -2520,10 +2522,10 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _set_batch_row(self, row, image_path, status, parsed=None):
         parsed = parsed or {}
-        self.batchSummaryTable.setItem(row, 0, qt.QTableWidgetItem(Path(image_path).name))
-        self.batchSummaryTable.setItem(row, 1, qt.QTableWidgetItem(str(parsed.get("subject") or "Unparsed")))
-        self.batchSummaryTable.setItem(row, 2, qt.QTableWidgetItem(str(parsed.get("session") or "Unparsed")))
-        self.batchSummaryTable.setItem(row, 3, qt.QTableWidgetItem(str(parsed.get("site") or "Use selected")))
+        self.batchSummaryTable.setItem(row, 1, qt.QTableWidgetItem(Path(image_path).name))
+        self.batchSummaryTable.setItem(row, 2, qt.QTableWidgetItem(str(parsed.get("subject") or "Unparsed")))
+        self.batchSummaryTable.setItem(row, 3, qt.QTableWidgetItem(str(parsed.get("session") or "Unparsed")))
+        self.batchSummaryTable.setItem(row, 4, qt.QTableWidgetItem(str(parsed.get("site") or "Use selected")))
         self.batchSummaryTable.setItem(row, 5, qt.QTableWidgetItem(str(status)))
         action = "Load" if self._batchRowOutputs.get(row) else "Run"
         self._set_batch_action(row, action)
@@ -2536,18 +2538,20 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             button.clicked.connect(lambda _checked=False, row=row: self._cancel_batch_row(row))
         else:
             button.clicked.connect(lambda _checked=False, row=row: self._queue_batch_row(row))
-        self.batchSummaryTable.setCellWidget(row, 4, button)
+        self.batchSummaryTable.setCellWidget(row, 0, button)
 
     def _resize_batch_table_columns(self):
         self.batchSummaryTable.resizeColumnsToContents()
-        self.batchSummaryTable.setColumnWidth(4, 80)
+        self.batchSummaryTable.setColumnWidth(0, 80)
 
     def _discover_batch_images(self):
         try:
             input_root = Path(self.batchInputRootEdit.currentPath or "").expanduser()
             if not input_root.is_dir():
                 raise ValueError("Select an input folder.")
-            image_paths = sorted(path for path in input_root.rglob("*") if path.is_file() and self._is_batch_image_path(path))
+            image_paths = sorted(
+                path for path in input_root.iterdir() if path.is_file() and self._is_batch_image_path(path)
+            )
             self._batchImagePaths = image_paths
             self._batchImageRows = [
                 {"path": path, **self._parse_batch_image_path(path)}
@@ -2586,9 +2590,17 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             output_root_text = str(self.batchInputRootEdit.currentPath or "").strip()
         return output_root_text
 
+    def _derivative_family_root(self, root_text, family):
+        root = Path(str(root_text)).expanduser()
+        if root.name == family:
+            return root
+        if root.name == "derivatives":
+            return root / family
+        return root / "derivatives" / family
+
     def _batch_output_root(self):
         output_root_text = self._batch_output_root_text()
-        output_root = Path(output_root_text).expanduser()
+        output_root = self._derivative_family_root(output_root_text, "Segmentation")
         output_root.mkdir(parents=True, exist_ok=True)
         return output_root
 
@@ -2601,14 +2613,14 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         subject = item.get("subject") or "unparsed"
         site = self._batch_item_site(item)
         session = item.get("session") or _image_output_stem(image_path)
-        return output_root / "BoneContours" / f"sub-{subject}" / f"site-{site}" / f"ses-{session}" / "masks"
+        return output_root / f"sub-{subject}" / f"site-{site}" / f"ses-{session}" / "masks"
 
     def _find_existing_batch_outputs(self, item):
         output_root_text = self._batch_output_root_text()
         if not output_root_text:
             return {}, {}
         image_path = Path(item["path"])
-        output_dir = self._batch_item_output_dir(item, Path(output_root_text).expanduser())
+        output_dir = self._batch_item_output_dir(item, self._derivative_family_root(output_root_text, "Segmentation"))
         stem = _image_output_stem(image_path)
         nifti_outputs = {}
         aim_outputs = {}
@@ -2781,7 +2793,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             output_root = self._batch_output_root()
             site = self._selected_site(item=item, strict=self._use_site_preset_params())
             image_output_dir = self._batch_item_output_dir(item, output_root)
-            config_dir = output_root / "BoneContours" / "slicer_run_configs"
+            config_dir = output_root / "slicer_run_configs"
             config_dir.mkdir(parents=True, exist_ok=True)
             config_path = config_dir / f"{_image_output_stem(image_path)}_batch_contour.json"
             config = {

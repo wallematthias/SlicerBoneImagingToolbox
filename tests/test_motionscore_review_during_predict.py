@@ -29,7 +29,8 @@ def test_motionscore_review_stays_available_while_predict_runs() -> None:
 def test_motionscore_grading_shortcuts_use_application_event_filter() -> None:
     source = _module_source()
 
-    assert "class _GradingShortcutEventFilter(qt.QObject):" in source
+    assert "_QT_OBJECT_BASE = getattr(qt, \"QObject\", object)" in source
+    assert "class _GradingShortcutEventFilter(_QT_OBJECT_BASE):" in source
     assert "owner._handle_grading_shortcut_event(obj, event)" in source
     assert "self._grading_shortcut_filter = _GradingShortcutEventFilter(self)" in source
     assert "app.installEventFilter(self._grading_shortcut_filter)" in source
@@ -235,6 +236,17 @@ def test_motionscore_load_dataset_does_not_walk_raw_dataset_tree() -> None:
     assert 'self._set_run_scope_items([])' in missing_index_branch
     assert "processed scan(s) indexed" in dataset_summary
     assert "no MotionScore index found yet" in dataset_summary
+
+
+def test_motionscore_wrapper_uses_derivatives_family_root() -> None:
+    source = _module_source()
+    helper = source[source.index("def _derivative_family_root") : source.index("def _models_dir")]
+
+    assert 'return self._derivative_family_root(dataset, "MotionScore")' in source
+    assert 'return self._derivative_family_root(self._review_output_root, "MotionScore")' in source
+    assert 'self._derivative_family_root(plan.output_root, "MotionScore")' in source
+    assert 'if root.name == "derivatives":' in helper
+    assert '/ "derivatives" / family' in helper
 
 
 def test_motionscore_selected_scan_fallback_load_is_async() -> None:

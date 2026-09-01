@@ -111,6 +111,17 @@ def test_scanco_import_ui_supports_new_formats_without_mu_scaling() -> None:
     assert 'self.importAsCombo.addItem("Transform (image geometry)", "transform")' in source
 
 
+def test_scanco_io_separates_import_and_export_into_tabs() -> None:
+    source = MODULE.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def setup(self):", source.index("class ScancoIOWidget")) :]
+
+    assert "self.modeTabs = qt.QTabWidget()" in widget_setup
+    assert 'self.modeTabs.addTab(importTab, "Import")' in widget_setup
+    assert 'self.modeTabs.addTab(exportTab, "Export")' in widget_setup
+    assert "self._build_import_section(importLayout)" in widget_setup
+    assert "self._build_export_section(exportLayout)" in widget_setup
+
+
 def test_aimio_image_dispatcher_supports_all_scanco_extensions() -> None:
     assert aim_io.supported_image_extensions() == (".aim", ".isq", ".scv", ".gobj")
     assert aim_io.resolve_image_format("radius.AIM") == "aim"

@@ -141,7 +141,7 @@ def test_laplace_hamming_uses_core_native_scanco_input_convention():
     assert "py_aimio_hu_int16" not in source
     assert "segmentation_node.CreateDefaultDisplayNodes()" in source
     assert "segmentation_node.SetAttribute(f\"HRpQCT.{key}\", str(generated.metadata[key]))" in source
-    assert "Method=laplace_hamming; input={metadata.get('segmentation_input_unit')}" in source
+    assert "Method=laplace_hamming; image={processing_reader}; input={metadata.get('segmentation_input_unit')}" in source
 
 
 def test_generated_masks_keep_aim_metadata_for_export():

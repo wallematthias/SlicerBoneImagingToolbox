@@ -197,7 +197,7 @@ def test_plate_rod_install_commands_do_not_emit_empty_dependency_install() -> No
 def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:
     specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
 
-    assert specs["parosol-py"].display_name == "ParOSol FEA"
+    assert specs["parosol-py"].display_name == "ParOsol-FEA"
     assert specs["parosol-py"].import_name == "parosol_py"
     assert "ParOSol" in specs["parosol-py"].notes
 

@@ -36,6 +36,17 @@ def test_segmentation_module_strips_legacy_scanner_prefixes_from_method_labels()
     assert "self.endostealContourCombo.addItem(_clean_method_label(descriptor.label), value)" in source
 
 
+def test_contouring_module_has_custom_icon_and_author_credit() -> None:
+    source = (
+        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    icon_path = ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "Resources" / "Icons" / "SegmentationHRpQCT.png"
+
+    assert icon_path.is_file()
+    assert "parent.icon = qt.QIcon(str(Path(__file__).with_name(\"Resources\") / \"Icons\" / \"SegmentationHRpQCT.png\"))" in source
+    assert "Author: Matthias Walle" in source
+
+
 def test_method_descriptors_do_not_include_external_segmentation_workflows() -> None:
     from SlicerBoneImagingToolboxLib.segmentation_methods import (
         BONE_SEGMENTATION_METHODS,
@@ -116,10 +127,10 @@ def test_contour_batch_table_exposes_row_jobs_and_uses_scene_settings() -> None:
     assert source.index("batch_layout.addWidget(self.batchSummaryTable)") < source.index(
         "batch_layout.addWidget(self.batchRunButton)"
     )
-    assert 'setHorizontalHeaderLabels(["Image", "Subject", "Session", "Site", "Action", "Status"])' in source
+    assert 'setHorizontalHeaderLabels(["Action", "Image", "Subject", "Session", "Site", "Status"])' in source
     assert 'action = "Load" if self._batchRowOutputs.get(row) else "Run"' in source
     assert "self.batchSummaryTable.setItem(row, 5" in source
-    assert "self.batchSummaryTable.setCellWidget(row, 4, button)" in source
+    assert "self.batchSummaryTable.setCellWidget(row, 0, button)" in source
     assert "def _resize_batch_table_columns(self):" in source
     assert "def _queue_batch_row(self, row):" in source
     assert "def _process_next_batch_job(self):" in source
@@ -264,7 +275,7 @@ def test_contour_module_does_not_duplicate_setup_update_controls() -> None:
     assert 'form.addRow("Status", self.pipelineStatusLabel)' in source
 
 
-def test_contour_batch_unparsed_rows_fall_back_to_selected_site_and_input_folder() -> None:
+def test_contour_batch_unparsed_rows_fall_back_to_selected_site_and_derivatives_folder() -> None:
     source = (
         ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
     ).read_text(encoding="utf-8")
@@ -273,10 +284,26 @@ def test_contour_batch_unparsed_rows_fall_back_to_selected_site_and_input_folder
     assert 'parsed.get("subject") or "Unparsed"' in source
     assert 'parsed.get("session") or "Unparsed"' in source
     assert 'parsed.get("site") or "Use selected"' in source
-    assert 'output_root_text = str(self.batchInputRootEdit.currentPath or "").strip()' in source
+    assert 'output_root = self._derivative_family_root(output_root_text, "Segmentation")' in source
     assert 'subject = item.get("subject") or "unparsed"' in source
     assert 'site = self._batch_item_site(item)' in source
     assert 'session = item.get("session") or _image_output_stem(image_path)' in source
+    assert '/ "derivatives" / family' in source
+    assert 'if root.name == "derivatives":' in source
+    assert 'if root.name == family:' in source
+
+
+def test_contour_batch_discovery_only_uses_top_level_input_images() -> None:
+    source = (
+        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    discovery = source[source.index("    def _discover_batch_images(self):") : source.index("    def _ensure_batch_rows(self):")]
+    image_filter = source[source.index("    def _is_batch_image_path(self, path):") : source.index("    def _parse_batch_image_path(self, image_path):")]
+
+    assert "input_root.iterdir()" in discovery
+    assert "input_root.rglob" not in discovery
+    assert "path.is_file() and self._is_batch_image_path(path)" in discovery
+    assert "_mask-" in image_filter
 
 
 def test_contour_batch_writes_only_aim_masks_for_aim_inputs() -> None:

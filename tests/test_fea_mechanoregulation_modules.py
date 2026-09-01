@@ -10,9 +10,13 @@ MECHREG_MODULE = ROOT / "HRpQCTTools" / "MechanoregulationHRpQCT" / "Mechanoregu
 
 def test_parosol_module_has_public_metadata_and_root_resolution() -> None:
     source = PAROSOL_MODULE.read_text(encoding="utf-8")
+    icon_path = ROOT / "HRpQCTTools" / "ParOSolFEA" / "Resources" / "Icons" / "ParOSolFEA.png"
 
-    assert 'parent.title = "ParOSol FEA"' in source
-    assert 'parent.categories = ["Bone Imaging.Analysis Methods"]' in source
+    assert 'parent.title = "ParOsol-FEA"' in source
+    assert 'parent.categories = ["Bone Imaging.FE Analysis"]' in source
+    assert icon_path.is_file()
+    assert "parent.icon = qt.QIcon(str(Path(__file__).with_name(\"Resources\") / \"Icons\" / \"ParOSolFEA.png\"))" in source
+    assert "Author: Matthias Walle" in source
     assert "Private ParOSol" not in source
     assert "extension_root = module_path.parents[2]" in source
     assert "def _active_repositories_root" in source
@@ -24,8 +28,8 @@ def test_parosol_module_has_public_metadata_and_root_resolution() -> None:
 def test_mechanoregulation_module_has_public_metadata_and_root_resolution() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
 
-    assert 'parent.title = "Bone Mechanoregulation"' in source
-    assert 'parent.categories = ["Bone Imaging.Timelapsed Methods"]' in source
+    assert 'parent.title = "Mechanoregulation"' in source
+    assert 'parent.categories = ["Bone Imaging.Microstructural Analysis"]' in source
     assert "Private Slicer wrapper" not in source
     assert "TOOLBOX_ROOT = Path(__file__).resolve().parents[2]" in source
     assert 'CORE_REQUIREMENT = "bone-mechanoregulation"' in source

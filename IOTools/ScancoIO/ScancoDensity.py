@@ -12,7 +12,7 @@ class ScancoDensity(ScriptedLoadableModule):
         parent.dependencies = ["ScancoIO"]
         parent.contributors = ["Matthias Walle"]
         parent.helpText = "Hidden Scanco density volume drag/drop reader."
-        parent.acknowledgementText = "Part of the Bone Imaging Toolbox for 3D Slicer."
+        parent.acknowledgementText = "Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer."
 
 
 class ScancoDensityFileReader(ScancoIOVariantFileReader):
