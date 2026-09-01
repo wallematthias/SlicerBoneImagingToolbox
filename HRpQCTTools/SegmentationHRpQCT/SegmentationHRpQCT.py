@@ -2448,6 +2448,18 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             return {"subject": "", "session": "", "site": ""}
 
     def _site_from_text(self, text):
+        try:
+            from bone_imaging_derivatives import normalize_site
+
+            shared_site = normalize_site(str(text or ""))
+            if str(shared_site or "").startswith("radius"):
+                return "radius"
+            if str(shared_site or "").startswith("tibia"):
+                return "tibia"
+            if str(shared_site or "").startswith("knee"):
+                return "knee"
+        except Exception:
+            pass
         lower = str(text or "").lower()
         for site in SITE_PRESETS:
             if site in lower:

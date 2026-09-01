@@ -134,6 +134,7 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/ParOSolFEA": "FE Analysis",
         "HRpQCTTools/MechanoregulationHRpQCT": "Microstructural Analysis",
         "IOTools/ScancoIO": "I/O",
+        "IOTools/DatasetNamingHelper": "I/O",
         "CTTools/SpineSegmentationCT": "CT Analysis",
         "Setup/BoneImagingToolboxSetup": "Setup",
     }
@@ -148,6 +149,7 @@ def test_public_tool_manifest_locks_human_workflow_order() -> None:
     assert paths == [
         "Setup/BoneImagingToolboxSetup",
         "IOTools/ScancoIO",
+        "IOTools/DatasetNamingHelper",
         "HRpQCTTools/MotionScoreHRpQCT",
         "HRpQCTTools/SegmentationHRpQCT",
         "HRpQCTTools/DeriveLabelsHRpQCT",

@@ -3,8 +3,14 @@ from pathlib import Path
 from SlicerBoneImagingToolboxLib.derivatives import (
     DerivativeManifest,
     DerivativeRecord,
+    build_naming_rows,
+    discover_artifacts,
     discover_manifests,
     find_records,
+    normalize_session_id,
+    normalize_site,
+    site_category,
+    suggested_filename,
     read_manifest,
     write_manifest,
 )
@@ -124,6 +130,41 @@ def test_derivative_shim_delegates_contract_io_to_shared_package() -> None:
     source = (Path(__file__).resolve().parents[1] / "SlicerBoneImagingToolboxLib" / "derivatives.py").read_text(encoding="utf-8")
 
     assert "from bone_imaging_derivatives" in source
+
+
+def test_derivative_shim_exposes_shared_artifact_discovery(tmp_path: Path) -> None:
+    image = tmp_path / "STRAMBO_0001_RL_Y00.AIM"
+    image.touch()
+    mask = (
+        tmp_path
+        / "derivatives"
+        / "Segmentation"
+        / "sub-STRAMBO_0001"
+        / "site-radius"
+        / "ses-Y00"
+        / "masks"
+        / "STRAMBO_0001_RL_Y00_mask-full.AIM"
+    )
+    mask.parent.mkdir(parents=True)
+    mask.touch()
+
+    index = discover_artifacts(tmp_path)
+
+    assert normalize_site("RL") == "radius_left"
+    assert site_category("RL") == "radius"
+    assert normalize_session_id("ses-Y00") == "00"
+    assert len(index.find(kind="image", site="radius_left", session_id="00")) == 1
+    assert len(index.find(kind="mask", role="full", site="radius_left", session_id="00")) == 1
+
+
+def test_derivative_shim_exposes_shared_naming_helpers(tmp_path: Path) -> None:
+    image = tmp_path / "SUBJ001_RL_T1.AIM"
+    image.touch()
+
+    rows = build_naming_rows(tmp_path)
+
+    assert rows[0].site == "radius_left"
+    assert suggested_filename(rows[0]) == "sub-SUBJ001_site-radius_left_ses-T1_image.AIM"
 
 
 def test_discovery_keeps_shared_contract_manifests_when_legacy_manifests_exist(tmp_path: Path) -> None:

@@ -169,7 +169,7 @@ def test_method_citations_are_documented_and_exposed_in_module_acknowledgements(
     assert "Precision of bone mechanoregulation assessment in humans" in timelapsed_module
     assert "A multi-stack registration technique" in timelapsed_module
     assert "Motion grading of high-resolution quantitative computed tomography" in motion_module
-    assert "Galateia Kazakia lab implementation" in segmentation_module
+    assert "Author: Matthias Walle" in segmentation_module
     assert "aimio-py / py_aimio" in scanco_module
     for module_text in (timelapsed_module, motion_module, segmentation_module, scanco_module):
         assert "parent.acknowledgementText" in module_text

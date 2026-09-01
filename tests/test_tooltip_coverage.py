@@ -12,12 +12,11 @@ def test_segmentation_toolbox_has_tooltips_for_generate_and_derive_tabs():
     source = _source("HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py")
 
     for snippet in [
-        "Input HR-pQCT volume used to generate masks and bone segmentation.",
+        "Input volume used to generate masks and bone segmentation.",
         "Laplace-Hamming threshold in native Scanco attenuation units.",
-        "Create full, trabecular, or cortical mask from the other two compartment masks.",
-        "Create one material labelmap from bone segmentation plus any two compartment masks.",
-        "Check full/trab/cort consistency",
-        "Report nonzero voxel counts",
+        "Run contour and segmentation generation with the selected methods and expert settings.",
+        "Batch mask output format.",
+        "Current scene settings that will be applied to queued batch rows.",
     ]:
         assert snippet in source
 
@@ -56,6 +55,6 @@ def test_timelapsed_has_control_level_tooltips_for_profiles_analysis_and_loading
         "Adjust absolute density-change threshold",
         "Load existing pairwise cohort analysis rows from disk.",
         "Load the selected processed output into the current Slicer scene.",
-        "Apply current analysis options to the selected loaded remodelling image.",
+        "Apply the current remodelling analysis options to the loaded comparison.",
     ]:
         assert snippet in source

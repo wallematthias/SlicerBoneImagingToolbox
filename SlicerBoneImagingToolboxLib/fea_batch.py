@@ -8,7 +8,7 @@ from typing import Iterable
 import numpy as np
 import SimpleITK as sitk
 
-from .derivatives import DerivativeRecord, discover_manifests
+from .derivatives import DerivativeRecord, discover_manifests, normalize_role, normalize_session_id, normalize_site, normalize_subject_id
 
 
 IMAGE_SUFFIXES = (".aim", ".nii", ".nii.gz", ".mha", ".mhd", ".nrrd", ".nhdr")
@@ -67,11 +67,14 @@ def discover_fea_batch_cases(
     artifacts_by_key: dict[tuple[str, str, str], list[FEAArtifact]] = {}
 
     def add_artifact(key: tuple[str, str, str], artifact: FEAArtifact) -> None:
-        if subject_id and key[0] != subject_id:
+        requested_subject = normalize_subject_id(subject_id) or ""
+        requested_site = normalize_site(site) or ""
+        requested_session = normalize_session_id(session_id) or ""
+        if requested_subject and key[0] != requested_subject:
             return
-        if site and key[1] != site:
+        if requested_site and key[1] != requested_site:
             return
-        if session_id and key[2] != session_id:
+        if requested_session and key[2] != requested_session:
             return
         artifacts_by_key.setdefault(key, [])
         if artifact.path not in {existing.path for existing in artifacts_by_key[key]}:
@@ -79,9 +82,9 @@ def discover_fea_batch_cases(
 
     for record in _iter_manifest_records(root):
         key = (
-            _clean_token(record.subject_id),
-            _clean_token(record.site),
-            _clean_token(record.session_id),
+            normalize_subject_id(_clean_token(record.subject_id)) or "",
+            normalize_site(_clean_token(record.site)) or "",
+            normalize_session_id(_clean_token(record.session_id)) or "",
         )
         if not key[0] or not key[1]:
             continue
@@ -327,9 +330,9 @@ def _has_image_suffix(path: Path) -> bool:
 def _tokens_from_path(path: Path, root: Path) -> dict[str, str]:
     text = "/".join(path.relative_to(root).parts)
     return {
-        "subject_id": _first_token(text, r"(?:^|[_/\-])sub-?([A-Za-z0-9]+)"),
-        "site": _first_token(text, r"(?:^|[_/\-])site-?([A-Za-z0-9]+)"),
-        "session_id": _first_token(text, r"(?:^|[_/\-])ses-?([A-Za-z0-9]+)"),
+        "subject_id": normalize_subject_id(_first_token(text, r"(?:^|[_/\-])sub-?([A-Za-z0-9]+)")) or "",
+        "site": normalize_site(_first_token(text, r"(?:^|[_/\-])site-?([A-Za-z0-9]+)")) or "",
+        "session_id": normalize_session_id(_first_token(text, r"(?:^|[_/\-])ses-?([A-Za-z0-9]+)")) or "",
     }
 
 
@@ -348,17 +351,20 @@ def _clean_token(value: object) -> str:
 
 def _normalize_artifact_role(role: str, path: str, *, derivative: str = "") -> str:
     role_text = str(role or "").lower()
+    shared_role = normalize_role(role_text)
     derivative_text = str(derivative or "").lower()
     name_text = Path(path).name.lower()
     text = f"{role_text} {name_text} {derivative_text}"
     path_text = str(path).lower()
     if derivative_text in {"microarchitecture", "platerodmorphometry", "plate_rod_morphometry"}:
         return "field_map" if _has_image_suffix(Path(path)) else "table"
-    if "mask-cort" in text or "mask_cort" in text or role_text in {"cort", "cortical", "mask_cort"}:
+    if shared_role == "cort" or "mask-cort" in text or "mask_cort" in text or role_text in {"cort", "cortical", "mask_cort"}:
         return "mask_cort"
-    if "mask-trab" in text or "mask_trab" in text or role_text in {"trab", "trabecular", "mask_trab"}:
+    if shared_role == "trab" or "mask-trab" in text or "mask_trab" in text or role_text in {"trab", "trabecular", "mask_trab"}:
         return "mask_trab"
     if (
+        shared_role == "full"
+        or
         "mask-full" in text
         or "mask_full" in text
         or role_text in {"full", "periosteal", "mask_full"}

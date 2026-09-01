@@ -17,66 +17,73 @@
       "source": "built-in"
     },
     {
+      "path": "IOTools/DatasetNamingHelper",
+      "title": "Dataset Naming Helper",
+      "section": "I/O",
+      "order": 30,
+      "source": "built-in"
+    },
+    {
       "path": "HRpQCTTools/MotionScoreHRpQCT",
       "title": "Motion Scoring",
       "section": "Microstructural Analysis",
-      "order": 30,
+      "order": 40,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/SegmentationHRpQCT",
       "title": "Contouring",
       "section": "Microstructural Analysis",
-      "order": 40,
+      "order": 50,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/DeriveLabelsHRpQCT",
       "title": "Mask and Label Algebra",
       "section": "Microstructural Analysis",
-      "order": 50,
+      "order": 60,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/TimelapsedHRpQCT",
       "title": "Timelapsed Remodelling",
       "section": "Microstructural Analysis",
-      "order": 60,
+      "order": 70,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/MechanoregulationHRpQCT",
       "title": "Mechanoregulation",
       "section": "Microstructural Analysis",
-      "order": 70,
+      "order": 80,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/BoneMicroarchitecture",
       "title": "Microarchitecture",
       "section": "Microstructural Analysis",
-      "order": 80,
+      "order": 90,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/PlateRodMorphometryHRpQCT",
       "title": "Plate/Rod Morphometry",
       "section": "Microstructural Analysis",
-      "order": 90,
+      "order": 100,
       "source": "built-in"
     },
     {
       "path": "HRpQCTTools/ParOSolFEA",
       "title": "ParOsol-FEA",
       "section": "FE Analysis",
-      "order": 100,
+      "order": 110,
       "source": "built-in"
     },
     {
       "path": "CTTools/SpineSegmentationCT",
       "title": "Spine Segmentation",
       "section": "CT Analysis",
-      "order": 110,
+      "order": 120,
       "source": "built-in"
     }
   ],

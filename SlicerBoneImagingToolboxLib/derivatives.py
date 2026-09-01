@@ -5,7 +5,20 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from bone_imaging_derivatives import read_manifest as read_shared_manifest
+from bone_imaging_derivatives import (
+    ArtifactIndex,
+    ArtifactRecord,
+    apply_overrides,
+    build_naming_rows,
+    discover_artifacts as discover_shared_artifacts,
+    normalize_role,
+    normalize_session_id,
+    normalize_site,
+    normalize_subject_id,
+    read_manifest as read_shared_manifest,
+    site_category,
+    suggested_filename,
+)
 
 
 @dataclass(frozen=True)
@@ -103,6 +116,11 @@ def discover_manifests(root: str | Path) -> list[DerivativeManifest]:
             )
         )
     return manifests
+
+
+def discover_artifacts(root: str | Path, *, include_derivatives: bool = True) -> ArtifactIndex:
+    """Discover loose images, masks, transforms, and tables with shared semantics."""
+    return discover_shared_artifacts(root, include_derivatives=include_derivatives)
 
 
 def find_records(manifest: DerivativeManifest, **filters: Any) -> list[DerivativeRecord]:

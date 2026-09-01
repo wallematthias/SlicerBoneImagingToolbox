@@ -38,7 +38,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Imaging Derivative Contract",
         package_name="bone-imaging-derivatives",
         import_name="bone_imaging_derivatives",
-        minimum_version="0.1.2",
+        minimum_version="0.1.3",
         notes="Shared derivative manifests, discovery, and prerequisite planning.",
     ),
     PackageSpec(
