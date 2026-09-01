@@ -130,7 +130,7 @@ def test_microarchitecture_install_commands_use_local_logic_repo_when_available(
 
     assert commands[0] == "--upgrade --prefer-binary numpy>=2.0,<3.0 scipy>=1.18,<2.0"
     assert commands[1].startswith("--upgrade --no-deps -e ")
-    assert commands[1].endswith("/bone-microarchitecture/.worktrees/derivative-batch")
+    assert commands[1].endswith("/bone-microarchitecture")
 
 
 def test_default_runtime_packages_include_public_tool_cores() -> None:
@@ -190,7 +190,7 @@ def test_plate_rod_install_commands_do_not_emit_empty_dependency_install() -> No
 
     assert len(commands) == 1
     assert commands[0].startswith("--no-deps -e ")
-    assert commands[0].endswith("/bone-plate-rod-thinning/.worktrees/derivative-batch")
+    assert commands[0].endswith("/bone-plate-rod-thinning")
     assert "--prefer-binary" not in commands[0]
 
 
