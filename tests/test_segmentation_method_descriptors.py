@@ -15,9 +15,9 @@ def test_segmentation_method_descriptors_define_xct2_choices() -> None:
         PERIOSTEAL_CONTOUR_METHODS,
     )
 
-    assert BONE_SEGMENTATION_METHODS["seg_gauss"].label == "XCT2 Gaussian"
-    assert BONE_SEGMENTATION_METHODS["laplace_hamming"].label == "XCT2 Laplace-Hamming"
-    assert BONE_SEGMENTATION_METHODS["adaptive"].label == "XCT2 Adaptive"
+    assert BONE_SEGMENTATION_METHODS["seg_gauss"].label == "Gaussian"
+    assert BONE_SEGMENTATION_METHODS["laplace_hamming"].label == "Laplace-Hamming"
+    assert BONE_SEGMENTATION_METHODS["adaptive"].label == "Adaptive"
 
     assert PERIOSTEAL_CONTOUR_METHODS["standard"].label == "Standard"
     assert PERIOSTEAL_CONTOUR_METHODS["geodesic_fracture"].label == "Geodesic Fracture"

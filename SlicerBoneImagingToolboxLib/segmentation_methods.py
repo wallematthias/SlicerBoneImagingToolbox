@@ -16,11 +16,11 @@ class MethodDescriptor:
 
 BONE_SEGMENTATION_METHODS = {
     "seg_gauss": MethodDescriptor(
-        label="XCT2 Gaussian",
+        label="Gaussian",
         parameters=("gaussian_sigma", "trab_threshold", "cort_threshold"),
     ),
     "laplace_hamming": MethodDescriptor(
-        label="XCT2 Laplace-Hamming",
+        label="Laplace-Hamming",
         parameters=(
             "laplace_hamming_threshold",
             "laplace_hamming_low_pass_cutoff",
@@ -30,7 +30,7 @@ BONE_SEGMENTATION_METHODS = {
         ),
     ),
     "adaptive": MethodDescriptor(
-        label="XCT2 Adaptive",
+        label="Adaptive",
         parameters=(
             "gaussian_sigma",
             "adaptive_low_threshold",
