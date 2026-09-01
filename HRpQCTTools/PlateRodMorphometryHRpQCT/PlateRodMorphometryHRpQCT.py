@@ -30,7 +30,7 @@ def _remove_local_core_repo_from_sys_path():
     local_repo = str(PLATE_ROD_LOCAL_REPO)
     sys.path[:] = [path for path in sys.path if str(path) != local_repo]
 
-from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install  # noqa: E402
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install, slicer_python_executable  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModule,
@@ -38,6 +38,12 @@ from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModuleLogic,
     ScriptedLoadableModuleTest,
 )
+
+
+def run_plate_rod_batch(*args, **kwargs):
+    from plate_rod_thinning.batch import run_plate_rod_batch as _run_plate_rod_batch
+
+    return _run_plate_rod_batch(*args, **kwargs)
 
 
 MODULE_VERSION = "0.1.3"
@@ -88,6 +94,13 @@ def main(job_json_path: str) -> int:
     print("[plate-rod] reading masks", flush=True)
     bone_image = sitk.ReadImage(str(job["bone_path"]), sitk.sitkUInt8)
     trab_image = sitk.ReadImage(str(job["trab_path"]), sitk.sitkUInt8)
+    common_region_path = str(job.get("common_region_path") or "")
+    if common_region_path:
+        common_image = sitk.ReadImage(common_region_path, sitk.sitkUInt8)
+        if common_image.GetSize() != bone_image.GetSize():
+            raise ValueError("Common scan region mask must match bone and trabecular mask geometry.")
+        bone_image = sitk.Cast((bone_image > 0) & (common_image > 0), sitk.sitkUInt8)
+        trab_image = sitk.Cast((trab_image > 0) & (common_image > 0), sitk.sitkUInt8)
     bone = sitk.GetArrayFromImage(bone_image) > 0
     trab = sitk.GetArrayFromImage(trab_image) > 0
     if bone.shape != trab.shape:
@@ -132,7 +145,9 @@ class PlateRodMorphometryHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Plate/Rod Morphometry"
-        parent.categories = ["Bone Imaging.HR-pQCT"]
+        parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "PlateRodMorphometryHRpQCT.png"))
+        parent.index = 80
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -141,6 +156,7 @@ class PlateRodMorphometryHRpQCT(ScriptedLoadableModule):
             f"Citation: {PLATE_ROD_CITATION}"
         )
         parent.acknowledgementText = (
+            "Author: Matthias Walle. "
             "This module wraps the separate plate_rod_thinning core package. "
             f"Please cite: {PLATE_ROD_CITATION}"
         )
@@ -151,6 +167,48 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         super().__init__()
         self._proc = None
         self._lastCoreInstallMessage = ""
+
+    def run_batch_workflow(self, dataset_root, *, use_common_region=True, force=False, progress=None):
+        """Run folder mode through the package batch API, not Slicer logic."""
+        return run_plate_rod_batch(
+            Path(dataset_root),
+            use_common_region=bool(use_common_region),
+            force=bool(force),
+            progress=progress,
+        )
+
+    def run_folder_batch(self, dataset_root, *, use_common_region=True, force=False, progress=None):
+        """Slicer folder-mode action boundary for package batch execution."""
+        return self.run_batch_workflow(
+            dataset_root,
+            use_common_region=use_common_region,
+            force=force,
+            progress=progress,
+        )
+
+    @staticmethod
+    def folder_batch_command(dataset_root, *, subject_id="", site="", use_common_region=True, force=False):
+        command = ["-m", "plate_rod_thinning.cli", "run-batch", str(Path(dataset_root).expanduser().resolve())]
+        if subject_id:
+            command.extend(["--subject", str(subject_id)])
+        if site:
+            command.extend(["--site", str(site)])
+        if not use_common_region:
+            command.append("--no-common-region")
+        if force:
+            command.append("--force")
+        return command
+
+    def run_folder_batch_job(self, dataset_root, *, subject_id="", site="", use_common_region=True, force=False,
+                             on_output=None, on_finished=None):
+        proc = qt.QProcess()
+        proc.setProcessChannelMode(qt.QProcess.MergedChannels)
+        proc.readyRead.connect(lambda: on_output and on_output(bytes(proc.readAll()).decode("utf-8", errors="replace")))
+        proc.finished.connect(lambda code, status: on_finished and on_finished(code, status))
+        proc.start(slicer_python_executable(slicer.app.applicationFilePath()), self.folder_batch_command(
+            dataset_root, subject_id=subject_id, site=site, use_common_region=use_common_region, force=force,
+        ))
+        return proc
 
     def core_runtime_status(self):
         try:
@@ -189,7 +247,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         _remove_local_core_repo_from_sys_path()
         slicer_pip_install(
             "--upgrade --force-reinstall --prefer-binary "
-            "--only-binary :all: --no-deps plate-rod-thinning>=0.1.3"
+            "--only-binary :all: --no-deps plate-rod-thinning>=0.1.6"
         )
         importlib.invalidate_caches()
         _remove_local_core_repo_from_sys_path()
@@ -213,6 +271,8 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         *,
         bone_segment_id=None,
         trabecular_segment_id=None,
+        common_region_node=None,
+        common_region_segment_id=None,
         slenderness=0,
         max_iterations=200,
         min_plate_voxels=0,
@@ -220,7 +280,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         use_metal=True,
         output_prefix="",
     ):
-        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node)
+        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node, common_region_node)
         temporary_reference_node = None
         if reference_node is None and bone_segmentation_node is not None and bone_segmentation_node.IsA("vtkMRMLSegmentationNode"):
             temporary_reference_node = self._segmentation_reference_node(
@@ -244,6 +304,20 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                 selected_segment_id=trabecular_segment_id,
                 reference_node=reference_node,
             )
+            common_region_path = None
+            if common_region_node is not None:
+                from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region
+
+                common_region = self._volume_to_sitk_uint8(
+                    common_region_node,
+                    "common scan region mask",
+                    selected_segment_id=common_region_segment_id,
+                    reference_node=reference_node,
+                )
+                bone_image = clip_mask_to_region(bone_image, common_region)
+                trab_image = clip_mask_to_region(trab_image, common_region)
+                common_region_path = job_dir / "common_region.nrrd"
+                sitk.WriteImage(common_region, str(common_region_path))
             bone_path = job_dir / "bone.nrrd"
             trab_path = job_dir / "trab.nrrd"
             sitk.WriteImage(bone_image, str(bone_path))
@@ -259,6 +333,9 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                 "job_json_path": str(job_dir / "job.json"),
                 "bone_path": str(bone_path),
                 "trab_path": str(trab_path),
+                "common_region_path": str(common_region_path) if common_region_path else "",
+                "common_region_node_id": common_region_node.GetID() if common_region_node is not None else "",
+                "common_region_node_name": common_region_node.GetName() if common_region_node is not None else "",
                 "output_paths": output_paths,
                 "summary_path": str(job_dir / "summary.json"),
                 "prefix": prefix,
@@ -361,9 +438,15 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
             )
             if map_role != "Component labels":
                 set_labelmap_display_colors(node, map_role)
+            if job.get("common_region_node_id"):
+                node.SetAttribute("BoneImaging.PlateRod.CommonRegionNode", str(job.get("common_region_node_id", "")))
+                node.SetAttribute("BoneImaging.PlateRod.CommonRegionName", str(job.get("common_region_node_name", "")))
             nodes[map_role] = node
         summary = json.loads(Path(job["summary_path"]).read_text(encoding="utf-8"))
         table_node = self._create_summary_table(summary, f"{job['prefix']}_summary")
+        if job.get("common_region_node_id"):
+            table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionNode", str(job.get("common_region_node_id", "")))
+            table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionName", str(job.get("common_region_node_name", "")))
         show_full_thickness_labels_in_3d(nodes.get("Full-thickness labels"))
         return {"nodes": nodes, "table": table_node, "summary": summary}
 
@@ -382,6 +465,8 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         *,
         bone_segment_id=None,
         trabecular_segment_id=None,
+        common_region_node=None,
+        common_region_segment_id=None,
         slenderness=0,
         max_iterations=200,
         min_plate_voxels=0,
@@ -390,7 +475,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
     ):
         from plate_rod_thinning import PlateRodParameters, plate_rod_analysis
 
-        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node)
+        reference_node = self._first_available_reference_node(bone_segmentation_node, trabecular_mask_node, common_region_node)
         temporary_reference_node = None
         if reference_node is None and bone_segmentation_node is not None and bone_segmentation_node.IsA("vtkMRMLSegmentationNode"):
             temporary_reference_node = self._segmentation_reference_node(
@@ -411,6 +496,17 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                 selected_segment_id=trabecular_segment_id,
                 reference_node=reference_node,
             )
+            if common_region_node is not None:
+                from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region
+
+                common_region = self._volume_to_sitk_uint8(
+                    common_region_node,
+                    "common scan region mask",
+                    selected_segment_id=common_region_segment_id,
+                    reference_node=reference_node,
+                )
+                bone_image = clip_mask_to_region(bone_image, common_region)
+                trab_image = clip_mask_to_region(trab_image, common_region)
             bone = sitk.GetArrayFromImage(bone_image) > 0
             trab = sitk.GetArrayFromImage(trab_image) > 0
             if bone.shape != trab.shape:
@@ -444,6 +540,9 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                     set_labelmap_display_colors(node, map_role)
                 nodes[map_role] = node
             table_node = self._create_summary_table(core_result.summary, f"{prefix}_summary")
+            if common_region_node is not None:
+                table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionNode", common_region_node.GetID())
+                table_node.SetAttribute("BoneImaging.PlateRod.CommonRegionName", common_region_node.GetName())
             show_full_thickness_labels_in_3d(nodes.get("Full-thickness labels"))
             return {"nodes": nodes, "table": table_node, "summary": core_result.summary}
         finally:
@@ -636,9 +735,18 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._lastTable = None
         self._activePlateRodJob = None
 
+        self.modeTabs = qt.QTabWidget()
+        scene_tab = qt.QWidget()
+        batch_tab = qt.QWidget()
+        scene_layout = qt.QVBoxLayout(scene_tab)
+        batch_layout = qt.QVBoxLayout(batch_tab)
+        self.modeTabs.addTab(scene_tab, "Scene")
+        self.modeTabs.addTab(batch_tab, "Batch")
+        self.layout.addWidget(self.modeTabs)
+
         parameters_collapsible = ctk.ctkCollapsibleButton()
         parameters_collapsible.text = "Parameters"
-        self.layout.addWidget(parameters_collapsible)
+        scene_layout.addWidget(parameters_collapsible)
         form_layout = qt.QFormLayout(parameters_collapsible)
 
         self.boneSegmentationSelector = slicer.qMRMLNodeComboBox()
@@ -664,6 +772,18 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.trabecularSegmentSelector = self._segment_combo()
         form_layout.addRow("Trabecular compartment mask", self._segmentation_input_row(self.trabecularMaskSelector, self.trabecularSegmentSelector))
+
+        self.commonRegionMaskSelector = slicer.qMRMLNodeComboBox()
+        self.commonRegionMaskSelector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"]
+        self.commonRegionMaskSelector.selectNodeUponCreation = False
+        self.commonRegionMaskSelector.addEnabled = False
+        self.commonRegionMaskSelector.removeEnabled = False
+        self.commonRegionMaskSelector.noneEnabled = True
+        self.commonRegionMaskSelector.setMRMLScene(slicer.mrmlScene)
+        self.commonRegionMaskSelector.currentNodeChanged.connect(self._refresh_common_region_segment_selector)
+
+        self.commonRegionSegmentSelector = self._segment_combo()
+        form_layout.addRow("Common scan region mask", self._segmentation_input_row(self.commonRegionMaskSelector, self.commonRegionSegmentSelector))
 
         self.slendernessSpinBox = qt.QSpinBox()
         self.slendernessSpinBox.minimum = 0
@@ -719,7 +839,106 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
         form_layout.addRow(self.installCoreButton)
         self._refresh_core_status()
 
+        discovery_box = qt.QGroupBox("Discovery")
+        batch_form = qt.QFormLayout(discovery_box)
+        batch_layout.addWidget(discovery_box)
+        self.folderDatasetRootEdit = qt.QLineEdit()
+        self.folderSubjectEdit = qt.QLineEdit()
+        self.folderSiteEdit = qt.QLineEdit()
+        self.folderDiscoverButton = qt.QPushButton("Discover")
+        self.folderDiscoverButton.clicked.connect(self._discover_folder_batch_groups)
+        batch_form.addRow("Dataset root", self.folderDatasetRootEdit)
+        batch_form.addRow("Subject filter", self.folderSubjectEdit)
+        batch_form.addRow("Site filter", self.folderSiteEdit)
+        batch_form.addRow("", self.folderDiscoverButton)
+
+        self.folderBatchTable = qt.QTableWidget()
+        self.folderBatchTable.setColumnCount(3)
+        self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])
+        self.folderBatchTable.minimumHeight = 160
+        try:
+            self.folderBatchTable.horizontalHeader().setStretchLastSection(True)
+            self.folderBatchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        except Exception:
+            pass
+        batch_layout.addWidget(self.folderBatchTable)
+
+        workflow_box = qt.QGroupBox("Workflow")
+        workflow_form = qt.QFormLayout(workflow_box)
+        batch_layout.addWidget(workflow_box)
+        self.folderUseCommonRegionCheck = qt.QCheckBox()
+        self.folderUseCommonRegionCheck.checked = True
+        self.folderForceCheck = qt.QCheckBox()
+        self.folderRunButton = qt.QPushButton("Run Batch")
+        self.folderBatchStatus = qt.QLabel()
+        self.folderBatchStatus.wordWrap = True
+        self.folderRunButton.clicked.connect(self._run_folder_batch)
+        workflow_form.addRow("Use common region", self.folderUseCommonRegionCheck)
+        workflow_form.addRow("Force recompute", self.folderForceCheck)
+        workflow_form.addRow(self.folderRunButton)
+        batch_layout.addWidget(self.folderBatchStatus)
+        batch_layout.addStretch(1)
+
         self.layout.addStretch(1)
+
+    def _run_folder_batch(self):
+        self.folderRunButton.enabled = False
+        self.folderBatchStatus.text = "Folder batch is running in the background."
+        self.logic.run_folder_batch_job(
+            self.folderDatasetRootEdit.text,
+            subject_id=self.folderSubjectEdit.text,
+            site=self.folderSiteEdit.text,
+            use_common_region=bool(self.folderUseCommonRegionCheck.checked),
+            force=bool(self.folderForceCheck.checked),
+            on_finished=self._on_folder_batch_finished,
+        )
+
+    def _on_folder_batch_finished(self, exit_code, _exit_status):
+        self.folderRunButton.enabled = True
+        self.folderBatchStatus.text = f"Folder batch finished with exit code {int(exit_code)}."
+
+    def _discover_folder_batch_groups(self):
+        root_text = str(self.folderDatasetRootEdit.text or "").strip()
+        if not root_text:
+            self.folderBatchStatus.text = "Select a dataset root before discovery."
+            return
+        root = Path(root_text).expanduser()
+        subject_filter = str(self.folderSubjectEdit.text or "").strip()
+        site_filter = str(self.folderSiteEdit.text or "").strip()
+        groups = {}
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            name = path.name.lower()
+            if "mask" not in name or not (name.endswith(".nii") or name.endswith(".nii.gz")):
+                continue
+            subject = ""
+            site = ""
+            session = ""
+            for part in path.parts:
+                if part.startswith("sub-"):
+                    subject = part[4:]
+                elif part.startswith("site-"):
+                    site = part[5:]
+                elif part.startswith("ses-"):
+                    session = part[4:]
+            if subject_filter and subject != subject_filter:
+                continue
+            if site_filter and site != site_filter:
+                continue
+            if subject or site:
+                groups.setdefault((subject, site), set()).add(session)
+        self.folderBatchTable.setRowCount(len(groups))
+        for row_index, ((subject, site), sessions) in enumerate(sorted(groups.items())):
+            for column, value in enumerate([subject, site, ", ".join(sorted(s for s in sessions if s))]):
+                item = qt.QTableWidgetItem(value)
+                item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+                self.folderBatchTable.setItem(row_index, column, item)
+        try:
+            self.folderBatchTable.resizeColumnsToContents()
+        except Exception:
+            pass
+        self.folderBatchStatus.text = f"Discovered {len(groups)} subject/site group(s)."
 
     def _segmentation_input_row(self, node_selector, segment_selector):
         row = qt.QWidget()
@@ -742,6 +961,9 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _refresh_trabecular_segment_selector(self, node=None):
         self._refresh_segment_selector(self.trabecularSegmentSelector, node, "trabecular compartment mask")
+
+    def _refresh_common_region_segment_selector(self, node=None):
+        self._refresh_segment_selector(self.commonRegionSegmentSelector, node, "common scan region mask")
 
     def _refresh_segment_selector(self, selector, node, role):
         selector.blockSignals(True)
@@ -817,6 +1039,8 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
                     self.trabecularMaskSelector.currentNode(),
                     bone_segment_id=self._selected_segment_id(self.boneSegmentSelector),
                     trabecular_segment_id=self._selected_segment_id(self.trabecularSegmentSelector),
+                    common_region_node=self.commonRegionMaskSelector.currentNode(),
+                    common_region_segment_id=self._selected_segment_id(self.commonRegionSegmentSelector),
                     slenderness=int(self.slendernessSpinBox.value),
                     max_iterations=int(self.maxIterationsSpinBox.value),
                     min_plate_voxels=int(self.minPlateSpinBox.value),

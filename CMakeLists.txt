@@ -15,13 +15,21 @@ include(${Slicer_USE_FILE})
 
 set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/__init__.py
+  SlicerBoneImagingToolboxLib/bone_contour_batch_worker.py
+  SlicerBoneImagingToolboxLib/common_region.py
+  SlicerBoneImagingToolboxLib/derivatives.py
+  SlicerBoneImagingToolboxLib/image_io.py
+  SlicerBoneImagingToolboxLib/masks.py
   SlicerBoneImagingToolboxLib/package_status.py
   SlicerBoneImagingToolboxLib/registry.py
+  SlicerBoneImagingToolboxLib/registration.py
   SlicerBoneImagingToolboxLib/segmentation_methods.py
   SlicerBoneImagingToolboxLib/slicer_pip.py
   SlicerBoneImagingToolboxLib/slicer_update_ui.py
+  SlicerBoneImagingToolboxLib/spine_segmentation_batch.py
   SlicerBoneImagingToolboxLib/updater.py
   SlicerBoneImagingToolboxLib/vertebra_labels.py
+  SlicerBoneImagingToolboxLib/workflow_planning.py
 )
 
 ctkMacroCompilePythonScript(
@@ -35,8 +43,11 @@ ctkMacroCompilePythonScript(
 add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
 add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
 add_subdirectory(HRpQCTTools/SegmentationHRpQCT)
+add_subdirectory(HRpQCTTools/DeriveLabelsHRpQCT)
 add_subdirectory(HRpQCTTools/BoneMicroarchitecture)
 add_subdirectory(HRpQCTTools/PlateRodMorphometryHRpQCT)
+add_subdirectory(HRpQCTTools/ParOSolFEA)
+add_subdirectory(HRpQCTTools/MechanoregulationHRpQCT)
 add_subdirectory(IOTools/ScancoIO)
 add_subdirectory(CTTools/SpineSegmentationCT)
 add_subdirectory(Setup/BoneImagingToolboxSetup)

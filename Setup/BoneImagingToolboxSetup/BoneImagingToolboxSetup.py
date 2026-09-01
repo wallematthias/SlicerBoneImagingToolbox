@@ -49,13 +49,16 @@ class BoneImagingToolboxSetup(ScriptedLoadableModule):
         super().__init__(parent)
         parent.title = "Toolbox Setup"
         parent.categories = ["Bone Imaging.Setup"]
+        parent.index = 10
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             f"Central setup and update dashboard for {TOOLBOX_DISPLAY_NAME}.\n"
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = "Built for streamlined Bone Imaging Toolbox installation and updates."
+        parent.acknowledgementText = (
+            "Author: Matthias Walle. Built for streamlined Bone Imaging Toolbox installation and updates."
+        )
 
 
 class BoneImagingToolboxSetupLogic(ScriptedLoadableModuleLogic):

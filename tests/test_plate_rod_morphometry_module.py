@@ -1,10 +1,47 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.util
+import sys
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "HRpQCTTools" / "PlateRodMorphometryHRpQCT" / "PlateRodMorphometryHRpQCT.py"
+
+
+def _install_slicer_import_stubs(monkeypatch) -> None:
+    qt = types.ModuleType("qt")
+    ctk = types.ModuleType("ctk")
+    vtk = types.ModuleType("vtk")
+    slicer = types.ModuleType("slicer")
+    scripted = types.ModuleType("slicer.ScriptedLoadableModule")
+
+    class _Base:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    scripted.ScriptedLoadableModule = _Base
+    scripted.ScriptedLoadableModuleWidget = _Base
+    scripted.ScriptedLoadableModuleLogic = _Base
+    scripted.ScriptedLoadableModuleTest = _Base
+    slicer.ScriptedLoadableModule = scripted
+    slicer.util = types.SimpleNamespace()
+    slicer.app = types.SimpleNamespace()
+
+    monkeypatch.setitem(sys.modules, "qt", qt)
+    monkeypatch.setitem(sys.modules, "ctk", ctk)
+    monkeypatch.setitem(sys.modules, "vtk", vtk)
+    monkeypatch.setitem(sys.modules, "slicer", slicer)
+    monkeypatch.setitem(sys.modules, "slicer.ScriptedLoadableModule", scripted)
+
+
+def _load_plate_rod_module(monkeypatch, name: str):
+    _install_slicer_import_stubs(monkeypatch)
+    spec = importlib.util.spec_from_file_location(name, MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_plate_rod_module_is_registered_with_toolbox_manifest_and_cmake() -> None:
@@ -14,7 +51,16 @@ def test_plate_rod_module_is_registered_with_toolbox_manifest_and_cmake() -> Non
     assert "add_subdirectory(HRpQCTTools/PlateRodMorphometryHRpQCT)" in cmake
     assert '"path": "HRpQCTTools/PlateRodMorphometryHRpQCT"' in manifest
     assert '"title": "Plate/Rod Morphometry"' in manifest
-    assert '"section": "HR-pQCT"' in manifest
+    assert '"section": "Microstructural Analysis"' in manifest
+
+
+def test_plate_rod_module_has_custom_icon_and_author_credit() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    icon_path = ROOT / "HRpQCTTools" / "PlateRodMorphometryHRpQCT" / "Resources" / "Icons" / "PlateRodMorphometryHRpQCT.png"
+
+    assert icon_path.is_file()
+    assert "parent.icon = qt.QIcon(str(Path(__file__).with_name(\"Resources\") / \"Icons\" / \"PlateRodMorphometryHRpQCT.png\"))" in source
+    assert "Author: Matthias Walle" in source
 
 
 def test_plate_rod_module_keeps_algorithm_logic_in_core_package() -> None:
@@ -55,7 +101,7 @@ def test_plate_rod_core_install_uses_pypi_binary_wheel_and_verifies_compiled_bac
         '"--upgrade --force-reinstall --prefer-binary "'
     ) in source
     assert (
-        '"--only-binary :all: --no-deps plate-rod-thinning>=0.1.3"'
+        '"--only-binary :all: --no-deps plate-rod-thinning>=0.1.6"'
     ) in source
     assert "_remove_local_core_repo_from_sys_path()" in source
     assert "Imported package path:" in source
@@ -76,6 +122,10 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     widget_setup = source[source.index("    def setup(self):", source.index("class PlateRodMorphometryHRpQCTWidget")) :]
 
+    assert "self.modeTabs = qt.QTabWidget()" in widget_setup
+    assert 'self.modeTabs.addTab(scene_tab, "Scene")' in widget_setup
+    assert 'self.modeTabs.addTab(batch_tab, "Batch")' in widget_setup
+    assert "Folder Batch" not in widget_setup
     assert "def _segmentation_input_row(self, node_selector, segment_selector):" in source
     assert "row_layout = qt.QHBoxLayout(row)" in source
     assert "row_layout.addWidget(node_selector, 2)" in source
@@ -89,6 +139,9 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
     assert "self.trabecularSegmentSelector = self._segment_combo()" in widget_setup
     assert 'form_layout.addRow("Trabecular compartment mask", self._segmentation_input_row(self.trabecularMaskSelector, self.trabecularSegmentSelector))' in widget_setup
     assert 'form_layout.addRow("Trabecular label", self.trabecularSegmentSelector)' not in widget_setup
+    assert "Common scan region mask" in widget_setup
+    assert "self.commonRegionMaskSelector" in widget_setup
+    assert "self.commonRegionSegmentSelector" in widget_setup
     assert "self.boneSegmentationSelector.currentNodeChanged.connect(self._refresh_bone_segment_selector)" in source
     assert "self.trabecularMaskSelector.currentNodeChanged.connect(self._refresh_trabecular_segment_selector)" in source
     assert "def _refresh_bone_segment_selector(self, node=None):" in source
@@ -119,6 +172,19 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
     assert "show_full_thickness_labels_in_3d(nodes.get(\"Full-thickness labels\"))" in source
 
 
+def test_plate_rod_batch_ui_uses_derivative_discovery_pattern() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    widget_setup = source[source.index("    def setup(self):", source.index("class PlateRodMorphometryHRpQCTWidget")) :]
+
+    assert 'qt.QGroupBox("Discovery")' in widget_setup
+    assert "self.folderDiscoverButton" in widget_setup
+    assert "self.folderBatchTable" in widget_setup
+    assert 'self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])' in widget_setup
+    assert "Subject filter" in widget_setup
+    assert "Site filter" in widget_setup
+    assert 'self.folderRunButton = qt.QPushButton("Run Batch")' in widget_setup
+
+
 def test_plate_rod_run_passes_selected_segments_to_logic() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     run_method = source[source.index("    def _run_plate_rod_morphometry(self):") :]
@@ -129,6 +195,8 @@ def test_plate_rod_run_passes_selected_segments_to_logic() -> None:
     assert "on_finished=self._on_plate_rod_process_finished" in run_method
     assert "bone_segment_id=self._selected_segment_id(self.boneSegmentSelector)" in run_method
     assert "trabecular_segment_id=self._selected_segment_id(self.trabecularSegmentSelector)" in run_method
+    assert "common_region_node=self.commonRegionMaskSelector.currentNode()" in run_method
+    assert "common_region_segment_id=self._selected_segment_id(self.commonRegionSegmentSelector)" in run_method
     assert "use_metal=bool(self.useMetalCheckBox.checked)" in run_method
     assert "max_iterations=int(self.maxIterationsSpinBox.value)" in run_method
     assert "self._set_progress(True, \"Reading selected masks...\")" in run_method
@@ -185,6 +253,11 @@ def test_plate_rod_logic_passes_trabecular_mask_and_spacing_for_summary_metrics(
     source = MODULE_PATH.read_text(encoding="utf-8")
 
     assert "voxel_spacing_mm=tuple(float(value) for value in bone_image.GetSpacing())," in source
+    assert "common_region_node=None" in source
+    assert "common_region = self._volume_to_sitk_uint8(" in source
+    assert "bone_image = clip_mask_to_region(bone_image, common_region)" in source
+    assert "trab_image = clip_mask_to_region(trab_image, common_region)" in source
+    assert '"common_region_path": str(common_region_path) if common_region_path else ""' in source
     assert "plate_rod_analysis(trabecular_bone, analysis_mask=trab, parameters=parameters)" in source
 
 
@@ -194,10 +267,67 @@ def test_plate_rod_module_sets_display_and_provenance_attributes() -> None:
     assert 'SetAttribute("BoneImaging.PlateRod.Engine", "plate_rod_thinning")' in source
     assert 'SetAttribute("BoneImaging.PlateRod.MapRole", map_role)' in source
     assert 'SetAttribute("BoneImaging.PlateRod.Slenderness"' in source
+    assert 'SetAttribute("BoneImaging.PlateRod.CommonRegionNode"' in source
     assert "set_labelmap_display_colors" in source
     assert '"Plate", (0.0, 0.45, 1.0)' in source
     assert '"Rod", (1.0, 0.05, 0.02)' in source
     assert '"Junction", (0.9, 0.1, 0.25)' in source
+
+
+def test_plate_rod_batch_delegates_to_package_batch_api() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "from plate_rod_thinning.batch import run_plate_rod_batch" in source
+    assert "run_plate_rod_batch(" in source
+
+
+def test_plate_rod_folder_batch_action_executes_package_api(monkeypatch, tmp_path: Path) -> None:
+    module = _load_plate_rod_module(monkeypatch, "plate_rod_batch_test")
+    received = {}
+    monkeypatch.setattr(module, "run_plate_rod_batch", lambda root, **kwargs: received.update(root=root, **kwargs) or "done")
+
+    result = module.PlateRodMorphometryHRpQCTLogic().run_folder_batch(tmp_path, use_common_region=False, force=True)
+
+    assert result == "done"
+    assert received == {"root": tmp_path, "use_common_region": False, "force": True, "progress": None}
+
+
+def test_plate_rod_background_batch_command_carries_folder_options(monkeypatch, tmp_path: Path) -> None:
+    module = _load_plate_rod_module(monkeypatch, "plate_rod_batch_command_test")
+
+    command = module.PlateRodMorphometryHRpQCTLogic.folder_batch_command(
+        tmp_path, subject_id="S1", site="tibia", use_common_region=False, force=True,
+    )
+
+    assert command == [
+        "-m", "plate_rod_thinning.cli", "run-batch", str(tmp_path.resolve()),
+        "--subject", "S1", "--site", "tibia", "--no-common-region", "--force",
+    ]
+
+
+def test_plate_rod_background_job_launches_with_pythonslicer(monkeypatch, tmp_path: Path) -> None:
+    module = _load_plate_rod_module(monkeypatch, "plate_rod_batch_launch_test")
+    started = []
+
+    class Signal:
+        def connect(self, _callback): pass
+
+    class Process:
+        MergedChannels = 1
+        def __init__(self):
+            self.readyRead = Signal()
+            self.finished = Signal()
+        def setProcessChannelMode(self, _mode): pass
+        def start(self, executable, arguments): started.append((executable, arguments))
+
+    monkeypatch.setattr(module.qt, "QProcess", Process, raising=False)
+    monkeypatch.setattr(module.slicer, "app", type("App", (), {"applicationFilePath": staticmethod(lambda: "/Applications/Slicer.app/Contents/MacOS/Slicer")})(), raising=False)
+    module.PlateRodMorphometryHRpQCTLogic().run_folder_batch_job(tmp_path, subject_id="S1", site="tibia", force=True)
+
+    assert started[0][0].endswith("Contents/bin/PythonSlicer")
+    assert started[0][1][:3] == ["-m", "plate_rod_thinning.cli", "run-batch"]
+    assert ["--subject", "S1"] == started[0][1][4:6]
+    assert "--force" in started[0][1]
 
 
 def test_plate_rod_module_builds_3d_surface_preview_for_full_thickness_labels() -> None:

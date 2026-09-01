@@ -5,7 +5,6 @@ import importlib
 import sys
 
 import qt
-import ctk
 import slicer
 import SimpleITK as sitk
 import numpy as np
@@ -125,13 +124,14 @@ class ScancoIO(ScriptedLoadableModule):
         super().__init__(parent)
         parent.title = "Scanco I/O"
         parent.categories = ["Bone Imaging.I/O"]
+        parent.index = 10
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "Import Scanco AIM, ISQ, SCV, and GOBJ images into Slicer and export "
             f"edited grayscale or mask volumes back to AIM. Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = """Part of the Bone Imaging Toolbox for 3D Slicer.
+        parent.acknowledgementText = """Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer.
 
 AIM import/export is backed by the aimio-py / py_aimio package. Add a module-specific method citation here if one is adopted in the future."""
 
@@ -471,17 +471,32 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         super().setup()
         self.logic = ScancoIOLogic()
 
-        self._build_import_section()
-        self._build_export_section()
+        self.modeTabs = qt.QTabWidget()
+        self.layout.addWidget(self.modeTabs)
+
+        importTab = qt.QWidget()
+        importLayout = qt.QVBoxLayout(importTab)
+        importLayout.setContentsMargins(6, 6, 6, 6)
+        self._build_import_section(importLayout)
+        importLayout.addStretch(1)
+        self.modeTabs.addTab(importTab, "Import")
+
+        exportTab = qt.QWidget()
+        exportLayout = qt.QVBoxLayout(exportTab)
+        exportLayout.setContentsMargins(6, 6, 6, 6)
+        self._build_export_section(exportLayout)
+        exportLayout.addStretch(1)
+        self.modeTabs.addTab(exportTab, "Export")
+
         self._build_log_section()
         self.layout.addStretch(1)
         self._log("Ready.")
 
-    def _build_import_section(self):
-        collapsible = ctk.ctkCollapsibleButton()
-        collapsible.text = "Import Scanco image"
-        self.layout.addWidget(collapsible)
-        form = qt.QFormLayout(collapsible)
+    def _build_import_section(self, parentLayout):
+        section = qt.QWidget()
+        section.toolTip = "Import Scanco image"
+        parentLayout.addWidget(section)
+        form = qt.QFormLayout(section)
 
         self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
         self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
@@ -531,11 +546,11 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self._tip(self.importButton, "Import the selected Scanco image into the Slicer scene and attach available metadata.")
         form.addRow(self.importButton)
 
-    def _build_export_section(self):
-        collapsible = ctk.ctkCollapsibleButton()
-        collapsible.text = "Export AIM"
-        self.layout.addWidget(collapsible)
-        form = qt.QFormLayout(collapsible)
+    def _build_export_section(self, parentLayout):
+        section = qt.QWidget()
+        section.toolTip = "Export AIM"
+        parentLayout.addWidget(section)
+        form = qt.QFormLayout(section)
 
         self.volumeSelector = slicer.qMRMLNodeComboBox()
         self.volumeSelector.nodeTypes = [

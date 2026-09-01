@@ -35,10 +35,25 @@ class PackageStatusRow:
 
 DEFAULT_RUNTIME_PACKAGES = (
     PackageSpec(
+        display_name="Bone Imaging Derivative Contract",
+        package_name="bone-imaging-derivatives",
+        import_name="bone_imaging_derivatives",
+        minimum_version="0.1.2",
+        notes="Shared derivative manifests, discovery, and prerequisite planning.",
+    ),
+    PackageSpec(
+        display_name="Bone Contouring",
+        package_name="bone-contouring",
+        import_name="bone_contouring",
+        minimum_version="0.1.0",
+        constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.3"),
+        notes="Standalone bone segmentation and full/trab/cort contour generation package.",
+    ),
+    PackageSpec(
         display_name="Timelapsed HR-pQCT",
         package_name="timelapsed-hrpqct",
         import_name="timelapsedhrpqct",
-        minimum_version="2.0.37",
+        minimum_version="2.0.42",
         constraints=("hrpqct-geodesic-contour>=0.1.1",),
         notes="Longitudinal HR-pQCT runtime package: timelapsed-hrpqct.",
     ),
@@ -69,7 +84,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Microarchitecture",
         package_name="bone-microarchitecture",
         import_name="bone_microarchitecture",
-        minimum_version="0.1.0",
+        minimum_version="0.2.2",
         constraints=("numpy>=2.0,<3.0", "scipy>=1.18,<2.0"),
         notes="Bone microarchitecture measurements from masks and calibrated grayscale images.",
     ),
@@ -77,7 +92,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Plate/Rod Morphometry",
         package_name="plate-rod-thinning",
         import_name="plate_rod_thinning",
-        minimum_version="0.1.3",
+        minimum_version="0.1.6",
         install_options=(
             "--force-reinstall",
             "--prefer-binary",
@@ -87,6 +102,20 @@ DEFAULT_RUNTIME_PACKAGES = (
         ),
         required_imports=("plate_rod_thinning._c_backend",),
         notes="Plate/rod thinning and morphometry core package with compiled backend.",
+    ),
+    PackageSpec(
+        display_name="ParOsol-FEA",
+        package_name="parosol-py",
+        import_name="parosol_py",
+        minimum_version="0.1.22",
+        notes="ParOSol finite-element analysis backend and Python workflow package.",
+    ),
+    PackageSpec(
+        display_name="Bone Mechanoregulation",
+        package_name="bone-mechanoregulation",
+        import_name="bonemechreg",
+        minimum_version="0.1.3",
+        notes="Bone mechanoregulation analysis package using Timelapsed, FEA, and remodelling derivatives.",
     ),
 )
 
@@ -259,14 +288,63 @@ def install_command(spec: PackageSpec, *, installed: bool) -> str:
     return " ".join(args)
 
 
+def _active_repositories_root(toolbox_root: Path) -> Path:
+    if toolbox_root.parent.name == ".worktrees":
+        return toolbox_root.parent.parent.parent
+    return toolbox_root.parent
+
+
+_LOCAL_WORKTREE_NAMES = {
+    "timelapsed-hrpqct": ("derivative-contract",),
+    "bone-microarchitecture": ("derivative-batch",),
+    "plate-rod-thinning": ("derivative-batch",),
+}
+_LOCAL_REPOSITORY_NAMES = {
+    "timelapsed-hrpqct": "TimelapsedHRpQCT",
+    "plate-rod-thinning": "bone-plate-rod-thinning",
+    "bone-mechanoregulation": "BoneMechanoregulation",
+}
+
+
+def resolve_local_editable_repo(toolbox_root: Path, package_name: str) -> Path | None:
+    """Find a package checkout in active-repository or named-worktree layouts."""
+    active_root = _active_repositories_root(Path(toolbox_root))
+    repo_name = _LOCAL_REPOSITORY_NAMES.get(package_name, package_name)
+    repository = active_root / repo_name
+    if Path(toolbox_root).parent.name == ".worktrees":
+        for worktree_name in _LOCAL_WORKTREE_NAMES.get(package_name, ()):
+            candidate = repository / ".worktrees" / worktree_name
+            if (candidate / "pyproject.toml").exists():
+                return candidate
+    direct = repository / "pyproject.toml"
+    if direct.exists():
+        return repository
+    for worktree_name in _LOCAL_WORKTREE_NAMES.get(package_name, ()):
+        candidate = repository / ".worktrees" / worktree_name
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    return None
+
+
 def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
-    if spec.package_name == "bone-microarchitecture":
+    if spec.package_name in {
+        "bone-imaging-derivatives",
+        "timelapsed-hrpqct",
+        "bone-microarchitecture",
+        "plate-rod-thinning",
+    }:
         upgrade = ["--upgrade"] if installed else []
-        dependency_command = " ".join([*upgrade, "--prefer-binary", *spec.constraints])
-        local_repo = Path(__file__).resolve().parents[1].parent / "bone-microarchitecture"
-        if (local_repo / "pyproject.toml").exists():
+        toolbox_root = Path(__file__).resolve().parents[1]
+        local_repo = resolve_local_editable_repo(toolbox_root, spec.package_name)
+        if local_repo is not None:
             package_command = " ".join([*upgrade, "--no-deps", "-e", str(local_repo)])
         else:
             package_command = install_command(spec, installed=installed)
-        return (dependency_command, package_command)
+        if spec.package_name == "bone-imaging-derivatives":
+            return (package_command,)
+        commands = []
+        if spec.constraints:
+            commands.append(" ".join([*upgrade, "--prefer-binary", *spec.constraints]))
+        commands.append(package_command)
+        return tuple(commands)
     return (install_command(spec, installed=installed),)

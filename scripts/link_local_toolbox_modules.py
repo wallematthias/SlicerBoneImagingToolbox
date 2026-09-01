@@ -5,20 +5,25 @@ import slicer
 
 
 DEFAULT_BUILTIN_MODULE_DIRS = (
-    "HRpQCTTools/TimelapsedHRpQCT",
+    "Setup/BoneImagingToolboxSetup",
+    "IOTools/ScancoIO",
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
+    "HRpQCTTools/DeriveLabelsHRpQCT",
+    "HRpQCTTools/TimelapsedHRpQCT",
+    "HRpQCTTools/MechanoregulationHRpQCT",
     "HRpQCTTools/BoneMicroarchitecture",
     "HRpQCTTools/PlateRodMorphometryHRpQCT",
-    "IOTools/ScancoIO",
+    "HRpQCTTools/ParOSolFEA",
     "CTTools/SpineSegmentationCT",
-    "Setup/BoneImagingToolboxSetup",
 )
 LEGACY_MODULE_DIR_NAMES = {
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "ScancoIO",
     "SegmentationHRpQCT",
+    "DeriveLabelsHRpQCT",
+    "RegisteredCommonRegion",
     "MicroarchitectureHRpQCT",
     "BoneMicroarchitecture",
     "PlateRodMorphometryHRpQCT",

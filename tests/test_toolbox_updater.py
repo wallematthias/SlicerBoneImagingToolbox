@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from SlicerBoneImagingToolboxLib.registry import discover_external_module_dirs, toolbox_module_dirs
+from SlicerBoneImagingToolboxLib.registry import builtin_module_dirs, discover_external_module_dirs, toolbox_module_dirs
 from SlicerBoneImagingToolboxLib.updater import (
     ModuleUpdateContext,
     detect_update_context,
@@ -91,13 +91,16 @@ def test_toolbox_module_dirs_include_external_scripted_modules(tmp_path: Path) -
 
 def test_builtin_modules_use_expected_slicer_subcategories() -> None:
     expected = {
-        "HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/BoneMicroarchitecture/BoneMicroarchitecture.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
-        "HRpQCTTools/PlateRodMorphometryHRpQCT/PlateRodMorphometryHRpQCT.py": 'parent.categories = ["Bone Imaging.HR-pQCT"]',
+        "HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
+        "HRpQCTTools/MotionScoreHRpQCT/MotionScoreHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
+        "HRpQCTTools/SegmentationHRpQCT/SegmentationHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
+        "HRpQCTTools/DeriveLabelsHRpQCT/DeriveLabelsHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
+        "HRpQCTTools/BoneMicroarchitecture/BoneMicroarchitecture.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
+        "HRpQCTTools/PlateRodMorphometryHRpQCT/PlateRodMorphometryHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
+        "HRpQCTTools/ParOSolFEA/ParOSolFEA.py": 'parent.categories = ["Bone Imaging.FE Analysis"]',
+        "HRpQCTTools/MechanoregulationHRpQCT/MechanoregulationHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
         "IOTools/ScancoIO/ScancoIO.py": 'parent.categories = ["Bone Imaging.I/O"]',
-        "CTTools/SpineSegmentationCT/SpineSegmentationCT.py": 'parent.categories = ["Bone Imaging.CT"]',
+        "CTTools/SpineSegmentationCT/SpineSegmentationCT.py": 'parent.categories = ["Bone Imaging.CT Analysis"]',
         "Setup/BoneImagingToolboxSetup/BoneImagingToolboxSetup.py": 'parent.categories = ["Bone Imaging.Setup"]',
     }
     for relative_path, category_line in expected.items():
@@ -107,29 +110,83 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
     segmentation_source = (
         REPO_ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
     ).read_text(encoding="utf-8")
-    assert 'parent.title = "Segmentation and Contours"' in segmentation_source
+    assert 'parent.title = "Contouring"' in segmentation_source
+
+    microarchitecture_source = (
+        REPO_ROOT / "HRpQCTTools" / "BoneMicroarchitecture" / "BoneMicroarchitecture.py"
+    ).read_text(encoding="utf-8")
+    assert 'parent.title = "Microarchitecture"' in microarchitecture_source
+
+    mechanoregulation_source = (
+        REPO_ROOT / "HRpQCTTools" / "MechanoregulationHRpQCT" / "MechanoregulationHRpQCT.py"
+    ).read_text(encoding="utf-8")
+    assert 'parent.title = "Mechanoregulation"' in mechanoregulation_source
 
     manifest = json.loads((REPO_ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
     sections = {module["path"]: module["section"] for module in manifest["modules"]}
     expected_sections = {
-        "HRpQCTTools/TimelapsedHRpQCT": "HR-pQCT",
-        "HRpQCTTools/MotionScoreHRpQCT": "HR-pQCT",
-        "HRpQCTTools/SegmentationHRpQCT": "HR-pQCT",
-        "HRpQCTTools/BoneMicroarchitecture": "HR-pQCT",
-        "HRpQCTTools/PlateRodMorphometryHRpQCT": "HR-pQCT",
+        "HRpQCTTools/TimelapsedHRpQCT": "Microstructural Analysis",
+        "HRpQCTTools/MotionScoreHRpQCT": "Microstructural Analysis",
+        "HRpQCTTools/SegmentationHRpQCT": "Microstructural Analysis",
+        "HRpQCTTools/DeriveLabelsHRpQCT": "Microstructural Analysis",
+        "HRpQCTTools/BoneMicroarchitecture": "Microstructural Analysis",
+        "HRpQCTTools/PlateRodMorphometryHRpQCT": "Microstructural Analysis",
+        "HRpQCTTools/ParOSolFEA": "FE Analysis",
+        "HRpQCTTools/MechanoregulationHRpQCT": "Microstructural Analysis",
         "IOTools/ScancoIO": "I/O",
-        "CTTools/SpineSegmentationCT": "CT",
+        "CTTools/SpineSegmentationCT": "CT Analysis",
         "Setup/BoneImagingToolboxSetup": "Setup",
     }
     for path, section in expected_sections.items():
         assert sections[path] == section
 
 
+def test_public_tool_manifest_locks_human_workflow_order() -> None:
+    manifest = json.loads((REPO_ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
+    modules = manifest["modules"]
+    paths = [module["path"] for module in modules]
+    assert paths == [
+        "Setup/BoneImagingToolboxSetup",
+        "IOTools/ScancoIO",
+        "HRpQCTTools/MotionScoreHRpQCT",
+        "HRpQCTTools/SegmentationHRpQCT",
+        "HRpQCTTools/DeriveLabelsHRpQCT",
+        "HRpQCTTools/TimelapsedHRpQCT",
+        "HRpQCTTools/MechanoregulationHRpQCT",
+        "HRpQCTTools/BoneMicroarchitecture",
+        "HRpQCTTools/PlateRodMorphometryHRpQCT",
+        "HRpQCTTools/ParOSolFEA",
+        "CTTools/SpineSegmentationCT",
+    ]
+    assert [module["order"] for module in modules] == list(range(10, 10 * (len(modules) + 1), 10))
+
+
+def test_registry_orders_manifest_modules_by_explicit_order(tmp_path: Path) -> None:
+    root = tmp_path / "toolbox"
+    root.mkdir()
+    (root / "toolbox_modules.json").write_text(
+        json.dumps(
+            {
+                "modules": [
+                    {"path": "third", "title": "Third", "section": "Tools", "order": 30},
+                    {"path": "first", "title": "First", "section": "Tools", "order": 10},
+                    {"path": "second", "title": "Second", "section": "Tools", "order": 20},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert builtin_module_dirs(root) == ("first", "second", "third")
+
+
 def test_local_link_helper_fallback_includes_all_builtin_modules() -> None:
     helper = (REPO_ROOT / "scripts" / "link_local_toolbox_modules.py").read_text(encoding="utf-8")
 
     assert '"CTTools/SpineSegmentationCT"' in helper
+    assert '"HRpQCTTools/DeriveLabelsHRpQCT"' in helper
     assert '"HRpQCTTools/PlateRodMorphometryHRpQCT"' in helper
     assert '"Setup/BoneImagingToolboxSetup"' in helper
     assert '"PlateRodMorphometryHRpQCT"' in helper
+    assert '"DeriveLabelsHRpQCT"' in helper
     assert '"BoneImagingToolboxSetup"' in helper

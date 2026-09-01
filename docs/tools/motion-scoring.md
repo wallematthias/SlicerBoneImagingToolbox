@@ -61,6 +61,17 @@ The `base-v1` subfolder layout is preferred because it keeps model versions sepa
 
 ## Basic Workflow
 
+The module has two modes:
+
+- `Scene` scores or initializes review for one scalar volume already loaded in Slicer.
+- `Batch` discovers AIM scans from a dataset folder, runs/resumes prediction, and manages cohort review.
+
+## Scene Mode
+
+Use `Scene` when a scan is already loaded in Slicer. Select the scalar volume, enter scan/subject/site/session labels, choose a model profile or manual-review mode, and run. The module exports the volume to a scoped scene-run handoff file and runs MotionScore in a background process.
+
+## Batch Mode
+
 1. Select the folder or table of scans to score.
 2. Select the model profile.
 3. Run prediction.

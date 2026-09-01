@@ -35,7 +35,7 @@ Bone Imaging
 | Bone Microarchitecture | `Bone Imaging > HR-pQCT` | Computes trabecular microarchitecture, BMD, and compartment measures from masks. | [Bone Microarchitecture](docs/tools/microarchitecture.md) |
 | Plate/Rod Morphometry | `Bone Imaging > HR-pQCT` | Runs topology-preserving plate/rod thinning, ports labels back to full thickness, and summarizes plate, rod, and junction measures. | [Plate/Rod Morphometry](docs/tools/plate-rod-morphometry.md) |
 | Scanco I/O | `Bone Imaging > I/O` | Imports Scanco AIM, ISQ, SCV, and GOBJ images, and exports AIM images, masks, and metadata. | [Scanco I/O](docs/tools/scanco-io.md) |
-| Spine Segmentation | `Bone Imaging > CT` | Runs PyTorch spine CT segmentation and loads vertebral-level, process/body, and cortical/trabecular outputs. | [Spine Segmentation](docs/tools/spine-segmentation-ct.md) |
+| Spine Segmentation | `Bone Imaging > CT` | Runs scene or batch PyTorch spine CT segmentation for vertebral-level, process/body, and cortical/trabecular outputs. | [Spine Segmentation](docs/tools/spine-segmentation-ct.md) |
 
 The Slicer modules are wrappers around core Python packages where possible:
 
@@ -48,7 +48,7 @@ The Slicer modules are wrappers around core Python packages where possible:
 | `aimio-py` / `py_aimio` | Scanco I/O and AIM-backed BMD calibration | https://github.com/wallematthias/aimio-py |
 | `spine-segment` | Spine Segmentation | https://github.com/wallematthias/spine-segment |
 
-Each tool guide contains its own focused workflow instructions and attribution/citation notes.
+Each tool guide contains its own focused workflow instructions and attribution/citation notes. Shared outputs follow the [derivative workflow contract](docs/derivatives.md).
 
 ## Runtime Dependencies
 
@@ -116,7 +116,6 @@ Instead of using the helper script, add the module folders in `Edit -> Applicati
 - `<repo>/Setup/BoneImagingToolboxSetup`
 
 Do not add only the top-level repository folder. Slicer needs each module folder above. The helper script also discovers any vendored scripted modules under `ExternalModules/`.
-
 ## Tool Documentation
 
 - [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md): longitudinal HR-pQCT analysis, input naming, results layout, remodelling review, and citations.

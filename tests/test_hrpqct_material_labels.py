@@ -6,10 +6,10 @@ import sys
 import numpy as np
 
 
-MODULE_DIR = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "SegmentationHRpQCT"
+MODULE_DIR = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "DeriveLabelsHRpQCT"
 sys.path.insert(0, str(MODULE_DIR))
 
-import SegmentationHRpQCT  # noqa: E402
+import DeriveLabelsHRpQCT  # noqa: E402
 
 
 def test_material_label_arrays_combine_segmentation_and_compartments():
@@ -20,7 +20,7 @@ def test_material_label_arrays_combine_segmentation_and_compartments():
     cort = np.zeros_like(seg)
     cort[2, 1:3, 1:3] = 1
 
-    material, counts = SegmentationHRpQCT._material_labels_from_arrays(
+    material, counts = DeriveLabelsHRpQCT.material_labels_from_arrays(
         seg,
         trab,
         cort,
@@ -44,7 +44,7 @@ def test_material_label_arrays_support_derived_cortical_region():
     full[1:3, 1:3, 1:3] = 1
     cort = full.astype(bool) & ~trab.astype(bool)
 
-    material, counts = SegmentationHRpQCT._material_labels_from_arrays(
+    material, counts = DeriveLabelsHRpQCT.material_labels_from_arrays(
         seg,
         trab,
         cort,
@@ -63,9 +63,9 @@ def test_derive_compartment_arrays_support_any_two_inputs():
     cort[2] = True
     full = trab | cort
 
-    derived_full = SegmentationHRpQCT._derive_compartment_mask_arrays(trab=trab, cort=cort)
-    derived_trab = SegmentationHRpQCT._derive_compartment_mask_arrays(full=full, cort=cort)
-    derived_cort = SegmentationHRpQCT._derive_compartment_mask_arrays(full=full, trab=trab)
+    derived_full = DeriveLabelsHRpQCT.derive_compartment_mask_arrays(trab=trab, cort=cort)
+    derived_trab = DeriveLabelsHRpQCT.derive_compartment_mask_arrays(full=full, cort=cort)
+    derived_cort = DeriveLabelsHRpQCT.derive_compartment_mask_arrays(full=full, trab=trab)
 
     assert derived_full["derived_role"] == "full"
     assert np.array_equal(derived_full["full"], full)
@@ -81,9 +81,9 @@ def test_material_labels_can_use_derived_trabecular_region():
     full[0:2] = True
     cort = np.zeros_like(seg)
     cort[0] = True
-    masks = SegmentationHRpQCT._derive_compartment_mask_arrays(full=full, cort=cort)
+    masks = DeriveLabelsHRpQCT.derive_compartment_mask_arrays(full=full, cort=cort)
 
-    material, counts = SegmentationHRpQCT._material_labels_from_arrays(
+    material, counts = DeriveLabelsHRpQCT.material_labels_from_arrays(
         seg,
         masks["trab"],
         masks["cort"],
@@ -104,7 +104,7 @@ def test_compartment_validation_detects_overlap_and_missing_voxels():
     trab[0, 0, 0] = True
     cort[0, 0, 0] = True
 
-    counts = SegmentationHRpQCT._validate_compartment_mask_arrays(full=full, trab=trab, cort=cort)
+    counts = DeriveLabelsHRpQCT.validate_compartment_mask_arrays(full=full, trab=trab, cort=cort)
 
     assert counts["valid"] is False
     assert counts["overlap"] == 1
@@ -115,22 +115,22 @@ def test_boolean_mask_operations_and_relabel_nonzero():
     mask_a = np.array([0, 1, 1, 0], dtype=np.uint8)
     mask_b = np.array([1, 1, 0, 0], dtype=np.uint8)
 
-    assert SegmentationHRpQCT._binary_mask_operation_arrays(mask_a, mask_b, "union").tolist() == [
+    assert DeriveLabelsHRpQCT.binary_mask_operation_arrays(mask_a, mask_b, "union").tolist() == [
         True,
         True,
         True,
         False,
     ]
-    assert SegmentationHRpQCT._binary_mask_operation_arrays(mask_a, mask_b, "intersection").tolist() == [
+    assert DeriveLabelsHRpQCT.binary_mask_operation_arrays(mask_a, mask_b, "intersection").tolist() == [
         False,
         True,
         False,
         False,
     ]
-    assert SegmentationHRpQCT._binary_mask_operation_arrays(mask_a, mask_b, "difference").tolist() == [
+    assert DeriveLabelsHRpQCT.binary_mask_operation_arrays(mask_a, mask_b, "difference").tolist() == [
         False,
         False,
         True,
         False,
     ]
-    assert SegmentationHRpQCT._relabel_nonzero_array(mask_a, 127).tolist() == [0, 127, 127, 0]
+    assert DeriveLabelsHRpQCT.relabel_nonzero_array(mask_a, 127).tolist() == [0, 127, 127, 0]

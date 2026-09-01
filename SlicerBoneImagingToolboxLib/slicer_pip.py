@@ -4,6 +4,8 @@ import os
 import shlex
 import subprocess
 import sys
+import shutil
+from pathlib import Path
 
 
 def clean_pip_environment(base_env=None):
@@ -36,3 +38,16 @@ def slicer_pip_install(command):
     if completed.returncode != 0:
         raise RuntimeError(completed.stdout.strip() or f"pip install failed with exit code {completed.returncode}")
     return completed.stdout
+
+
+def slicer_python_executable(application_path=None):
+    """Return PythonSlicer rather than the Slicer GUI executable for child jobs."""
+    if application_path:
+        application = Path(application_path).expanduser().resolve()
+        candidate = application.parent.parent / "bin" / "PythonSlicer"
+        if candidate.exists():
+            return str(candidate)
+    sibling = Path(sys.executable).resolve().parent / "PythonSlicer"
+    if sibling.exists():
+        return str(sibling)
+    return shutil.which("PythonSlicer") or sys.executable

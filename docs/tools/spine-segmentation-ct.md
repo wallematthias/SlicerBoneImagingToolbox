@@ -1,6 +1,6 @@
 # Spine Segmentation
 
-`Spine Segmentation` runs the `spine-segment` PyTorch workflow on a clinical CT volume and loads the resulting labelmaps into Slicer.
+`Spine Segmentation` runs the `spine-segment` PyTorch workflow on clinical CT volumes.
 
 Use this tool when you have a spine CT volume and want to create:
 
@@ -13,12 +13,12 @@ Use this tool when you have a spine CT volume and want to create:
 
 - Open `Bone Imaging > CT > Spine Segmentation`.
 - The main panel can run immediately when a valid runtime is already available.
-- For the simple Slicer-native runtime, open `Runtime setup`, install Slicer's `PyTorch` extension from Extension Manager, restart Slicer, then click `Install Slicer Runtime`.
+- For the simple Slicer-native runtime, install Slicer's `PyTorch` extension from Extension Manager, restart Slicer, then install `spine-segment` from Toolbox Setup.
 - For faster Apple Silicon inference, open `Runtime setup`, click `Install Conda MPS Runtime`, or point `Conda Python` to an existing arm64 environment with `torch` and `spine-segment` installed.
 
 The first run may download the `spine-segment` model bundle into the user cache. Later runs reuse that cached bundle.
 
-## Basic Workflow
+## Scene Workflow
 
 1. Select the input CT scalar volume.
 2. Choose the output set:
@@ -31,6 +31,16 @@ The first run may download the `spine-segment` model bundle into the user cache.
 The module exports the selected CT to NIfTI, runs `python -m spine_segment.cli` in the selected runtime, and loads the generated centroid markers and/or NIfTI labelmaps for the selected run mode.
 
 Centroid markers are loaded for every completed run and are named with anatomical VerSe levels such as `T12`, `L1`, and `L2`. Body/process and cortical/trabecular segmentations are generated together in full segmentation mode.
+
+## Batch Workflow
+
+1. Open the `Batch` tab.
+2. Select a dataset root.
+3. Click `Discover`.
+4. Choose an image source and output set.
+5. Click `Run Batch`.
+
+Batch mode reuses discovered CT image files in place and writes outputs under `derivatives/SpineSegmentationCT`. Completed cases update a derivative manifest so downstream tools can find vertebral-level, process/body, cortical/trabecular, and centroid outputs.
 
 ## Runtime Notes
 

@@ -10,7 +10,7 @@ def test_spine_segmentation_ct_module_wraps_spine_segment_dependency() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
     assert 'parent.title = "Spine Segmentation"' in source
-    assert 'parent.categories = ["Bone Imaging.CT"]' in source
+    assert 'parent.categories = ["Bone Imaging.CT Analysis"]' in source
     assert 'slicer.util.pip_install("spine-segment>=0.1.0")' in source
     assert 'CONDA_RUNTIME_ENV = "spine-segment-pytorch"' in source
     assert "Install Slicer Runtime" not in source
@@ -39,6 +39,9 @@ def test_spine_segmentation_ct_module_wraps_spine_segment_dependency() -> None:
 def test_spine_segmentation_ct_ui_prioritizes_run_workflow() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
+    assert "self.spineModeTabs" in source
+    assert '"Scene"' in source
+    assert '"Batch"' in source
     assert '"Run spine CT segmentation"' in source
     assert '"Runtime setup"' in source
     assert "self.runtimeBox.collapsed = True" in source
@@ -49,6 +52,31 @@ def test_spine_segmentation_ct_ui_prioritizes_run_workflow() -> None:
     assert 'raw_verse_label = entry.get("label", raw_label)' in source
     assert "label = format_verse_label(raw_verse_label)" in source
     assert "SetNthControlPointDescription" in source
+
+
+def test_spine_segmentation_ct_exposes_derivative_batch_mode() -> None:
+    source = MODULE.read_text(encoding="utf-8")
+
+    assert "discover_spine_segmentation_batch_cases" in source
+    assert "build_spine_segmentation_batch_commands" in source
+    assert "self.batchDatasetRootSelector" in source
+    assert "self.batchDiscoverButton" in source
+    assert "self.batchImageRoleBox" in source
+    assert "self.batchRunButton" in source
+    assert "run_spine_batch" in source
+    assert "derivatives/SpineSegmentationCT" in source
+    run_batch = source[
+        source.index("    def run_spine_batch(self):") :
+        source.index("    def _run_next_spine_batch_case(self):")
+    ]
+    assert "if self.logic.is_running():" in run_batch
+    assert "A spine segmentation process is already running." in run_batch
+
+
+def test_spine_segmentation_batch_helper_is_packaged() -> None:
+    root_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+
+    assert "SlicerBoneImagingToolboxLib/spine_segmentation_batch.py" in root_cmake
 
 
 def test_spine_segmentation_ct_module_is_registered_as_builtin_tool() -> None:

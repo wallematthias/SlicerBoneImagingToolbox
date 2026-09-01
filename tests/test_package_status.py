@@ -13,6 +13,7 @@ from SlicerBoneImagingToolboxLib.package_status import (
     install_command,
     install_commands,
     package_status_row,
+    resolve_local_editable_repo,
 )
 from SlicerBoneImagingToolboxLib.slicer_pip import clean_pip_environment
 
@@ -34,12 +35,12 @@ def test_package_status_row_marks_missing_package_installable() -> None:
     row = package_status_row(
         spec,
         installed_versions={},
-        latest_versions={"timelapsed-hrpqct": "2.0.41"},
+        latest_versions={"timelapsed-hrpqct": "2.0.42"},
         validation_errors={},
     )
 
     assert row.installed_version is None
-    assert row.latest_version == "2.0.41"
+    assert row.latest_version == "2.0.42"
     assert row.status == "missing"
     assert row.action == "install"
 
@@ -129,7 +130,7 @@ def test_microarchitecture_install_commands_use_local_logic_repo_when_available(
 
     assert commands[0] == "--upgrade --prefer-binary numpy>=2.0,<3.0 scipy>=1.18,<2.0"
     assert commands[1].startswith("--upgrade --no-deps -e ")
-    assert commands[1].endswith("/bone-microarchitecture")
+    assert commands[1].endswith("/bone-microarchitecture/.worktrees/derivative-batch")
 
 
 def test_default_runtime_packages_include_public_tool_cores() -> None:
@@ -138,9 +139,12 @@ def test_default_runtime_packages_include_public_tool_cores() -> None:
     assert "timelapsed-hrpqct" in package_names
     assert "motionscorehrpqct" in package_names
     assert "aimio-py" in package_names
+    assert "bone-contouring" in package_names
     assert "spine-segment" in package_names
     assert "bone-microarchitecture" in package_names
     assert "plate-rod-thinning" in package_names
+    assert "parosol-py" in package_names
+    assert "bone-mechanoregulation" in package_names
     assert ("or" + "mir-xct") not in package_names
 
 
@@ -149,6 +153,14 @@ def test_timelapsed_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["timelapsed-hrpqct"].display_name == "Timelapsed HR-pQCT"
     assert "timelapsed-hrpqct" in specs["timelapsed-hrpqct"].notes
+
+
+def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    assert specs["bone-contouring"].display_name == "Bone Contouring"
+    assert specs["bone-contouring"].import_name == "bone_contouring"
+    assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 
 def test_microarchitecture_runtime_package_has_user_facing_setup_name() -> None:
@@ -168,8 +180,39 @@ def test_plate_rod_runtime_package_requires_compiled_backend_and_binary_reinstal
     assert spec.required_imports == ("plate_rod_thinning._c_backend",)
     assert install_command(spec, installed=True) == (
         "--upgrade --force-reinstall --prefer-binary --only-binary :all: --no-deps "
-        "plate-rod-thinning>=0.1.3"
+        "plate-rod-thinning>=0.1.6"
     )
+
+
+def test_plate_rod_install_commands_do_not_emit_empty_dependency_install() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+    commands = install_commands(specs["plate-rod-thinning"], installed=False)
+
+    assert len(commands) == 1
+    assert commands[0].startswith("--no-deps -e ")
+    assert commands[0].endswith("/bone-plate-rod-thinning/.worktrees/derivative-batch")
+    assert "--prefer-binary" not in commands[0]
+
+
+def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    assert specs["parosol-py"].display_name == "ParOsol-FEA"
+    assert specs["parosol-py"].import_name == "parosol_py"
+    assert "ParOSol" in specs["parosol-py"].notes
+
+    assert specs["bone-mechanoregulation"].display_name == "Bone Mechanoregulation"
+    assert specs["bone-mechanoregulation"].import_name == "bonemechreg"
+    assert "mechanoregulation" in specs["bone-mechanoregulation"].notes.lower()
+
+
+def test_public_fea_packages_do_not_install_from_adjacent_editable_checkouts() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    for package_name in ("parosol-py", "bone-mechanoregulation"):
+        command_text = "\n".join(install_commands(specs[package_name], installed=False))
+        assert " -e " not in command_text
+        assert "/active/" not in command_text
 
 
 def test_package_status_marks_invalid_runtime_import_as_update_needed() -> None:
@@ -208,3 +251,28 @@ def test_clean_pip_environment_removes_stale_compiler_overrides() -> None:
     assert "PYTHONPATH" not in env
     assert env["PATH"] == "/usr/bin"
     assert env["PYTHONUNBUFFERED"] == "1"
+
+
+def test_default_runtime_packages_include_shared_derivative_contract() -> None:
+    package_names = {spec.package_name for spec in DEFAULT_RUNTIME_PACKAGES}
+
+    assert "bone-imaging-derivatives" in package_names
+
+
+def test_shared_derivative_contract_install_uses_local_worktree_when_available() -> None:
+    spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "bone-imaging-derivatives")
+
+    commands = install_commands(spec, installed=False)
+
+    assert len(commands) == 1
+    assert "-e" in commands[0]
+    assert "bone-imaging-derivatives" in commands[0]
+
+
+def test_local_editable_repo_resolves_active_worktree_layout(tmp_path: Path) -> None:
+    toolbox_root = tmp_path / "active" / "SlicerBoneImagingToolbox" / ".worktrees" / "derivatives-overhaul"
+    local_repo = tmp_path / "active" / "bone-microarchitecture" / ".worktrees" / "derivative-batch"
+    local_repo.mkdir(parents=True)
+    (local_repo / "pyproject.toml").write_text("[build-system]\n", encoding="utf-8")
+
+    assert resolve_local_editable_repo(toolbox_root, "bone-microarchitecture") == local_repo

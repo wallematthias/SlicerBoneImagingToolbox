@@ -87,7 +87,8 @@ def test_segmentation_module_defaults_to_segmentation_node_only():
     assert "self.createLabelmapsCheck" not in source
     assert "create_labelmaps=False" in source
     assert "label_text = \"\"" in source
-    assert "returnNode=True" not in source
+    scene_source = source[source.index("def _create_segmentation(self):") : source.index("def _create_geodesic_progress_dialog")]
+    assert "returnNode=True" not in scene_source
     assert "slicer.util.updateSegmentBinaryLabelmapFromArray(" in source
     assert "segment.SetName(str(segment_name))" in source
     assert 'segment.SetTag("HRpQCT.Role", str(role))' in source
@@ -140,7 +141,7 @@ def test_laplace_hamming_uses_core_native_scanco_input_convention():
     assert "py_aimio_hu_int16" not in source
     assert "segmentation_node.CreateDefaultDisplayNodes()" in source
     assert "segmentation_node.SetAttribute(f\"HRpQCT.{key}\", str(generated.metadata[key]))" in source
-    assert "Method=laplace_hamming; input={metadata.get('segmentation_input_unit')}" in source
+    assert "Method=laplace_hamming; image={processing_reader}; input={metadata.get('segmentation_input_unit')}" in source
 
 
 def test_generated_masks_keep_aim_metadata_for_export():
@@ -155,9 +156,9 @@ def test_generated_masks_keep_aim_metadata_for_export():
 def test_segmentation_installer_keeps_slicer_numpy_constraints():
     source = MODULE.read_text()
 
-    assert 'CORE_PIP_CONSTRAINTS = ("numpy>=1.26,<3.0", "scikit-image>=0.24,<0.26", "tifffile<2026")' in source
+    assert 'BONE_CONTOURING_PIP_CONSTRAINTS = ("numpy>=1.26,<3.0", "SimpleITK>=2.3")' in source
     assert 'slicer.util.pip_uninstall("pyjpegls")' in source
-    assert '" ".join(["timelapsed-hrpqct", *CORE_PIP_CONSTRAINTS])' in source
+    assert '" ".join(["bone-contouring", *BONE_CONTOURING_PIP_CONSTRAINTS])' in source
 
 
 def test_laplace_hamming_shows_busy_progress_dialog():
@@ -174,8 +175,15 @@ def test_segmentation_module_uses_tabs_for_tool_groups():
     source = MODULE.read_text()
 
     assert "self.toolTabs = qt.QTabWidget()" in source
-    assert "self.toolTabs.addTab(generate_tab, \"Generate\")" in source
-    assert "self.toolTabs.addTab(derive_tab, \"Derive Labels\")" in source
+    assert "self.toolTabs.addTab(generate_tab, \"Scene\")" in source
+    assert "self.toolTabs.addTab(derive_tab" not in source
+
+
+def test_label_algebra_module_owns_derive_label_tools():
+    module = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "DeriveLabelsHRpQCT" / "DeriveLabelsHRpQCT.py"
+    source = module.read_text()
+
+    assert 'parent.title = "Mask and Label Algebra"' in source
     assert "Create HOM Material Labels" in source
     assert "Generate Missing Mask" in source
     assert "Mask Operations" in source
@@ -194,12 +202,14 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     assert "self.maskPeriostealContour = qt.QComboBox()" in source
     assert "self.maskPeriostealContour.addItem(\"geodesic_fracture\", \"geodesic_fracture\")" in source
     assert "self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)" in source
-    assert "Periosteal contour" in source
+    assert "Full/periosteal contour" in source
     assert "self.maskGeodesicThreshold" in source
     assert "self.maskGeodesicFillHoles" in source
+    assert "self.maskGeodesicFillHoles.checked = True" in source
+    assert "Fill full mask holes" in source
     assert "_TOOLBOX_ROOT = Path(__file__).resolve().parents[2]" in source
-    assert "_PIPELINE_LOCAL_REPO = _TOOLBOX_ROOT.parent / \"TimelapsedHRpQCT\"" in source
-    assert "_PIPELINE_LOCAL_SRC = _PIPELINE_LOCAL_REPO / \"src\"" in source
+    assert "def _resolve_local_pipeline_paths" in source
+    assert 'candidate_repo = base / "TimelapsedHRpQCT"' in source
     assert "def _local_pipeline_usable" in source
     assert "if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC)" in source
     assert "os.environ[\"PYTHONPATH\"]" in source
@@ -208,11 +218,12 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     assert "outer_cfg = {" in source
     assert "\"contour_method\": periosteal_contour_method" in source
     assert "\"geodesic_bone_threshold\": float(self.maskGeodesicThreshold.value)" in source
+    assert "\"fill_holes\": bool(self.maskGeodesicFillHoles.checked)" in source
     assert "\"geodesic_fill_holes\": bool(self.maskGeodesicFillHoles.checked)" in source
     assert "if selected_profile == \"ped-fx\":" in source
     assert "mask_method = \"seg_gauss\"" in source
-    assert "profile_segmentation_cfg = profile_masks_cfg.get(\"segmentation\") or {}" in source
-    assert "profile_segmentation_cfg.get(\"method\")" in source
+    assert "profile_masks_cfg = (profile_cfg.get(\"masks\") or {})" in source
+    assert "\"segmentation\": segmentation_cfg" in source
     assert "periosteal_contour_method = \"geodesic_fracture\"" in source
     assert "masks_override[\"roles\"] = [\"full\"]" in source
     assert "masks_override[\"inner\"] = {\"contour_method\": \"none\"}" in source

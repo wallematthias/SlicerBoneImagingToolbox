@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 
@@ -34,8 +35,33 @@ def test_bone_microarchitecture_module_is_registered_with_extension_packaging() 
 
     assert "add_subdirectory(HRpQCTTools/BoneMicroarchitecture)" in cmake
     assert '"path": "HRpQCTTools/BoneMicroarchitecture"' in manifest
-    assert '"title": "Bone Microarchitecture"' in manifest
-    assert '"section": "HR-pQCT"' in manifest
+    assert '"title": "Microarchitecture"' in manifest
+    assert '"section": "Microstructural Analysis"' in manifest
+
+
+def test_public_fea_and_mechanoregulation_modules_are_registered_with_extension_packaging() -> None:
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
+
+    assert "add_subdirectory(HRpQCTTools/ParOSolFEA)" in cmake
+    assert '"path": "HRpQCTTools/ParOSolFEA"' in manifest
+    assert '"title": "ParOsol-FEA"' in manifest
+    assert '"section": "FE Analysis"' in manifest
+
+    assert "add_subdirectory(HRpQCTTools/MechanoregulationHRpQCT)" in cmake
+    assert '"path": "HRpQCTTools/MechanoregulationHRpQCT"' in manifest
+    assert '"title": "Mechanoregulation"' in manifest
+    assert '"section": "Microstructural Analysis"' in manifest
+
+
+def test_label_algebra_module_is_registered_with_extension_packaging() -> None:
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
+
+    assert "add_subdirectory(HRpQCTTools/DeriveLabelsHRpQCT)" in cmake
+    assert '"path": "HRpQCTTools/DeriveLabelsHRpQCT"' in manifest
+    assert '"title": "Mask and Label Algebra"' in manifest
+    assert '"section": "Microstructural Analysis"' in manifest
 
 
 def test_python_unittest_scripts_define_matching_test_classes() -> None:
@@ -66,3 +92,15 @@ def test_timelapsed_release_smoke_tests_skip_optional_runtime_dependencies() -> 
     assert "logic.pipeline_status()" in test_class_source
     assert "timelapsed-hrpqct pipeline is not installed" in test_class_source
     assert "PyYAML is not available" in test_class_source
+
+
+def test_public_bone_imaging_modules_credit_matthias_walle_as_author() -> None:
+    manifest = json.loads((ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
+
+    for module in manifest["modules"]:
+        module_dir = ROOT / module["path"]
+        module_name = module_dir.name
+        source = (module_dir / f"{module_name}.py").read_text(encoding="utf-8")
+
+        assert 'parent.contributors = ["Matthias Walle"]' in source, module["path"]
+        assert "Author: Matthias Walle" in source, module["path"]

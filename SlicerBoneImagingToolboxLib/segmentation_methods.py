@@ -49,14 +49,16 @@ PERIOSTEAL_CONTOUR_METHODS = {
         label="Standard",
         parameters=(
             "periosteal_threshold",
+            "outer_gaussian_sigma",
             "periosteal_kernelsize",
             "periosteal_open_radius",
+            "fill_holes",
             "segmentation_aligned_contour_support",
         ),
     ),
     "geodesic_fracture": MethodDescriptor(
         label="Geodesic Fracture",
-        parameters=("geodesic_bone_threshold", "geodesic_fill_holes"),
+        parameters=("geodesic_bone_threshold", "fill_holes"),
     ),
     "none": MethodDescriptor(label="None"),
 }
@@ -67,6 +69,7 @@ ENDOSTEAL_CONTOUR_METHODS = {
         label="Standard",
         parameters=(
             "endosteal_threshold",
+            "inner_gaussian_sigma",
             "endosteal_kernelsize",
             "peel",
             "trabecular_close_radius",

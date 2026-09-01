@@ -29,6 +29,12 @@ if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
 from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
+from SlicerBoneImagingToolboxLib.spine_segmentation_batch import (
+    build_spine_segmentation_batch_commands,
+    discover_spine_segmentation_batch_cases,
+    discovered_image_roles,
+    write_spine_segmentation_manifest,
+)
 from SlicerBoneImagingToolboxLib.vertebra_labels import format_verse_label
 
 
@@ -153,7 +159,8 @@ class SpineSegmentationCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
         parent.title = "Spine Segmentation"
-        parent.categories = ["Bone Imaging.CT"]
+        parent.categories = ["Bone Imaging.CT Analysis"]
+        parent.index = 10
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
@@ -161,7 +168,7 @@ class SpineSegmentationCT(ScriptedLoadableModule):
             "process/body, and cortical/trabecular outputs into Slicer. "
             f"Module version: {MODULE_VERSION}"
         )
-        parent.acknowledgementText = """Part of the Bone Imaging Toolbox for 3D Slicer.
+        parent.acknowledgementText = """Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer.
 
 Spine Segmentation is backed by the spine-segment Python package.
 
@@ -298,6 +305,15 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
 
     def is_running(self):
         return self._proc is not None
+
+    def discover_spine_segmentation_batch_cases(self, dataset_root, **filters):
+        return discover_spine_segmentation_batch_cases(dataset_root, **filters)
+
+    def build_spine_segmentation_batch_commands(self, dataset_root, cases, **options):
+        return build_spine_segmentation_batch_commands(dataset_root, cases, **options)
+
+    def write_spine_segmentation_manifest(self, dataset_root, commands):
+        return write_spine_segmentation_manifest(dataset_root, commands, module_version=MODULE_VERSION)
 
     def save_input_volume(self, volume_node, output_dir):
         if volume_node is None:
@@ -587,6 +603,10 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self._currentInputPath = None
         self._currentOutputDir = None
         self._currentMode = "full"
+        self._spineBatchCases = []
+        self._spineBatchCommands = []
+        self._spineBatchCommandIndex = 0
+        self._spineBatchDatasetRoot = None
 
         self._build_main_section()
         self.layout.addStretch(1)
@@ -597,9 +617,17 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
             self.logic.interrupt()
 
     def _build_main_section(self):
+        self.spineModeTabs = qt.QTabWidget()
+        self.scenePage = qt.QWidget()
+        self.batchPage = qt.QWidget()
+        self.spineModeTabs.addTab(self.scenePage, "Scene")
+        self.spineModeTabs.addTab(self.batchPage, "Batch")
+        self.layout.addWidget(self.spineModeTabs)
+
+        scene_layout = qt.QVBoxLayout(self.scenePage)
         self.runBox = ctk.ctkCollapsibleButton()
         self.runBox.text = "Run spine CT segmentation"
-        self.layout.addWidget(self.runBox)
+        scene_layout.addWidget(self.runBox)
         form = qt.QFormLayout(self.runBox)
 
         self.statusLabel = qt.QLabel("Checking runtime...")
@@ -646,7 +674,7 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         button_row_widget = qt.QWidget()
         button_row = qt.QHBoxLayout(button_row_widget)
         button_row.setContentsMargins(0, 0, 0, 0)
-        self.runButton = qt.QPushButton("Run")
+        self.runButton = qt.QPushButton("Run Spine Segmentation")
         self.stopButton = qt.QPushButton("Stop")
         self.stopButton.enabled = False
         self.runButton.clicked.connect(self._run_segmentation)
@@ -667,6 +695,9 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.progressBar, "Progress for the active spine-segment command.")
         form.addRow("Progress", self.progressLabel)
         form.addRow(self.progressBar)
+        scene_layout.addStretch(1)
+
+        self._build_batch_section(self.batchPage)
 
         self.runtimeBox = ctk.ctkCollapsibleButton()
         self.runtimeBox.text = "Runtime setup"
@@ -739,6 +770,77 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self.console.setMinimumHeight(140)
         self._tip(self.console, "spine-segment process output and loaded result paths.")
         console_layout.addWidget(self.console)
+
+    def _build_batch_section(self, parent):
+        layout = qt.QVBoxLayout(parent)
+        discovery_box = qt.QGroupBox("Discovery")
+        discovery_form = qt.QFormLayout(discovery_box)
+        layout.addWidget(discovery_box)
+
+        self.batchDatasetRootSelector = ctk.ctkPathLineEdit()
+        self.batchDatasetRootSelector.filters = ctk.ctkPathLineEdit.Dirs
+        self._tip(
+            self.batchDatasetRootSelector,
+            "Dataset root to search for CT images and reusable derivatives.",
+        )
+        discovery_form.addRow("Dataset root", self.batchDatasetRootSelector)
+
+        self.batchSubjectEdit = qt.QLineEdit()
+        self.batchSiteEdit = qt.QLineEdit()
+        self.batchSessionEdit = qt.QLineEdit()
+        self.batchSiteEdit.text = "spine"
+        discovery_form.addRow("Subject filter", self.batchSubjectEdit)
+        discovery_form.addRow("Site filter", self.batchSiteEdit)
+        discovery_form.addRow("Session filter", self.batchSessionEdit)
+
+        self.batchDiscoverButton = qt.QPushButton("Discover")
+        self.batchDiscoverButton.clicked.connect(self.discover_spine_batch)
+        discovery_form.addRow("", self.batchDiscoverButton)
+
+        self.batchTable = qt.QTableWidget()
+        self.batchTable.setColumnCount(5)
+        self.batchTable.setHorizontalHeaderLabels(["Run", "Subject", "Site", "Session", "Images"])
+        self.batchTable.minimumHeight = 180
+        try:
+            self.batchTable.horizontalHeader().setStretchLastSection(True)
+            self.batchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        except Exception:
+            pass
+        layout.addWidget(self.batchTable)
+
+        workflow_box = qt.QGroupBox("Workflow")
+        workflow_form = qt.QFormLayout(workflow_box)
+        layout.addWidget(workflow_box)
+
+        self.batchImageRoleBox = qt.QComboBox()
+        self.batchImageRoleBox.addItem("Auto")
+        self.batchModeCombo = qt.QComboBox()
+        for label, value in [
+            ("Full segmentation + centroids", "full"),
+            ("Vertebral levels + centroids", "level"),
+            ("Centroids only", "localization"),
+        ]:
+            self.batchModeCombo.addItem(label, value)
+        workflow_form.addRow("Image source", self.batchImageRoleBox)
+        workflow_form.addRow("Outputs", self.batchModeCombo)
+
+        self.batchStatusLabel = qt.QLabel(
+            "Discover a dataset to prepare derivatives/SpineSegmentationCT batch cases."
+        )
+        self.batchStatusLabel.wordWrap = True
+        layout.addWidget(self.batchStatusLabel)
+
+        buttons = qt.QHBoxLayout()
+        self.batchRunButton = qt.QPushButton("Run Batch")
+        self.batchStopButton = qt.QPushButton("Stop")
+        self.batchStopButton.enabled = False
+        self.batchRunButton.clicked.connect(self.run_spine_batch)
+        self.batchStopButton.clicked.connect(self.stop_spine_batch)
+        buttons.addWidget(self.batchRunButton)
+        buttons.addWidget(self.batchStopButton)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        layout.addStretch(1)
 
     def _default_output_dir(self):
         return Path.home() / "SlicerBoneImagingToolboxRuns" / "SpineSegmentationCT"
@@ -822,6 +924,174 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._set_running(False, "Failed")
             self._error(exc)
+
+    def discover_spine_batch(self):
+        root = str(getattr(self.batchDatasetRootSelector, "currentPath", "") or "").strip()
+        if not root:
+            slicer.util.errorDisplay("Select a dataset root before discovery.")
+            return
+        try:
+            self._spineBatchCases = self.logic.discover_spine_segmentation_batch_cases(
+                root,
+                subject_id=str(self.batchSubjectEdit.text or "").strip(),
+                site=str(self.batchSiteEdit.text or "").strip(),
+                session_id=str(self.batchSessionEdit.text or "").strip(),
+            )
+        except Exception as exc:
+            self.batchStatusLabel.text = f"Discovery failed: {exc}"
+            slicer.util.errorDisplay(str(exc))
+            return
+        self._populate_spine_batch_table()
+        self._populate_spine_batch_image_roles()
+        self._refresh_spine_batch_readiness()
+        self._append_log(f"[spine batch] discovered {len(self._spineBatchCases)} case(s) from {root}\n")
+
+    def _populate_spine_batch_table(self):
+        self.batchTable.setRowCount(len(self._spineBatchCases))
+        for row, case in enumerate(self._spineBatchCases):
+            run_item = qt.QTableWidgetItem("")
+            run_item.setFlags(run_item.flags() | qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
+            run_item.setCheckState(qt.Qt.Checked)
+            self.batchTable.setItem(row, 0, run_item)
+            values = [
+                case.subject_id,
+                case.site,
+                case.session_id,
+                ", ".join(discovered_image_roles([case])),
+            ]
+            for column, value in enumerate(values, start=1):
+                item = qt.QTableWidgetItem(str(value))
+                item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+                self.batchTable.setItem(row, column, item)
+        try:
+            self.batchTable.resizeColumnsToContents()
+        except Exception:
+            pass
+
+    def _populate_spine_batch_image_roles(self):
+        try:
+            blocked = self.batchImageRoleBox.blockSignals(True)
+        except Exception:
+            blocked = False
+        self.batchImageRoleBox.clear()
+        self.batchImageRoleBox.addItem("Auto")
+        for role in discovered_image_roles(self._spineBatchCases):
+            self.batchImageRoleBox.addItem(role)
+        try:
+            self.batchImageRoleBox.blockSignals(blocked)
+        except Exception:
+            pass
+
+    def _selected_spine_batch_image_role(self):
+        role = str(self.batchImageRoleBox.currentText or "").strip()
+        return "" if role == "Auto" else role
+
+    def _selected_spine_batch_cases(self):
+        selected = []
+        for row, case in enumerate(self._spineBatchCases):
+            item = self.batchTable.item(row, 0)
+            if item is None or item.checkState() == qt.Qt.Checked:
+                selected.append(case)
+        return selected
+
+    def _refresh_spine_batch_readiness(self):
+        count = len(getattr(self, "_spineBatchCases", []) or [])
+        if not count:
+            self.batchStatusLabel.text = "Discover a dataset to prepare derivatives/SpineSegmentationCT batch cases."
+            return
+        self.batchStatusLabel.text = f"{count}/{count} case(s) ready for spine segmentation batch."
+
+    def run_spine_batch(self):
+        if self.logic.is_running():
+            slicer.util.errorDisplay("A spine segmentation process is already running.")
+            return
+        root = str(getattr(self.batchDatasetRootSelector, "currentPath", "") or "").strip()
+        if not root:
+            slicer.util.errorDisplay("Select a dataset root before running a batch.")
+            return
+        cases = self._selected_spine_batch_cases()
+        if not cases:
+            slicer.util.errorDisplay("Select at least one discovered spine segmentation case.")
+            return
+        try:
+            commands = self.logic.build_spine_segmentation_batch_commands(
+                root,
+                cases,
+                image_role=self._selected_spine_batch_image_role(),
+                mode=self.batchModeCombo.currentData,
+                device=self.deviceCombo.currentData,
+            )
+        except Exception as exc:
+            slicer.util.errorDisplay(str(exc))
+            return
+        if not commands:
+            slicer.util.errorDisplay("No selected spine segmentation cases have a usable CT image.")
+            return
+        self._spineBatchCommands = commands
+        self._spineBatchCommandIndex = 0
+        self._spineBatchDatasetRoot = Path(root).expanduser()
+        self.batchRunButton.enabled = False
+        self.batchStopButton.enabled = True
+        self.batchStatusLabel.text = f"Running 0/{len(commands)} spine segmentation case(s)..."
+        self._append_log(f"[spine batch] starting {len(commands)} case(s)\n")
+        self._run_next_spine_batch_case()
+
+    def _run_next_spine_batch_case(self):
+        if self._spineBatchCommandIndex >= len(self._spineBatchCommands):
+            self.batchRunButton.enabled = True
+            self.batchStopButton.enabled = False
+            total = len(self._spineBatchCommands)
+            self.batchStatusLabel.text = f"Finished {total}/{total} spine segmentation case(s)."
+            self._append_log("[spine batch] finished\n")
+            return
+        command = self._spineBatchCommands[self._spineBatchCommandIndex]
+        case_number = self._spineBatchCommandIndex + 1
+        total = len(self._spineBatchCommands)
+        self.batchStatusLabel.text = (
+            f"Running {case_number}/{total}: sub-{command.case.subject_id} ses-{command.case.session_id}"
+        )
+        self._append_log(f"[spine batch] running {case_number}/{total}: {' '.join(command.cli_args)}\n")
+        self.logic.run_cli(
+            command.input_path,
+            command.output_dir,
+            device=command.device,
+            mode=command.mode,
+            runtime=self.runtimeCombo.currentData,
+            conda_python=self._conda_python_path(),
+            on_output=self._append_log,
+            on_finished=self._on_spine_batch_case_finished,
+        )
+
+    def _on_spine_batch_case_finished(self, exit_code, _exit_status, interrupted):
+        if interrupted:
+            self.batchRunButton.enabled = True
+            self.batchStopButton.enabled = False
+            self.batchStatusLabel.text = "Spine segmentation batch stopped."
+            self._append_log("[spine batch] stopped\n")
+            return
+        if int(exit_code) != 0:
+            self.batchRunButton.enabled = True
+            self.batchStopButton.enabled = False
+            self.batchStatusLabel.text = f"Spine segmentation batch failed at case {self._spineBatchCommandIndex + 1}."
+            self._append_log(f"[spine batch] failed with exit code {exit_code}\n")
+            return
+        self._write_completed_spine_batch_manifest()
+        self._spineBatchCommandIndex += 1
+        self._run_next_spine_batch_case()
+
+    def stop_spine_batch(self):
+        self.logic.interrupt()
+
+    def _write_completed_spine_batch_manifest(self):
+        root = self._spineBatchDatasetRoot
+        if root is None:
+            return
+        command = self._spineBatchCommands[self._spineBatchCommandIndex]
+        try:
+            manifest_path = self.logic.write_spine_segmentation_manifest(root, [command])
+            self._append_log(f"[spine batch] derivative manifest: {manifest_path}\n")
+        except Exception as exc:
+            self._append_log(f"[spine batch] could not write derivative manifest: {exc}\n")
 
     def _stop_segmentation(self):
         if self.logic.interrupt():
