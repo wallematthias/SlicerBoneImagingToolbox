@@ -345,6 +345,53 @@ Flow:
 
 The module should not replace expert batch tabs immediately. Tool-specific batch tabs remain useful for focused workflows and debugging. HR-pQCT Batch becomes the recommended stable path for full-dataset processing.
 
+## Batch Table Interaction Contract
+
+Every current and future batch mode should follow the same table interaction model, whether it appears in HR-pQCT Batch or inside a tool-specific expert tab.
+
+Required controls:
+
+- dataset root selector
+- tool selector when the batch module can run more than one tool
+- profile selector
+- `Register` checkbox when the selected tool supports both registered and unregistered execution
+- `Skip existing` checkbox, enabled by default
+- per-row action button
+- `Run all` button below the table
+- load action for completed rows
+- queue/cancel behavior for pending and running rows
+
+The discovered table is dynamic. Columns are derived from the selected tool, profile, and registration mode instead of being hardcoded globally.
+
+Examples:
+
+- Contouring: action, subject, session, VOI, stack, image, output status
+- Microarchitecture unregistered: action, subject, session, VOI, image, segmentation, analysis ROIs, existing measurements, status
+- Microarchitecture registered: action, subject, VOI, sessions, registration/common-region status, analysis ROIs, existing measurements, status
+- Timelapse: action, subject, VOI, sessions, registration ROI, segmentation, analysis ROIs, pair mode, existing remodelling outputs, status
+- Plate/Rod Morphometry: action, subject, session, VOI, segmentation, analysis ROI, existing maps/table, status
+- FEA: action, subject, session, VOI, material/model source, load profile, existing solver outputs, status
+- Mechanoregulation: action, subject, VOI, remodelling map, mechanical field, existing mechanoregulation outputs, status
+- Motion Scoring: action, subject, session, VOI, image, existing score, status
+
+Row action states:
+
+- `Run`: prerequisites are available and no compatible output exists, or recomputation is requested.
+- `Queued`: row is waiting behind an active job.
+- `Cancel`: row is queued or running and can be removed/interrupted.
+- `Load`: compatible outputs exist and can be loaded.
+- `Missing`: required inputs are absent or ambiguous; hovering or selecting the row should show the missing roles.
+- `Review`: automatic parsing found conflicting identity, VOI, session, stack, or metadata evidence.
+
+`Run all` queues every runnable row and skips rows that are already loadable when `Skip existing` is enabled. Finished rows switch to `Load`. Failed rows keep the error message attached to the row, not only in a global log.
+
+The `Register` checkbox controls row grouping:
+
+- unchecked: one row is usually one subject-session-VOI-stack case
+- checked: one row is usually one subject-VOI-stack series across sessions
+
+When registration is enabled, common-region generation is implied. There should not be a second top-level `Use common region` checkbox for tools where common region is a consequence of registered analysis.
+
 ## Execution Backend Contract
 
 Backends share a common job description:
