@@ -50,6 +50,17 @@ If only one timepoint is present and no session can be inferred, the normalizati
 
 If multiple timepoints are present and no stable order can be inferred, HR-pQCT Batch must stop at the normalization/preflight table and ask the user to assign sessions before running longitudinal tools. Single-session tools may still run row-by-row after the user confirms the mapping.
 
+When AIM metadata are available, discovery should use `py-aimio`/`aim_info` to validate and enrich session assignment. Filename parsing remains the first pass because it also supports NIfTI, NRRD, MHA, and other non-AIM files, but AIM metadata should be used to check:
+
+- patient or measurement identifier
+- original scan date/time
+- scanner site code or VOI
+- scanner type and voxel spacing
+- measurement index
+- dimensions and slice count
+
+For longitudinal series, chronological scan date/time is the preferred session ordering signal. If filename-derived order and AIM metadata-derived order disagree, the naming helper must flag the row for review instead of silently choosing one.
+
 ## Multistack Rules
 
 A physical multistack acquisition is represented by the same subject, session, VOI, and a stack token:
@@ -67,6 +78,8 @@ Rules:
 - Registration may operate per stack when physical stacks are separate.
 - Tools may emit fused images or fused masks when useful, but should not duplicate raw AIM data unless the workflow genuinely needs an explicit derived image.
 - Downstream analysis may consume per-stack artifacts, fused artifacts, or both, depending on the tool profile.
+
+Some multistack acquisitions are stored inside one AIM file rather than as separate files. In that case discovery should create virtual stack records instead of copying or splitting the source image by default. Profile-level defaults define stack depth, for example XtremeCT II commonly uses 168 slices and XtremeCT I commonly uses 110 slices. Timelapse and other stack-aware tools can materialize temporary stack views during processing only when required by an external backend, but stable derivatives should avoid duplicate raw image copies.
 
 ## Derivative Layout
 
@@ -102,7 +115,7 @@ Space, VOI, stack, and coordinate-reference information belong in filenames and 
 
 The expected public families are:
 
-- `IPLContours`: imported scanner or IPL masks such as `TRAB_MASK`, `CORT_MASK`, `CRTX_MASK`, and `BLCK_MASK`
+- `ImportedContours`: imported scanner, Scanco, IPL, or manually curated masks such as `TRAB_MASK`, `CORT_MASK`, `CRTX_MASK`, and `BLCK_MASK`
 - `BoneContours`: generated bone segmentation and ROI masks from the contouring package
 - `Registration`: transforms and registration diagnostics
 - `CommonRegion`: common scan/FOV region masks derived from registration
@@ -128,7 +141,7 @@ Examples:
 ```text
 derivatives/BoneContours/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_desc-seg_mask.AIM
 derivatives/BoneContours/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_desc-full_mask.AIM
-derivatives/IPLContours/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_desc-trab_mask.AIM
+derivatives/ImportedContours/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_desc-trab_mask.AIM
 derivatives/Microarchitecture/sub-001/ses-001/xct/measurements/sub-001_ses-001_voi-radiusleft_measurements.csv
 derivatives/Microarchitecture/sub-001/ses-001/xct/maps/sub-001_ses-001_voi-radiusleft_map-tb-th.nii.gz
 ```
@@ -175,6 +188,8 @@ Each record must include:
 
 The manifest is the source of truth. Filenames are a recovery and convenience layer.
 
+Manifest paths must be portable. Records should store paths relative to the dataset root whenever the artifact lives under the dataset root. Absolute paths may be retained only in optional provenance/debug metadata. Copying the dataset root to a new machine must not break artifact discovery.
+
 ## Discovery Policy
 
 There are two discovery modes:
@@ -194,6 +209,14 @@ There are two discovery modes:
 
 This split keeps user import forgiving while keeping batch execution stable.
 
+When multiple contour sources are available for the same subject, session, VOI, stack, and role, tools should prefer them in this order:
+
+1. `ImportedContours`
+2. `BoneContours`
+3. other compatible segmentation/ROI derivatives
+
+The rationale is that imported scanner/IPL/manual contours are often curated upstream and should not be overwritten by generated contours unless the user explicitly selects a different source.
+
 ## Tool Requirements
 
 ### Contouring
@@ -208,7 +231,7 @@ Outputs:
 - cortical ROI
 - optional additional ROI masks
 
-Contours should write `BoneContours`. Imported scanner/IPL masks should normalize into `IPLContours`.
+Contours should write `BoneContours`. Imported scanner/IPL/manual masks should normalize into `ImportedContours`.
 
 ### Timelapse
 
@@ -221,6 +244,16 @@ Outputs:
 - `Timelapse`
 
 Timelapse requires registration and common region. It may reuse existing transforms and common-region artifacts. It must not generate bone contours. Users prepare masks with Contouring or imported IPL/Scanco masks.
+
+Minimum Timelapse prerequisites:
+
+- at least two session images for the same subject and VOI
+- bone segmentation for each session
+- full/periosteal ROI for each session
+- registration ROI, usually the full/periosteal ROI
+- trabecular and cortical ROIs for profiles that stratify or report trabecular/cortical remodelling
+
+If profile-required ROIs are missing, Timelapse should stop with a prerequisite message and direct the user to Contouring or ImportedContours normalization. It should not generate missing contours itself.
 
 If only one timepoint is present, Timelapse is not runnable, but other tools remain runnable.
 
@@ -239,6 +272,17 @@ Outputs:
 - maps for all generated map-backed parameters
 
 It should use common region automatically when the selected profile or registered mode requires it.
+
+Minimum Microarchitecture prerequisites:
+
+- grayscale/BMD image
+- bone segmentation
+- full/periosteal ROI
+- trabecular ROI
+- cortical ROI for cortical metrics
+- optional common region for registered/common-region mode
+
+Total measures such as `Tt.BMD` use the full/periosteal ROI clipped by the common region when one is active. Trabecular and cortical measures use the corresponding ROI intersected with bone segmentation where appropriate.
 
 ### Plate/Rod Morphometry
 
@@ -365,4 +409,3 @@ This contract is the forward path:
 - Common region means scan/FOV overlap, not biological mask intersection.
 - Tool-specific Slicer modules keep scene mode and expert controls.
 - Remote execution is a backend choice, not a separate layout.
-
