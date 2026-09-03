@@ -1473,6 +1473,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         del args
         self._populate_profile_combo()
         self._update_profile_hint()
+        if self._has_active_batch():
+            self._append_log("[batch] Tool/profile change will apply after the active queue finishes.")
+            return
         self._update_table_headers()
         if str(self.datasetRootEdit.text or "").strip():
             self._analyze_dataset()
@@ -1480,6 +1483,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _on_profile_changed(self, *args):
         del args
         self._update_profile_hint()
+        if self._has_active_batch():
+            self._append_log("[batch] Tool/profile change will apply after the active queue finishes.")
+            return
         self._update_table_headers()
         if str(self.datasetRootEdit.text or "").strip():
             self._analyze_dataset()
@@ -1675,9 +1681,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._append_log(f"[batch] Row is not runnable: {row.get('status', action)}")
 
     def _queue_row(self, row_index):
-        if row_index in self._batchQueue:
+        if row_index in self._queued_row_indices():
             return
-        self._batchQueue.append(row_index)
+        self._batchQueue.append(self._batch_job_for_row(row_index))
         self._set_row_action(row_index, "Queued")
         self._set_row_status(row_index, "Queued")
         self.cancelBatchButton.enabled = True
@@ -1689,15 +1695,37 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         for row_index, row in enumerate(self._batchRows):
             if self._effective_row_action(row) != "Run":
                 continue
-            if row_index in self._batchQueue:
+            if row_index in self._queued_row_indices():
                 continue
-            self._batchQueue.append(row_index)
+            self._batchQueue.append(self._batch_job_for_row(row_index))
             self._set_row_action(row_index, "Queued")
             self._set_row_status(row_index, "Queued")
             queued += 1
         self.cancelBatchButton.enabled = bool(self._batchQueue or self._batchProcess is not None)
         self._append_log(f"[batch] queued {queued} row(s)")
         self._start_next_batch_job()
+
+    def _has_active_batch(self):
+        return bool(self._batchProcess is not None or self._batchQueue)
+
+    def _queued_row_indices(self):
+        indices = []
+        for job in self._batchQueue:
+            if isinstance(job, dict):
+                indices.append(int(job.get("row_index", -1)))
+            else:
+                indices.append(int(job))
+        return set(indices)
+
+    def _batch_job_for_row(self, row_index):
+        row_index = int(row_index)
+        return {
+            "row_index": row_index,
+            "tool": self._selected_tool_key(),
+            "profile": str(self.profileCombo.currentData or ""),
+            "force": not bool(self.skipExistingCheck.checked),
+            "row": dict(self._batchRows[row_index]),
+        }
 
     def _set_row_status(self, row_index, status):
         if 0 <= int(row_index) < len(self._batchRows):
@@ -1727,18 +1755,22 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             if str(self.datasetRootEdit.text or "").strip():
                 self._analyze_dataset()
             return
-        row_index = self._batchQueue.pop(0)
+        job = self._batchQueue.pop(0)
+        if isinstance(job, dict):
+            row_index = int(job.get("row_index", -1))
+        else:
+            row_index = int(job)
+            job = self._batch_job_for_row(row_index)
         if row_index < 0 or row_index >= len(self._batchRows):
             self._start_next_batch_job()
             return
-        row = self._batchRows[row_index]
         try:
             args = self.logic.command_for_row(
                 self.datasetRootEdit.text,
-                tool=self._selected_tool_key(),
-                profile=str(self.profileCombo.currentData),
-                row=row,
-                force=not bool(self.skipExistingCheck.checked),
+                tool=str(job.get("tool") or ""),
+                profile=str(job.get("profile") or ""),
+                row=dict(job.get("row") or {}),
+                force=bool(job.get("force")),
             )
         except Exception as exc:
             self._set_row_status(row_index, f"Error: {exc}")
@@ -1758,9 +1790,10 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         process.setProcessEnvironment(self._process_environment())
         process.readyRead.connect(lambda process=process: self._append_process_output(process))
         process.finished.connect(
-            lambda *signal_args, row_index=row_index, process=process: self._batch_process_finished(
+            lambda *signal_args, row_index=row_index, process=process, job=job: self._batch_process_finished(
                 row_index,
                 process,
+                job,
                 *signal_args,
             )
         )
@@ -1776,7 +1809,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._batchCancelled = True
         queued = list(self._batchQueue)
         self._batchQueue = []
-        for row_index in queued:
+        for job in queued:
+            row_index = int(job.get("row_index", -1)) if isinstance(job, dict) else int(job)
             self._set_row_status(row_index, "Cancelled")
             self._set_row_action(row_index, "Run")
         process = self._batchProcess
@@ -1812,24 +1846,27 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             lines.append(line)
         return "\n".join(lines).strip()
 
-    def _batch_process_finished(self, row_index, process, *signal_args):
+    def _batch_process_finished(self, row_index, process, job=None, *signal_args):
         self._append_process_output(process)
         exit_code = int(signal_args[0]) if signal_args else int(process.exitCode())
         self._batchProcess = None
+        job = dict(job or {})
+        tool_key = str(job.get("tool") or self._selected_tool_key())
+        profile = str(job.get("profile") or self.profileCombo.currentData or "")
         if self._batchCancelled:
             self._set_row_status(row_index, "Cancelled")
             self._set_row_action(row_index, "Run")
             self._append_log("[batch] cancelled")
         elif exit_code == 0:
-            if self._selected_tool_key() == "fea" and 0 <= row_index < len(self._batchRows):
+            if tool_key == "fea" and 0 <= row_index < len(self._batchRows):
                 published = self.logic.publish_fea_batch_outputs(
                     self.datasetRootEdit.text,
-                    self._batchRows[row_index],
-                    str(self.profileCombo.currentData or ""),
+                    dict(job.get("row") or self._batchRows[row_index]),
+                    profile,
                 )
                 if published:
                     self._append_log(f"[batch] published {len(published)} FEA artifact(s)")
-            self._refresh_row_output_paths(row_index)
+            self._refresh_row_output_paths(row_index, tool_key=tool_key)
             self._set_row_status(row_index, "Done")
             self._set_row_action(row_index, "Load")
             self._append_log("[batch] finished")
@@ -1839,13 +1876,14 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._append_log(f"[batch] failed with exit code {exit_code}")
         self._start_next_batch_job()
 
-    def _refresh_row_output_paths(self, row_index):
+    def _refresh_row_output_paths(self, row_index, *, tool_key=None):
         if row_index < 0 or row_index >= len(self._batchRows):
             return []
+        tool_key = str(tool_key or self._selected_tool_key())
         row = self._batchRows[row_index]
         paths = []
         if (
-            self._selected_tool_key() in {"microarchitecture", "plate_rod"}
+            tool_key in {"microarchitecture", "plate_rod"}
             and bool(row.get("registered"))
             and int(row.get("action_row_span") or 0) > 1
         ):
@@ -1856,14 +1894,14 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                 paths.extend(
                     self.logic.rediscover_row_output_paths(
                         self.datasetRootEdit.text,
-                        self._selected_tool_key(),
+                        tool_key,
                         self._batchRows[child_index],
                     )
                 )
         else:
             paths = self.logic.rediscover_row_output_paths(
                 self.datasetRootEdit.text,
-                self._selected_tool_key(),
+                tool_key,
                 row,
             )
         paths = [str(path) for path in self._deduplicated_paths(Path(path) for path in paths)]

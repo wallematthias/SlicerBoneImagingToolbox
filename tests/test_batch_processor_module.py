@@ -1878,6 +1878,26 @@ def test_batch_row_buttons_start_process_queue_and_log_output() -> None:
     assert "Error ImageIO factory did not return an ImageIOBase: MRMLIDImageIO" in source
 
 
+def test_queued_batch_jobs_snapshot_tool_profile_and_row() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "def _batch_job_for_row(self, row_index):" in source
+    assert '"tool": self._selected_tool_key()' in source
+    assert '"profile": str(self.profileCombo.currentData or "")' in source
+    assert '"row": dict(self._batchRows[row_index])' in source
+    assert "self._batchQueue.append(self._batch_job_for_row(row_index))" in source
+    assert "job = self._batchQueue.pop(0)" in source
+    assert 'tool=str(job.get("tool") or "")' in source
+    assert 'profile=str(job.get("profile") or "")' in source
+    assert 'row=dict(job.get("row") or {})' in source
+    assert 'if self._has_active_batch():' in source
+    assert 'self._append_log("[batch] Tool/profile change will apply after the active queue finishes.")' in source
+    finish_handler = source[
+        source.index("    def _batch_process_finished(") : source.index("    def _refresh_row_output_paths(", source.index("    def _batch_process_finished("))
+    ]
+    assert 'if self._selected_tool_key() == "fea"' not in finish_handler
+
+
 def test_timelapse_outputs_are_discovered_as_series_outputs(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     logic = module.BatchProcessorLogic()
@@ -2006,7 +2026,7 @@ def test_microarchitecture_batch_load_groups_tables_and_maps_in_scene_folder() -
     refresh_outputs = source.split("    def _refresh_row_output_paths", 1)[1].split("\n    def _load_row_outputs", 1)[0]
 
     assert 'self._selected_tool_key() == "microarchitecture"' in load_outputs
-    assert 'self._selected_tool_key() in {"microarchitecture", "plate_rod"}' in refresh_outputs
+    assert 'tool_key in {"microarchitecture", "plate_rod"}' in refresh_outputs
     assert 'int(row.get("action_row_span") or 0) > 1' in refresh_outputs
     assert "for offset in range(int(row.get(\"action_row_span\") or 0)):" in refresh_outputs
     assert "if is_table and node is not None:" in load_outputs
@@ -2121,7 +2141,8 @@ def test_skip_existing_off_makes_loadable_rows_runnable() -> None:
     assert 'return "Run"' in source
     assert "action = self._effective_row_action(row)" in source
     assert 'if self._effective_row_action(row) != "Run":' in source
-    assert "force=not bool(self.skipExistingCheck.checked)" in source
+    assert '"force": not bool(self.skipExistingCheck.checked)' in source
+    assert 'force=bool(job.get("force"))' in source
 
 
 def test_bone_contour_outputs_load_as_segmentation_nodes() -> None:

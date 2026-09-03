@@ -2260,6 +2260,16 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception:
             return {}
 
+    def _use_site_preset_params(self):
+        """Return whether scene generation should pull site defaults directly.
+
+        Profiles apply their site-specific defaults into the visible expert
+        controls first. Generation should then use those visible values so any
+        manual adjustment made after selecting the profile is preserved.
+        """
+
+        return False
+
     def _apply_profile_preset(self):
         profile = self._current_contour_profile()
         if not profile:

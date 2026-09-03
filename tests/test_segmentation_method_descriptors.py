@@ -560,6 +560,16 @@ def test_contour_custom_profiles_use_shared_profile_registry() -> None:
     assert '"display_name": display_name' in source
 
 
+def test_contouring_scene_generation_has_site_preset_param_policy() -> None:
+    source = (
+        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def _use_site_preset_params(self):" in source
+    assert "strict=self._use_site_preset_params()" in source
+    assert "use_site_defaults=self._use_site_preset_params()" in source
+
+
 def test_xct2_gaussian_standard_contours_take_full_compartment_generation_path() -> None:
     source = (
         ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
