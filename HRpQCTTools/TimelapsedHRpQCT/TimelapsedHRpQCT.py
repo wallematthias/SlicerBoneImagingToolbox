@@ -3895,7 +3895,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if selected_profile == "__custom__":
             self._update_batch_analysis_options_visibility()
             return
-        applied = False
         try:
             from dataclasses import asdict
             from timelapsedhrpqct.config.loader import load_config
@@ -3917,14 +3916,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 cfg,
                 source_label=f"Using built-in profile <b>{selected_profile}</b> for new runs and analysis reruns.",
             )
-            applied = True
         except Exception as exc:
             self._show(f"[settings] could not apply profile {selected_profile}: {exc}")
         finally:
             self._suppress_interactive_preview_updates = False
             self._update_batch_analysis_options_visibility()
-        if applied:
-            self._on_apply_interactive_remodelling()
 
     def _load_defaults_from_pipeline_config(self):
         if not self.logic.is_pipeline_available():
