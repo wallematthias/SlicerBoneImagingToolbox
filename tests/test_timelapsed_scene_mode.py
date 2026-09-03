@@ -75,7 +75,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "sceneComparisonLayout.addWidget(self.sceneExportCsvButton)" in source
     assert "sceneSecondaryActionLayout.addWidget(self.sceneInterruptButton)" in source
     assert "sceneSecondaryActionLayout.addWidget(self.sceneClearLoadedButton)" in source
-    assert "self.sceneInterruptButton.enabled = running" in source
+    assert "def _set_widget_enabled_safe" in source
+    assert 'self._set_widget_enabled_safe(getattr(self, "sceneInterruptButton", None), running)' in source
     assert "def _on_export_scene_comparison_csv" in source
     assert 'default_export_filename("timelapsed_scene_comparisons")' in source
     assert "self.sceneStageItems = {}" in source

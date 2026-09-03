@@ -591,6 +591,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             pass
         return True
 
+    def _set_widget_enabled_safe(self, widget, enabled):
+        if not self._qt_object_alive(widget):
+            return
+        try:
+            widget.enabled = bool(enabled)
+        except (RuntimeError, ValueError, AttributeError):
+            return
+
     def _build_ui(self):
         def _cap_width(widget, width=320):
             try:
@@ -4257,13 +4265,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.sceneClearLoadedButton,
             self.saveAnalysisScenarioBtn,
         ]:
-            if btn is not None:
-                btn.enabled = not running
-        if hasattr(self, "doNotGenerateMasksCheck"):
-            self.doNotGenerateMasksCheck.enabled = not running
-        self.cancelRunBtn.enabled = running
-        if hasattr(self, "sceneInterruptButton"):
-            self.sceneInterruptButton.enabled = running
+            self._set_widget_enabled_safe(btn, not running)
+        self._set_widget_enabled_safe(getattr(self, "doNotGenerateMasksCheck", None), not running)
+        self._set_widget_enabled_safe(getattr(self, "cancelRunBtn", None), running)
+        self._set_widget_enabled_safe(getattr(self, "sceneInterruptButton", None), running)
 
     def _set_interactive_preview_busy(self, is_busy, message=None):
         busy = bool(is_busy)
@@ -4286,8 +4291,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.saveAnalysisScenarioBtn,
         ]
         for widget in widgets:
-            if widget is not None:
-                widget.enabled = not busy
+            self._set_widget_enabled_safe(widget, not busy)
         if message is None:
             message = "Updating..." if busy else "Ready"
         if hasattr(self, "analysisStatusLabel") and self.analysisStatusLabel is not None:
