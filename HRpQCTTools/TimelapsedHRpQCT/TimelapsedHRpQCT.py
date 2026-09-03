@@ -642,9 +642,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             previous = None
         try:
             try:
-                widget.value = value
-            except (RuntimeError, ValueError, AttributeError):
                 widget.setValue(value)
+            except (RuntimeError, ValueError, AttributeError):
+                widget.value = value
             return True
         except (RuntimeError, ValueError, AttributeError):
             return False
@@ -664,14 +664,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception:
             previous = None
         try:
-            checkbox.checked = bool(checked)
-            return True
-        except (RuntimeError, ValueError, AttributeError):
             try:
                 checkbox.setChecked(bool(checked))
-                return True
             except (RuntimeError, ValueError, AttributeError):
-                return False
+                checkbox.checked = bool(checked)
+            return True
+        except (RuntimeError, ValueError, AttributeError):
+            return False
         finally:
             if previous is not None:
                 try:
@@ -696,6 +695,32 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return True
         except (RuntimeError, ValueError, AttributeError):
             return False
+
+    def _combo_current_data_safe(self, combo):
+        if not self._qt_object_alive(combo):
+            return None
+        try:
+            current_data = getattr(combo, "currentData", None)
+            if callable(current_data):
+                value = current_data()
+            else:
+                value = current_data
+            if value is not None:
+                return value
+        except (RuntimeError, ValueError, AttributeError):
+            pass
+        try:
+            current_index = getattr(combo, "currentIndex", 0)
+            if callable(current_index):
+                current_index = current_index()
+            return combo.itemData(int(current_index))
+        except (RuntimeError, ValueError, AttributeError, TypeError):
+            pass
+        try:
+            current_text = getattr(combo, "currentText", "")
+            return current_text() if callable(current_text) else current_text
+        except (RuntimeError, ValueError, AttributeError):
+            return None
 
     def _build_ui(self):
         def _cap_width(widget, width=320):
@@ -1730,6 +1755,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.sceneProfileCombo = qt.QComboBox()
         self._populate_study_profiles(self.sceneProfileCombo)
         self.sceneProfileCombo.currentIndexChanged.connect(self._on_scene_profile_changed)
+        try:
+            self.sceneProfileCombo.activated.connect(self._on_scene_profile_changed)
+        except Exception:
+            pass
+        try:
+            self.sceneProfileCombo.currentTextChanged.connect(self._on_scene_profile_changed)
+        except Exception:
+            pass
         self.sceneProfileCombo.toolTip = "Study defaults applied to scene runs."
         _cap_width(self.sceneProfileCombo)
         form.addRow(_label("Profile", "Study defaults used for registration, mask generation, and remodelling analysis."), self.sceneProfileCombo)
@@ -1995,7 +2028,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not self._qt_object_alive(scene_combo) or not self._qt_object_alive(study_combo):
             return
         try:
-            selected = scene_combo.currentData
+            selected = self._combo_current_data_safe(scene_combo)
             index = study_combo.findData(selected)
             if index >= 0 and study_combo.currentIndex != index:
                 previous = study_combo.blockSignals(True)
@@ -2003,6 +2036,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     study_combo.setCurrentIndex(index)
                 finally:
                     study_combo.blockSignals(previous)
+            self._apply_profile_analysis_controls(selected)
             self._on_apply_study_profile(profile=selected)
         except (RuntimeError, ValueError):
             return
@@ -3701,7 +3735,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not self._qt_object_alive(combo):
             return "standard"
         try:
-            data = combo.currentData
+            data = self._combo_current_data_safe(combo)
             return str(data or "standard")
         except (RuntimeError, ValueError):
             return "standard"
@@ -3786,6 +3820,21 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return asdict(load_config(None, profile=self._selected_config_profile()))
         except Exception:
             return {}
+
+    def _apply_profile_analysis_controls(self, profile):
+        selected_profile = str(profile or "").strip()
+        if not selected_profile or selected_profile == "__custom__":
+            return False
+        try:
+            from dataclasses import asdict
+            from timelapsedhrpqct.config.loader import load_config
+
+            cfg = asdict(load_config(None, profile=selected_profile))
+            self._apply_analysis_config_to_controls(cfg.get("analysis") or {})
+            return True
+        except Exception as exc:
+            self._show(f"[settings] could not apply analysis controls for profile {selected_profile}: {exc}")
+            return False
 
     def _apply_config_dict_to_controls(self, cfg, *, source_label):
         seg_cfg = ((cfg.get("masks") or {}).get("segmentation") or {})

@@ -588,9 +588,13 @@ def test_timelapsed_scene_profile_change_applies_profile_controls_directly() -> 
     source = module_path.read_text(encoding="utf-8")
     changed = source.split("    def _on_scene_profile_changed", 1)[1].split("\n    def ", 1)[0]
 
+    assert "self.sceneProfileCombo.activated.connect(self._on_scene_profile_changed)" in source
+    assert "self.sceneProfileCombo.currentTextChanged.connect(self._on_scene_profile_changed)" in source
+    assert "selected = self._combo_current_data_safe(scene_combo)" in changed
     assert "previous = study_combo.blockSignals(True)" in changed
     assert "study_combo.setCurrentIndex(index)" in changed
     assert "study_combo.blockSignals(previous)" in changed
+    assert "self._apply_profile_analysis_controls(selected)" in changed
     assert "self._on_apply_study_profile(profile=selected)" in changed
 
     apply_profile = source.split("    def _on_apply_study_profile", 1)[1].split("\n    def ", 1)[0]
@@ -598,6 +602,9 @@ def test_timelapsed_scene_profile_change_applies_profile_controls_directly() -> 
     assert "selected_profile = str(profile if profile is not None else self._selected_config_profile())" in apply_profile
     assert 'if selected_profile == "__custom__":' in apply_profile
     assert "self._profile_enables_multistack(selected_profile)" in apply_profile
+    apply_analysis_profile = source.split("    def _apply_profile_analysis_controls", 1)[1].split("\n    def ", 1)[0]
+    assert "load_config(None, profile=selected_profile)" in apply_analysis_profile
+    assert "self._apply_analysis_config_to_controls(cfg.get(\"analysis\") or {})" in apply_analysis_profile
 
 
 def test_timelapsed_scene_role_status_updates_when_roi_selector_changes() -> None:
