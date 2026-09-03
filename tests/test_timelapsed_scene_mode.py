@@ -1082,9 +1082,11 @@ def test_scene_comparison_table_clears_before_repopulate() -> None:
     source = module_path.read_text(encoding="utf-8")
 
     setter = source.split("    def _set_scene_comparison_rows", 1)[1].split("\n    def ", 1)[0]
+    assert "if not self._qt_object_alive(self.sceneComparisonTable):" in setter
     assert "self.sceneComparisonTable.clearContents()" in setter
     assert "seen_row_keys" in setter
     current_setter = source.split("    def _update_current_comparison_table", 1)[1].split("\n    def ", 1)[0]
+    assert "if not self._qt_object_alive(self.currentComparisonTable):" in current_setter
     assert "self.currentComparisonTable.clearContents()" in current_setter
     assert "seen_row_keys" in current_setter
 
@@ -1205,6 +1207,10 @@ def test_scene_union_update_refreshes_tables_from_recomputed_roi_metrics() -> No
     assert "metric_rows = self._compute_pair_metric_rows(preview_inputs)" in union_branch
     assert "self._set_pair_metric_rows(metric_rows)" in union_branch
     assert "self._refresh_scene_results_table_from_loaded_remodelling()" in union_branch
+    protected_block = union_branch.split("            try:", 1)[1].split("            except Exception as exc:", 1)[0]
+    assert "metric_rows = self._compute_pair_metric_rows(preview_inputs)" in protected_block
+    assert "self._set_pair_metric_rows(metric_rows)" in protected_block
+    assert "self._refresh_scene_results_table_from_loaded_remodelling()" in protected_block
     assert "self._set_scene_comparison_rows(scene_rows)" not in union_branch
 
 

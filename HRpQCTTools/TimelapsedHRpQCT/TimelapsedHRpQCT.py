@@ -6270,6 +6270,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _update_current_comparison_table(self, rows=None):
         if not hasattr(self, "currentComparisonTable"):
             return
+        if not self._qt_object_alive(self.currentComparisonTable):
+            return
         seen_row_keys = set()
         normalized_rows = []
         for row in list(rows or []):
@@ -7288,13 +7290,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                         self.remodellingFullSegCombo.setCurrentIndex(idx)
                     self._activate_remodelling_display_for_current_selection()
                 self._restore_slice_view_state(view_state)
+                metric_rows = self._compute_pair_metric_rows(preview_inputs)
+                self._set_pair_metric_rows(metric_rows)
+                self._refresh_scene_results_table_from_loaded_remodelling()
             except Exception as exc:
                 self._set_interactive_preview_busy(False, "Update failed")
                 slicer.util.warningDisplay(f"Interactive remodelling ROI-union update failed:\n{exc}")
                 return
-            metric_rows = self._compute_pair_metric_rows(preview_inputs)
-            self._set_pair_metric_rows(metric_rows)
-            self._refresh_scene_results_table_from_loaded_remodelling()
             self._set_interactive_preview_busy(False, "Ready")
             self._show(
                 "[preview] remodelling ROI union updated "
@@ -8817,6 +8819,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _set_scene_comparison_rows(self, rows=None):
         if not hasattr(self, "sceneComparisonTable"):
+            return
+        if not self._qt_object_alive(self.sceneComparisonTable):
             return
         seen_row_keys = set()
         display_rows = []
