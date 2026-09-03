@@ -1,0 +1,51 @@
+site_name: Bone Imaging Toolbox
+site_description: 3D Slicer extension for bone imaging workflows
+site_url: https://slicerboneimagingtoolbox.readthedocs.io/
+repo_url: https://github.com/wallematthias/SlicerBoneImagingToolbox
+repo_name: wallematthias/SlicerBoneImagingToolbox
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/SlicerBoneImagingToolbox.png
+  favicon: assets/icon.png
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.highlight
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Dataset Format: dataset-format.md
+  - Derivatives: derivatives.md
+  - Scene Workflows: scene-workflows.md
+  - Batch Processor: tools/batch-processor.md
+  - Tools:
+      - Scanco I/O: tools/scanco-io.md
+      - Dataset Naming Helper: tools/dataset-naming-helper.md
+      - Contouring: tools/segmentation-and-contours.md
+      - Mask and Label Algebra: tools/mask-and-label-algebra.md
+      - Motion Scoring: tools/motion-scoring.md
+      - Timelapsed Remodelling: tools/timelapsed-hrpqct.md
+      - Microarchitecture: tools/microarchitecture.md
+      - Plate/Rod Morphometry: tools/plate-rod-morphometry.md
+      - ParOsol-FEA: tools/parosol-fea.md
+      - Mechanoregulation: tools/mechanoregulation.md
+      - Spine Segmentation: tools/spine-segmentation-ct.md
+  - Development:
+      - Adding A Tool: development/adding-a-tool.md
+      - Derivatives Contract: development/derivatives-contract.md
+      - Profiles: development/profiles.md
+      - Release Checklist: development/release-checklist.md
