@@ -311,7 +311,7 @@ def test_timelapsed_batch_custom_profile_exposes_analysis_options_without_cli_pr
     assert "if self._selected_profile_is_custom():" in profile_args
     assert "return []" in profile_args
     apply_profile = source.split("    def _on_apply_study_profile", 1)[1].split("\n    def ", 1)[0]
-    assert "if self._selected_profile_is_custom():" in apply_profile
+    assert 'if selected_profile == "__custom__":' in apply_profile
     assert "self._update_batch_analysis_options_visibility()" in apply_profile
     settings_override = source.split("    def _settings_override", 1)[1].split("\n    def ", 1)[0]
     assert "if self._selected_profile_is_custom() or bool(force_analysis_controls):" in settings_override
@@ -584,7 +584,13 @@ def test_timelapsed_scene_profile_change_applies_profile_controls_directly() -> 
     assert "previous = study_combo.blockSignals(True)" in changed
     assert "study_combo.setCurrentIndex(index)" in changed
     assert "study_combo.blockSignals(previous)" in changed
-    assert "self._on_apply_study_profile()" in changed
+    assert "self._on_apply_study_profile(profile=selected)" in changed
+
+    apply_profile = source.split("    def _on_apply_study_profile", 1)[1].split("\n    def ", 1)[0]
+    assert "def _on_apply_study_profile(self, *_args, profile=None):" in source
+    assert "selected_profile = str(profile if profile is not None else self._selected_config_profile())" in apply_profile
+    assert 'if selected_profile == "__custom__":' in apply_profile
+    assert "self._profile_enables_multistack(selected_profile)" in apply_profile
 
 
 def test_timelapsed_scene_role_status_updates_when_roi_selector_changes() -> None:

@@ -1905,7 +1905,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     study_combo.setCurrentIndex(index)
                 finally:
                     study_combo.blockSignals(previous)
-            self._on_apply_study_profile()
+            self._on_apply_study_profile(profile=selected)
         except (RuntimeError, ValueError):
             return
 
@@ -3635,8 +3635,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         profile = self._selected_config_profile()
         return ["--profile", profile] if profile else []
 
-    def _selected_profile_enables_multistack(self):
-        profile = self._selected_config_profile()
+    def _profile_enables_multistack(self, profile=None):
+        profile = str(profile if profile is not None else self._selected_config_profile())
         if not profile:
             return False
         try:
@@ -3647,6 +3647,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return bool(getattr(ms_cfg, "enabled", False))
         except Exception:
             return profile in {"multistack", "ped-fx"}
+
+    def _selected_profile_enables_multistack(self):
+        return self._profile_enables_multistack()
 
     def _selected_run_mode(self, sessions=None):
         if self._selected_profile_enables_multistack():
@@ -3817,8 +3820,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if source_label and hasattr(self, "userMessageLabel"):
             self._set_user_message("info", "Profile applied", source_label)
 
-    def _on_apply_study_profile(self, *_args):
-        if self._selected_profile_is_custom():
+    def _on_apply_study_profile(self, *_args, profile=None):
+        selected_profile = str(profile if profile is not None else self._selected_config_profile())
+        if selected_profile == "__custom__":
             self._update_batch_analysis_options_visibility()
             self._set_user_message(
                 "info",
@@ -3835,9 +3839,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             from dataclasses import asdict
             from timelapsedhrpqct.config.loader import load_config
 
-            profile = self._selected_config_profile()
             try:
-                cfg_obj = load_config(None, profile=profile)
+                cfg_obj = load_config(None, profile=selected_profile)
             except TypeError as exc:
                 if "profile" not in str(exc):
                     raise
@@ -3848,10 +3851,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 ) from exc
             cfg = asdict(cfg_obj)
             self._suppress_interactive_preview_updates = True
-            self.useMultistackCheck.checked = self._selected_profile_enables_multistack()
+            self.useMultistackCheck.checked = self._profile_enables_multistack(selected_profile)
             self._apply_config_dict_to_controls(
                 cfg,
-                source_label=f"Using built-in profile <b>{profile}</b> for new runs and analysis reruns.",
+                source_label=f"Using built-in profile <b>{selected_profile}</b> for new runs and analysis reruns.",
             )
             applied = True
         except Exception as exc:
