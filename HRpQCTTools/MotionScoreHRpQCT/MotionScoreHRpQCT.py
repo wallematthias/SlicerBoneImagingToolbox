@@ -43,6 +43,7 @@ from SlicerBoneImagingToolboxLib.motionscore_scene import (
     build_motionscore_scene_plan,
     motionscore_scene_runner_args,
 )
+from SlicerBoneImagingToolboxLib.motionscore_review import next_review_scan_id
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -2819,8 +2820,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _refresh_and_load_next(self, previous_scan_id=None, refresh=True):
         if refresh:
             self.refreshReview(quiet=bool(self._active_task_name == "predict"))
+            target_scan_id = next_review_scan_id(previous_scan_id, self._scan_ids_for_scope())
         else:
-            self._rebuild_scan_combo(preferred_scan_id="")
+            target_scan_id = next_review_scan_id(previous_scan_id, self._scan_ids_for_scope())
+            self._rebuild_scan_combo(preferred_scan_id=target_scan_id)
         self._show_training_reveal(previous_scan_id)
         if previous_scan_id:
             self._grade_history.append(previous_scan_id)
@@ -2831,14 +2834,10 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._clear_profile_plot()
             return
 
-        idx = -1
-        if previous_scan_id:
-            idx = self.scanCombo.findText(previous_scan_id)
-            if idx >= 0 and count > 1:
-                idx = min(idx + 1, count - 1)
-        if idx < 0:
-            idx = 0
-        self.scanCombo.setCurrentIndex(idx)
+        if refresh and target_scan_id:
+            idx = self.scanCombo.findText(target_scan_id)
+            if idx >= 0:
+                self.scanCombo.setCurrentIndex(idx)
         if self._auto_load_enabled():
             qt.QTimer.singleShot(0, self._auto_load_current_scan)
 

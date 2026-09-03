@@ -13,7 +13,7 @@ def test_motionscore_prediction_resume_controls_are_wired() -> None:
     assert 'self.runButton = qt.QPushButton("Predict / Resume")' in source
     assert 'self.forcePredictCheck = qt.QCheckBox("Reprocess existing predictions")' in source
     assert 'args.append("--force")' in source
-    assert 'MIN_CORE_VERSION = "2.5.8"' in source
+    assert 'MIN_CORE_VERSION = "2.5.11"' in source
 
 
 def test_motionscore_review_stays_available_while_predict_runs() -> None:
@@ -293,3 +293,17 @@ def test_motionscore_manual_grade_uses_in_process_fast_path() -> None:
 
     assert "def _on_manual_applied_fast" in source
     assert "self._refresh_and_load_next(previous_scan_id=scan_id, refresh=False)" in source
+
+
+def test_motionscore_manual_grade_rebuilds_queue_on_next_scan() -> None:
+    source = _module_source()
+
+    assert "from SlicerBoneImagingToolboxLib.motionscore_review import next_review_scan_id" in source
+
+    advance_start = source.index("def _refresh_and_load_next")
+    advance_end = source.index("def _set_run_scope_items", advance_start)
+    advance = source[advance_start:advance_end]
+
+    assert "target_scan_id = next_review_scan_id(previous_scan_id, self._scan_ids_for_scope())" in advance
+    assert "self._rebuild_scan_combo(preferred_scan_id=target_scan_id)" in advance
+    assert 'self._rebuild_scan_combo(preferred_scan_id="")' not in advance
