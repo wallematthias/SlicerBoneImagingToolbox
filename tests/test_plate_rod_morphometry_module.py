@@ -124,7 +124,7 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
 
     assert "self.modeTabs = qt.QTabWidget()" in widget_setup
     assert 'self.modeTabs.addTab(scene_tab, "Scene")' in widget_setup
-    assert 'self.modeTabs.addTab(batch_tab, "Batch")' in widget_setup
+    assert 'self.modeTabs.addTab(batch_tab, "Batch")' not in widget_setup
     assert "Folder Batch" not in widget_setup
     assert "def _segmentation_input_row(self, node_selector, segment_selector):" in source
     assert "row_layout = qt.QHBoxLayout(row)" in source
@@ -160,7 +160,8 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
     assert "self.progressBar.setRange(0, 0)" in widget_setup
     assert "self.progressBar.visible = False" in widget_setup
     assert "self.statusLabel = qt.QLabel" in widget_setup
-    assert "Install / update compiled plate-rod core" in widget_setup
+    assert "Install / update compiled plate-rod core" not in widget_setup
+    assert "installCoreButton" not in widget_setup
     assert "def _refresh_core_status(self):" in source
     assert "self._refresh_core_status()" in widget_setup
     assert '"Skeleton topology labels": core_result.topology_labels' in source
@@ -174,15 +175,40 @@ def test_plate_rod_widget_exposes_pipeline_controls_and_outputs() -> None:
 
 def test_plate_rod_batch_ui_uses_derivative_discovery_pattern() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
-    widget_setup = source[source.index("    def setup(self):", source.index("class PlateRodMorphometryHRpQCTWidget")) :]
+    setup_start = source.index("    def setup(self):", source.index("class PlateRodMorphometryHRpQCTWidget"))
+    setup_end = source.index("    def _run_folder_batch(self):", setup_start)
+    widget_setup = source[setup_start:setup_end]
 
-    assert 'qt.QGroupBox("Discovery")' in widget_setup
-    assert "self.folderDiscoverButton" in widget_setup
-    assert "self.folderBatchTable" in widget_setup
-    assert 'self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])' in widget_setup
-    assert "Subject filter" in widget_setup
-    assert "Site filter" in widget_setup
-    assert 'self.folderRunButton = qt.QPushButton("Run Batch")' in widget_setup
+    assert 'qt.QGroupBox("Discovery")' not in widget_setup
+    assert "self.folderDiscoverButton" not in widget_setup
+    assert "self.folderBrowseDatasetButton" not in widget_setup
+    assert "self.folderBatchTable" not in widget_setup
+    assert 'self.folderBatchTable.setHorizontalHeaderLabels(["Action", "Subject", "Site", "Sessions", "Status"])' not in widget_setup
+    assert "Subject filter" not in widget_setup
+    assert "Site filter" not in widget_setup
+    assert "self.folderSubjectEdit" not in widget_setup
+    assert "self.folderSiteEdit" not in widget_setup
+    assert "self.folderBatchLogText" not in widget_setup
+    assert 'self.folderRunButton = qt.QPushButton("Run all")' not in widget_setup
+    assert "self._folderBatchGroups = []" not in widget_setup
+    assert "self._folderBatchQueue = []" not in widget_setup
+    assert "self._folderBatchCurrent = None" not in widget_setup
+    assert "self._folderBatchProcess = None" not in widget_setup
+    assert "discover_artifacts(root, include_derivatives=True)" in source
+    assert 'artifact.role not in {"segmentation", "trab"}' in source
+    assert 'name.endswith(".aim")' in source
+    assert "_queue_folder_batch_row" in source
+    assert "_start_next_folder_batch_job" in source
+    assert "_load_folder_batch_outputs" in source
+    assert "_folder_result_path_for_group" in source
+    assert 'self._set_folder_group_action(row_index, "Load")' in source
+    assert 'self._set_folder_group_action(row_index, "Run")' in source
+    assert 'self._set_folder_group_status(row_index, "Queued")' in source
+    assert "self._folderBatchProcess = self.logic.run_folder_batch_job(" in source
+    assert "slicer.util.loadTable(str(table_path))" in source
+    assert 'slicer.util.loadVolume(str(path), {"name": path.stem})' in source
+    assert "def _load_plate_rod_npy_map(self, path, role):" in source
+    assert "slicer.util.updateVolumeFromArray(node, np.asarray(array))" in source
 
 
 def test_plate_rod_run_passes_selected_segments_to_logic() -> None:

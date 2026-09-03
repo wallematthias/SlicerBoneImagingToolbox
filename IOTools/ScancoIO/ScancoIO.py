@@ -26,7 +26,6 @@ TOOLBOX_ROOT = MODULE_DIR.parents[1]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
-from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
 
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
@@ -498,15 +497,6 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         parentLayout.addWidget(section)
         form = qt.QFormLayout(section)
 
-        self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
-        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
-        installRowWidget = qt.QWidget()
-        installRow = qt.QHBoxLayout(installRowWidget)
-        installRow.setContentsMargins(0, 0, 0, 0)
-        installRow.addWidget(self.updateToolboxButton)
-        form.addRow(installRowWidget)
-
         self.importPathEdit = qt.QLineEdit()
         self.importPathEdit.textChanged.connect(self._on_import_path_changed)
         self._lastAutoVolumeName = ""
@@ -788,9 +778,6 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
             self._log("AIM I/O dependency is installed.")
         except Exception as exc:
             self._error(exc)
-
-    def _check_toolbox_updates(self):
-        run_toolbox_update_dialog(__file__, log=self._log)
 
     def _on_import_path_changed(self, path):
         self._update_volume_name_from_import_path(path)

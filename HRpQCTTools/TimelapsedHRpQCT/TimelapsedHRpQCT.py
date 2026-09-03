@@ -119,7 +119,6 @@ PROFILE_DISPLAY_ORDER = _reporting.PROFILE_DISPLAY_ORDER
 default_export_filename = _reporting.default_export_filename
 enrich_cohort_export_row = _reporting.enrich_cohort_export_row
 project_rows_to_fields = _reporting.project_rows_to_fields
-from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
     ScriptedLoadableModuleWidget,
@@ -209,7 +208,7 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
             # published contour dependency without letting pip replace the local source tree.
             slicer.util.pip_install("hrpqct-geodesic-contour>=0.1.1")
         else:
-            # Force-refresh from PyPI so "Install / Update" always pulls latest.
+            # Force-refresh from PyPI so package management pulls the latest release.
             slicer.util.pip_install(
                 f"--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct>={MIN_PIPELINE_VERSION}"
             )
@@ -251,7 +250,7 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         available = {record.derivative for record in available_records}
         first = available_records[0] if available_records else None
         plan = resolve_workflow_plan(
-            "Timelapsed",
+            "Timelapse",
             manifests=manifests,
             subject_id=first.subject_id if first else "unknown",
             site=first.site if first else "unknown",
@@ -604,7 +603,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         scenePage = qt.QWidget()
         batchPage = qt.QWidget()
         self.timelapsedModeTabs.addTab(scenePage, "Scene")
-        self.timelapsedModeTabs.addTab(batchPage, "Batch")
         self.layout.addWidget(self.timelapsedModeTabs)
         self._build_scene_ui(scenePage)
         self.batchLayout = qt.QVBoxLayout(batchPage)
@@ -621,16 +619,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.pipelineStatusLabel.wordWrap = False
         self.pipelineStatusLabel.setMaximumWidth(260)
         self.checkBtn = qt.QPushButton("Check")
-        self.updateToolboxBtn = qt.QPushButton("Check toolbox updates")
         _tip(self.checkBtn, "Check the installed timelapsed-hrpqct package status and version.")
-        _tip(self.updateToolboxBtn, "Check whether this local Slicer toolbox checkout has upstream updates.")
         self.checkBtn.clicked.connect(self._on_check_pipeline)
-        self.updateToolboxBtn.clicked.connect(self._on_check_toolbox_updates)
         rowWidget = qt.QWidget()
         row = qt.QHBoxLayout(rowWidget)
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self.checkBtn)
-        row.addWidget(self.updateToolboxBtn)
         depForm.addRow(_label("Status", "Installed timelapsed-hrpqct package status inside Slicer Python."), self.pipelineStatusLabel)
         depForm.addRow(rowWidget)
         self.batchLayout.addWidget(depBox)
@@ -969,13 +963,13 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.resultsRootPath.setCurrentPath("")
         _tip(
             self.resultsRootPath,
-            "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under dataset/derivatives.",
+            "Optional output/results root. Leave empty to write Timelapse outputs under dataset/derivatives.",
         )
         _cap_width(self.resultsRootPath, 360)
         discoveryLayout.addRow(
             _label(
                 "Results folder (optional)",
-                "Optional output/results root. Leave empty to write TimelapsedHRpQCT outputs under dataset/derivatives.",
+                "Optional output/results root. Leave empty to write Timelapse outputs under dataset/derivatives.",
             ),
             self.resultsRootPath,
         )
@@ -1319,49 +1313,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_analysis_threshold_value(self.analysisThreshold.value)
         self._set_analysis_cluster_value(self.analysisCluster.value)
 
-        self.seriesSummaryBox = qt.QGroupBox("Series Summary")
-        self.seriesSummaryForm = qt.QFormLayout(self.seriesSummaryBox)
-        self.seriesSummaryPairsList = qt.QListWidget()
-        self.seriesSummaryPairsList.setMinimumHeight(90)
-        self.seriesSummaryPairsList.setMaximumHeight(140)
-        self.seriesSummaryPairsHintLabel = qt.QLabel("Select saved comparison pairs to include in the cohort summary.")
-        self.seriesSummaryPairsHintLabel.wordWrap = True
-        self.seriesSummaryPairsHintLabel.toolTip = "Saved comparison pairs available for cohort-level export."
-        self.seriesSummarySavedStateLabel = qt.QLabel("Saved summary status: N/A")
-        self.seriesSummarySavedStateLabel.wordWrap = True
-        self.seriesSummarySavedStateLabel.toolTip = "Status of the saved cohort summary table."
-        self.seriesSummaryUpdateBtn = qt.QPushButton("Load saved cohort summary")
-        self.seriesSummaryUpdateBtn.toolTip = "Load existing pairwise cohort analysis rows from disk."
-        self.seriesSummaryUpdateBtn.clicked.connect(self._refresh_saved_cohort_summary)
-        self.seriesSummaryExportBtn = qt.QPushButton("Export CSV")
-        self.seriesSummaryExportBtn.toolTip = (
-            "Export saved pairwise remodelling result rows for the processed cohort."
-        )
-        self.seriesSummaryExportBtn.clicked.connect(self._on_export_study_summary)
         self.clearLoadedResultsBtn = qt.QPushButton("Clear loaded")
         self.clearLoadedResultsBtn.toolTip = "Remove loaded Timelapsed result nodes and clear interactive preview cache."
         self.clearLoadedResultsBtn.clicked.connect(self._on_clear_loaded_timelapsed_results)
-        self.seriesBasisLabel = qt.QLabel("Included pairs: N/A")
-        self.seriesBasisLabel.toolTip = "Comparison pairs currently included in cohort summary calculations."
-        self.seriesSummaryTable = qt.QTableWidget()
-        self.seriesSummaryTable.setColumnCount(6)
-        self.seriesSummaryTable.setHorizontalHeaderLabels(
-            ["Mask", "Mean FV/BV", "Mean RV/BV", "Mean NV/BV", "Mean AV/BV", "Subjects"]
-        )
-        self.seriesSummaryTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
-        self.seriesSummaryTable.setSelectionMode(qt.QAbstractItemView.NoSelection)
-        self.seriesSummaryTable.verticalHeader().setVisible(False)
-        self.seriesSummaryTable.horizontalHeader().setStretchLastSection(True)
-        self.seriesSummaryTable.setMinimumHeight(120)
-        self.seriesSummaryPairsList.toolTip = "Saved comparison pairs included when computing cohort summary rows."
-        self.seriesSummaryTable.toolTip = "Mean saved remodelling volume fractions by mask/compartment."
-        self.seriesSummaryForm.addRow(self.seriesSummaryPairsHintLabel)
-        self.seriesSummaryForm.addRow(_label("Comparison pairs", "Saved adjacent comparison pairs included when computing cohort summary rows."), self.seriesSummaryPairsList)
-        self.seriesSummaryForm.addRow(self.seriesSummarySavedStateLabel)
-        self.seriesSummaryForm.addRow(self.seriesSummaryUpdateBtn)
-        self.seriesSummaryForm.addRow(self.seriesSummaryExportBtn)
-        self.seriesSummaryForm.addRow(_label("Mask summaries", "Mean saved remodelling volume fractions by mask/compartment."), self.seriesSummaryTable)
-        self.seriesSummaryForm.addRow(self.seriesBasisLabel)
 
         self.saveAnalysisScenarioBtn.clicked.connect(self._on_save_analysis_scenario)
         self.applyAnalysisSettingsBtn.clicked.connect(self._on_apply_interactive_remodelling)
@@ -1371,7 +1325,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         settingsLayout.addWidget(registrationBox)
         settingsLayout.addWidget(advancedAnalysisBox)
         analysisSectionLayout.addWidget(analysisBox)
-        analysisSectionLayout.addWidget(self.seriesSummaryBox)
 
         actionBox = qt.QGroupBox("Pipeline")
         actionBox.setStyleSheet(
@@ -1394,11 +1347,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.cancelRunBtn.enabled = False
         self.cancelRunBtn.toolTip = "Cancel the currently running pipeline step."
         self._style_primary_run_button(self.runTimelapseBtn)
-        self.seriesSummaryExportBtn.setStyleSheet(
-            "QPushButton { background:#f5f7fa; color:#222; border:1px solid #b8c0ca; "
-            "border-radius:4px; padding:5px 8px; } "
-            "QPushButton:hover { background:#edf2f7; }"
-        )
         self.cancelRunBtn.setStyleSheet(
             "QPushButton { background:#fff5f5; color:#9b1c1c; border:1px solid #e0b4b4; "
             "border-radius:4px; padding:5px 8px; } "
@@ -1408,11 +1356,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         secondaryActionLayout = qt.QHBoxLayout(secondaryActionRow)
         secondaryActionLayout.setContentsMargins(0, 0, 0, 0)
         secondaryActionLayout.setSpacing(6)
-        secondaryActionLayout.addWidget(self.seriesSummaryExportBtn)
         secondaryActionLayout.addWidget(self.clearLoadedResultsBtn)
         secondaryActionLayout.addWidget(self.cancelRunBtn)
         secondaryActionLayout.addStretch(1)
-        _cap_width(self.seriesSummaryExportBtn, 96)
         _cap_width(self.clearLoadedResultsBtn, 104)
         _cap_width(self.cancelRunBtn, 82)
         processingSubjectRow = qt.QWidget()
@@ -1509,7 +1455,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.batchLayout.addWidget(parseBox)
         self.batchLayout.addWidget(discoveryBox)
         self.batchLayout.addWidget(actionBox)
-        self.seriesSummaryBox.visible = False
         self.batchLayout.addWidget(loadBox)
         self.batchLayout.addWidget(metricsBox)
         self.batchLayout.addStretch(1)
@@ -1871,8 +1816,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         scene_mode = self._timelapsed_scene_mode_selected()
         if hasattr(self, "runAnalysisBtn"):
             self.runAnalysisBtn.visible = not scene_mode
-        if hasattr(self, "seriesSummaryBox"):
-            self.seriesSummaryBox.visible = not scene_mode
         if hasattr(self, "statusBox"):
             self.statusBox.visible = not scene_mode
         if hasattr(self, "sceneStatusBox"):
@@ -3302,11 +3245,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return None
         override = self.resultsRootPath.currentPath.strip() if hasattr(self, "resultsRootPath") else ""
         selected = Path(override).expanduser() if override else root
-        if selected.name == "TimelapsedHRpQCT":
+        if selected.name == "Timelapse":
             return selected
         if selected.name == "derivatives":
-            return selected / "TimelapsedHRpQCT"
-        return selected / "derivatives" / "TimelapsedHRpQCT"
+            return selected / "Timelapse"
+        return selected / "derivatives" / "Timelapse"
 
     def _derivatives_root(self):
         imported = self._imported_dataset_root()
@@ -4275,7 +4218,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.sceneRunButton,
             self.applyAnalysisSettingsBtn,
             self.runAnalysisBtn,
-            self.seriesSummaryExportBtn,
             self.clearLoadedResultsBtn,
             self.sceneExportCsvButton,
             self.sceneClearLoadedButton,
@@ -4307,8 +4249,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.applyAnalysisSettingsBtn,
             self.remodellingApplyInteractiveBtn,
             self.remodellingAutoUpdateCheck,
-            self.seriesSummaryUpdateBtn,
-            self.seriesSummaryExportBtn,
             self.saveAnalysisScenarioBtn,
         ]
         for widget in widgets:
@@ -4395,18 +4335,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "TIBIA": "tibia",
             "KN": "knee",
             "KNEE": "knee",
-            "RL": "radius_left",
-            "RADIUS_LEFT": "radius_left",
-            "RR": "radius_right",
-            "RADIUS_RIGHT": "radius_right",
-            "TL": "tibia_left",
-            "TIBIA_LEFT": "tibia_left",
-            "TR": "tibia_right",
-            "TIBIA_RIGHT": "tibia_right",
-            "KL": "knee_left",
-            "KNEE_LEFT": "knee_left",
-            "KR": "knee_right",
-            "KNEE_RIGHT": "knee_right",
+            "RL": "radiusleft",
+            "RADIUS_LEFT": "radiusleft",
+            "RR": "radiusright",
+            "RADIUS_RIGHT": "radiusright",
+            "TL": "tibialeft",
+            "TIBIA_LEFT": "tibialeft",
+            "TR": "tibiaright",
+            "TIBIA_RIGHT": "tibiaright",
+            "KL": "kneeleft",
+            "KNEE_LEFT": "kneeleft",
+            "KR": "kneeright",
+            "KNEE_RIGHT": "kneeright",
         }
         return site_aliases.get(str(token or "").strip().upper(), "radius")
 
@@ -4609,12 +4549,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "radius",
             "tibia",
             "knee",
-            "radius_left",
-            "radius_right",
-            "tibia_left",
-            "tibia_right",
-            "knee_left",
-            "knee_right",
+            "radiusleft",
+            "radiusright",
+            "tibialeft",
+            "tibiaright",
+            "kneeleft",
+            "kneeright",
         ]
 
     def _session_options(self, sessions):
@@ -4755,11 +4695,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "radius": "DR",
             "tibia": "DT",
             "knee": "KN",
+            "radiusleft": "RL",
             "radius_left": "RL",
+            "radiusright": "RR",
             "radius_right": "RR",
+            "tibialeft": "TL",
             "tibia_left": "TL",
+            "tibiaright": "TR",
             "tibia_right": "TR",
+            "kneeleft": "KL",
             "knee_left": "KL",
+            "kneeright": "KR",
             "knee_right": "KR",
         }
         return mapping.get(site_norm, self._sanitize_name_token(site).upper())
@@ -5572,9 +5518,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _on_check_pipeline(self):
         self._update_dependency_ui()
 
-    def _on_check_toolbox_updates(self):
-        run_toolbox_update_dialog(__file__, log=self._show)
-
     def _dependency_status_text(self, detail):
         detail = str(detail or "")
         if detail.startswith("Installed ("):
@@ -6070,7 +6013,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception:
                 pass
         try:
-            color_node.NamesInitialisedOn()
             color_node.HideFromEditorsOn()
         except Exception:
             pass
@@ -6325,35 +6267,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _set_series_summary_labels(self, summary=None):
         self._latest_series_summary = summary
-        if not summary:
-            self.seriesSummaryTable.setRowCount(0)
-            self.seriesBasisLabel.text = "Included pairs: N/A"
-            self.seriesSummarySavedStateLabel.text = "Saved summary status: N/A"
-            return
-        def _fmt_pct(value):
-            if value is None or not np.isfinite(value):
-                return "N/A"
-            return f"{100.0 * float(value):.2f}%"
-        rows = list(summary.get("rows") or [])
-        self.seriesSummaryTable.setRowCount(len(rows))
-        for row_idx, row in enumerate(rows):
-            values = [
-                str(row.get("compartment", "")),
-                _fmt_pct(row.get("mean_formation_frac_bv0")),
-                _fmt_pct(row.get("mean_resorption_frac_bv0")),
-                _fmt_pct(row.get("mean_net_change_frac_bv0")),
-                _fmt_pct(row.get("mean_active_frac_bv0")),
-                str(int(row.get("n_subjects", 0))),
-            ]
-            for col_idx, value in enumerate(values):
-                item = qt.QTableWidgetItem(value)
-                self.seriesSummaryTable.setItem(row_idx, col_idx, item)
-        selected = summary.get("trajectory_selected_adjacent_pairs") or []
-        basis = ", ".join(selected) if selected else "all adjacent"
-        self.seriesBasisLabel.text = f"Included pairs: {basis}"
 
     def _set_series_summary_saved_state(self, text):
-        self.seriesSummarySavedStateLabel.text = f"Saved summary status: {text}"
+        return
 
     def _current_saved_analysis_matches_preview(self, metadata):
         if not metadata:
@@ -6388,25 +6304,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return selected
 
     def _rebuild_series_summary_pair_selector(self, session_ids):
-        self.seriesSummaryPairsList.clear()
         self._series_summary_pair_checks = {}
-        adjacent_pairs = [
-            (str(session_ids[i]), str(session_ids[i + 1]))
-            for i in range(max(0, len(session_ids) - 1))
-        ]
-        if not adjacent_pairs:
-            self.seriesSummaryPairsHintLabel.text = "Select saved comparison pairs to include in the cohort summary."
-            self.seriesSummaryPairsList.enabled = False
-            return
-        self.seriesSummaryPairsHintLabel.text = "Select saved comparison pairs to include in the cohort summary."
-        self.seriesSummaryPairsList.enabled = True
-        for t0, t1 in adjacent_pairs:
-            key = f"{t0}->{t1}"
-            item = qt.QListWidgetItem(f"{t0} -> {t1}")
-            item.setFlags(item.flags() | qt.Qt.ItemIsUserCheckable)
-            item.setCheckState(qt.Qt.Checked)
-            self.seriesSummaryPairsList.addItem(item)
-            self._series_summary_pair_checks[key] = item
 
     def _apply_preview_label_filters(self, label_arr_zyx, valid_mask_zyx=None):
         original = np.asarray(label_arr_zyx)
@@ -6466,7 +6364,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _infer_results_root_from_path(self, path_obj):
         p = Path(path_obj).resolve()
         for candidate in [p] + list(p.parents):
-            if candidate.name == "TimelapsedHRpQCT":
+            if candidate.name == "Timelapse":
                 if candidate.parent.name == "derivatives":
                     return candidate.parent.parent
                 return candidate
@@ -6475,6 +6373,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _parse_remodelling_source_context(self, source_path):
         name = Path(source_path).name
         patterns = [
+            re.compile(
+                r"^sub-(?P<subject_id>.+?)_voi-(?P<site>.+?)_desc-(?P<compartment>.+?)_"
+                r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.(?:nii\.gz|mha)$"
+            ),
             re.compile(
                 r"^sub-(?P<subject_id>.+?)_site-(?P<site>.+?)_comp-(?P<compartment>.+?)_"
                 r"t0-(?P<t0>.+?)_t1-(?P<t1>.+?)_thr-(?P<threshold>.+?)_cluster-(?P<cluster>\d+)_remodelling\.(?:nii\.gz|mha)$"
@@ -6490,6 +6392,20 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 continue
             data = match.groupdict()
             data.setdefault("site", "radius")
+            compact_sites = {
+                "radius_left": "radiusleft",
+                "radiusright": "radiusright",
+                "radius_right": "radiusright",
+                "tibialeft": "tibialeft",
+                "tibia_left": "tibialeft",
+                "tibiaright": "tibiaright",
+                "tibia_right": "tibiaright",
+                "kneeleft": "kneeleft",
+                "knee_left": "kneeleft",
+                "kneeright": "kneeright",
+                "knee_right": "kneeright",
+            }
+            data["site"] = compact_sites.get(str(data["site"]).lower(), str(data["site"]).lower())
             data["threshold"] = float(str(data["threshold"]).replace("p", "."))
             data["cluster"] = int(data["cluster"])
             data["source_path"] = str(Path(source_path).resolve())
@@ -6633,7 +6549,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
         imported_root = self._infer_results_root_from_path(source_path)
         if imported_root is None:
-            raise ValueError(f"Could not infer TimelapsedHRpQCT root from {source_path}")
+            raise ValueError(f"Could not infer Timelapse root from {source_path}")
 
         from timelapsedhrpqct.analysis import build_series_common_masks
         from timelapsedhrpqct.processing.analysis_io import discover_analysis_sessions
@@ -8959,7 +8875,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception as exc:
                 self._show(f"[scene] could not load remodelling output {path.name}: {exc}")
 
-        loaded_result_rows = self._load_scene_results_table(plan, prefer_saved=True)
+        loaded_result_rows = self._load_scene_results_table(plan, show=True, prefer_saved=True)
         self.sceneStatusLabel.text = (
             f"Loaded {loaded_masks} mask(s), {loaded_transforms} transform(s), "
             f"applied {applied_transforms} to loaded scene node(s), "

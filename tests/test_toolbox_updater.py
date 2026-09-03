@@ -150,6 +150,7 @@ def test_public_tool_manifest_locks_human_workflow_order() -> None:
         "Setup/BoneImagingToolboxSetup",
         "IOTools/ScancoIO",
         "IOTools/DatasetNamingHelper",
+        "IOTools/BatchProcessor",
         "HRpQCTTools/MotionScoreHRpQCT",
         "HRpQCTTools/SegmentationHRpQCT",
         "HRpQCTTools/DeriveLabelsHRpQCT",

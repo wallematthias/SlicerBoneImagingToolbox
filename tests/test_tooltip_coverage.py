@@ -15,8 +15,6 @@ def test_segmentation_toolbox_has_tooltips_for_generate_and_derive_tabs():
         "Input volume used to generate masks and bone segmentation.",
         "Laplace-Hamming threshold in native Scanco attenuation units.",
         "Run contour and segmentation generation with the selected methods and expert settings.",
-        "Batch mask output format.",
-        "Current scene settings that will be applied to queued batch rows.",
     ]:
         assert snippet in source
 
@@ -53,7 +51,6 @@ def test_timelapsed_has_control_level_tooltips_for_profiles_analysis_and_loading
     for snippet in [
         "Apply the selected profile to visible settings",
         "Adjust absolute density-change threshold",
-        "Load existing pairwise cohort analysis rows from disk.",
         "Load the selected processed output into the current Slicer scene.",
         "Apply the current remodelling analysis options to the loaded comparison.",
     ]:

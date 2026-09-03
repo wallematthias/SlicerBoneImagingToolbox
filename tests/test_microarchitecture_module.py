@@ -157,6 +157,7 @@ def test_microarchitecture_loads_maps_for_cortical_thickness_and_masked_bmd() ->
     assert "for map_role, array in core_result.maps.items()" in source
     assert "f\"{prefix}_{map_role.replace('.', '')}_map\"" in source
     assert "_array_to_sitk_like(array, trab_seg)" in source
+    assert "Tt.BMD" in source
     assert "Tb.BMD" in source
     assert "Ct.BMD" in source
     assert "Ct.Po.Dm" in source
@@ -208,7 +209,8 @@ def test_microarchitecture_widget_exposes_minimal_clean_inputs_and_outputs() -> 
     assert "Export measurements CSV" in source
     assert "qt.QFileDialog.getSaveFileName" in source
     assert "Run microarchitecture" in source
-    assert "Install / update microarchitecture core" in source
+    assert "Install / update microarchitecture core" not in widget_setup
+    assert "updateToolboxButton" not in widget_setup
 
 
 def test_microarchitecture_run_always_loads_maps_and_shows_table() -> None:
@@ -236,32 +238,78 @@ def test_microarchitecture_exports_last_measurements_from_button() -> None:
     assert "self.exportCsvButton.clicked.connect(self._export_measurements_csv)" in source
     assert "def _export_measurements_csv(self):" in source
     assert "write_measurement_csv(path, self._lastMetrics, self._lastMaps)" in source
-    assert "self._write_filtered_measurement_csv(path)" in source
     assert 'path = f"{path}.csv"' in source
     assert "self._lastMetrics" in source
     assert "self._lastMaps" in source
 
 
-def test_microarchitecture_measurement_table_has_excel_style_filter() -> None:
+def test_microarchitecture_measurement_table_has_no_filtering_ui() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
 
-    assert "self.measurementFilterEdit = qt.QLineEdit()" in widget_setup
-    assert 'self.measurementFilterEdit.placeholderText = "Filter rows, e.g. Tb.BMD or cortical"' in widget_setup
-    assert "self.measurementFilterEdit.textChanged.connect(self._apply_measurement_filter)" in widget_setup
-    assert "self.clearMeasurementFilterButton = qt.QPushButton(\"Clear\")" in widget_setup
-    assert "self.clearMeasurementFilterButton.clicked.connect(self.measurementFilterEdit.clear)" in widget_setup
-    assert 'form.addRow("Filter results", filter_widget)' in widget_setup
+    assert "measurementFilterEdit" not in widget_setup
+    assert "clearMeasurementFilterButton" not in widget_setup
+    assert "Filter results" not in widget_setup
     assert "self._lastMeasurementRows = []" in widget_setup
     assert "self._lastMeasurementColumns = []" in widget_setup
-    assert "self._lastFilteredTableNode = None" in widget_setup
-    assert "def _filtered_measurement_rows(self):" in source
-    assert "def _apply_measurement_filter(self" in source
+    assert "_lastFilteredTableNode" not in widget_setup
+    assert "def _filtered_measurement_rows(self):" not in source
+    assert "def _apply_measurement_filter(self" not in source
+
+
+def test_microarchitecture_loads_maps_with_simple_scalar_display() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "def _style_microarchitecture_map(self, volume_node, map_role):" in source
+    assert '"vtkMRMLColorTableNodeGrey"' in source
+    assert '"vtkMRMLColorTableNodeFileRainbow.txt"' not in source
+    assert "def _set_microarchitecture_map_window(volume_node, display_node):" not in source
+    assert "np.percentile(values, [1.0, 99.0])" not in source
+    assert '"AutoWindowLevelOn", "AutoThresholdOff"' in source
+    assert "SetInterpolate(False)" not in source
+    assert "AutoThresholdOn" not in source
+    assert "self._style_microarchitecture_map(volume_node, map_role)" in source
+    assert "self._style_microarchitecture_map(node, self._map_role_from_path(map_path))" in source
+    assert "self._put_node_in_subject_hierarchy_folder(" in source
+    assert "slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)" in source
+    assert "slicer.app.processEvents()" in source
+    assert "sh_node.CreateItem(folder_item, node)" not in source
+    assert "self._microarchitecture_map_folder_name(map_path, group)" in source
     assert "def _measurement_table_from_rows(self, rows, name):" in source
+    assert "def _measurement_table_from_csv(self, path, name=None):" in source
     assert "def _cache_measurement_rows_from_table(self, table_node):" in source
-    assert "def _write_filtered_measurement_csv(self, path):" in source
-    assert "self._cache_measurement_rows_from_table(loaded_table)" in source
-    assert "self._apply_measurement_filter()" in source
+
+
+def test_microarchitecture_loads_measurement_csv_without_duplicate_table_node() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    load_method = source[source.index("    def _load_folder_batch_outputs(self, row_index):") :]
+    load_method = load_method.split("\n    def _labelmap_selector", 1)[0]
+
+    assert "loaded_table = self._measurement_table_from_csv(long_csv, Path(long_csv).stem)" in load_method
+    assert "slicer.util.loadTable(long_csv)" not in load_method
+    assert "self._show_measurement_table(loaded_table)" in load_method
+
+
+def test_batch_processor_styles_microarchitecture_maps_and_deduplicates_outputs() -> None:
+    batch_source = (ROOT / "IOTools" / "BatchProcessor" / "BatchProcessor.py").read_text(encoding="utf-8")
+    style_body = batch_source[batch_source.index("    def _style_microarchitecture_volume") :]
+    style_body = style_body.split("\n    @staticmethod\n    def _microarchitecture_map_folder_name", 1)[0]
+
+    assert "def _deduplicated_paths(self, paths):" in batch_source
+    assert "output_paths = self._deduplicated_paths(output_paths)" in batch_source
+    assert "def _style_microarchitecture_volume(self, node, path):" in batch_source
+    assert "def _microarchitecture_map_folder_name(path, row):" in batch_source
+    assert "def _put_node_in_subject_hierarchy_folder(node, folder_name):" in batch_source
+    assert "slicer.app.processEvents()" in batch_source
+    assert "sh_node.CreateItem(folder_item, node)" not in batch_source
+    assert '"vtkMRMLColorTableNodeFileRainbow.txt"' not in style_body
+    assert '"vtkMRMLColorTableNodeGrey"' in style_body
+    assert "def _set_microarchitecture_map_window(node, display_node):" not in style_body
+    assert '"AutoWindowLevelOn", "AutoThresholdOff"' in style_body
+    assert "SetInterpolate(False)" not in style_body
+    assert "AutoThresholdOn" not in style_body
+    assert "self._style_microarchitecture_volume(node, path)" in batch_source
+    assert "self._put_node_in_subject_hierarchy_folder(node, folder_name)" in batch_source
 
 
 def test_microarchitecture_module_records_measurement_provenance_attributes() -> None:
@@ -287,13 +335,14 @@ def test_registered_series_mode_uses_timelapsed_discovery_and_slicer_timelapsed_
     assert "discover_registered_series(" in source
     assert "canonicalize_sessions=False" in source
     assert "registered_microarchitecture_root(" in source
-    assert 'return self._derivative_family_root(root, "Microarchitecture") / REGISTERED_MICROARCHITECTURE_DIR_NAME' in source
+    assert 'return self._derivative_family_root(root, "Microarchitecture")' in source
     assert '/ "derivatives" / family' in source
     assert 'if root.name == "derivatives":' in source
     assert 'if root.name == family:' in source
     assert "registered_session_output_dir(" in source
-    assert '"native_space"' in source
-    assert '"microarchitecture"' in source
+    assert 'f"ses-{row[\'session_id\']}"' in source
+    assert '/ "xct"' in source
+    assert '/ "measurements"' in source
     assert "sequential_registration_pairs(" in source
     assert "write_registered_series_manifest(" in source
     assert "if not written:" in source
@@ -311,7 +360,7 @@ def test_registered_microarchitecture_reuses_shared_timelapsed_registration_deri
     assert 'source = "reused_registration"' in source
 
 
-def test_registered_series_is_exposed_as_batch_register_option() -> None:
+def test_registered_series_batch_controls_are_hidden_from_individual_module() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     setup_start = source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget"))
     setup_end = source.index("    def _run_folder_batch(self):", setup_start)
@@ -325,17 +374,14 @@ def test_registered_series_is_exposed_as_batch_register_option() -> None:
 
     assert "self.modeTabs = qt.QTabWidget()" in widget_setup
     assert 'self.modeTabs.addTab(single_tab, "Scene")' in widget_setup
-    assert 'self.modeTabs.addTab(batch_tab, "Batch")' in widget_setup
+    assert 'self.modeTabs.addTab(batch_tab, "Batch")' not in widget_setup
     assert "Registered Series" not in widget_setup
     assert "series_tab" not in widget_setup
-    assert "self.folderRegisteredCheck" in widget_setup
-    assert 'workflow_form.addRow("Register", self.folderRegisteredCheck)' in widget_setup
-    assert "self.folderRegisteredWorkflowCombo" in widget_setup
-    assert '"Measure microarchitecture", "measure"' in widget_setup
-    assert '"Prepare common region only", "common_region_only"' in widget_setup
-    assert "self.folderThicknessMethodCombo" in widget_setup
-    assert "self.folderThicknessBackendCombo" in widget_setup
-    assert "self.folderBatchLogText" in widget_setup
+    assert "self.folderRegisteredCheck" not in widget_setup
+    assert "self.folderRegisteredWorkflowCombo" not in widget_setup
+    assert "self.folderThicknessMethodCombo" not in widget_setup
+    assert "self.folderThicknessBackendCombo" not in widget_setup
+    assert "self.folderBatchLogText" not in widget_setup
     assert "self.discoverSeriesButton" not in widget_setup
     assert "self.runRegisteredSeriesButton" not in widget_setup
     assert "self.prepareRegisteredSeriesButton" not in widget_setup
@@ -347,35 +393,37 @@ def test_registered_series_is_exposed_as_batch_register_option() -> None:
 
 def test_microarchitecture_batch_ui_uses_discovery_table_and_release_labels() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
-    widget_setup = source[source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget")) :]
+    setup_start = source.index("    def setup(self):", source.index("class BoneMicroarchitectureWidget"))
+    setup_end = source.index("    def _run_folder_batch(self):", setup_start)
+    widget_setup = source[setup_start:setup_end]
 
     assert 'self.modeTabs.addTab(single_tab, "Scene")' in widget_setup
     assert "Folder Batch" not in widget_setup
-    assert 'qt.QGroupBox("Discovery")' in widget_setup
-    assert 'qt.QGroupBox("Workflow")' in widget_setup
-    assert "self.folderDiscoverButton" in widget_setup
-    assert "self.folderBatchTable" in widget_setup
-    assert "self.folderBrowseDatasetButton" in widget_setup
-    assert "self._configure_folder_batch_table_for_mode()" in widget_setup
+    assert 'qt.QGroupBox("Discovery")' not in widget_setup
+    assert 'qt.QGroupBox("Workflow")' not in widget_setup
+    assert "self.folderDiscoverButton" not in widget_setup
+    assert "self.folderBatchTable" not in widget_setup
+    assert "self.folderBrowseDatasetButton" not in widget_setup
+    assert "self._configure_folder_batch_table_for_mode()" not in widget_setup
     assert 'headers = ["Action", "Subject", "Site", "Sessions", "Status"]' in source
     assert 'headers = ["Action", "Image", "Subject", "Site", "Session", "Status"]' in source
-    assert "self.folderRegisteredCheck" in widget_setup
-    assert 'workflow_form.addRow("Register", self.folderRegisteredCheck)' in widget_setup
-    assert 'workflow_form.addRow("Registered workflow", self.folderRegisteredWorkflowCombo)' in widget_setup
+    assert "self.folderRegisteredCheck" not in widget_setup
+    assert 'workflow_form.addRow("Register", self.folderRegisteredCheck)' not in widget_setup
+    assert 'workflow_form.addRow("Registered workflow", self.folderRegisteredWorkflowCombo)' not in widget_setup
     assert "self.folderRegisteredWorkflowCombo.enabled = registered" in source
-    assert "self.folderRegisteredCheck.toggled.connect(self._update_folder_registered_options)" in widget_setup
+    assert "self.folderRegisteredCheck.toggled.connect(self._update_folder_registered_options)" not in widget_setup
     assert "self.folderUseCommonRegionCheck" not in widget_setup
     assert "Use common region" not in widget_setup
-    assert "self.folderSkipExistingCheck" in widget_setup
-    assert 'workflow_form.addRow("Skip existing", self.folderSkipExistingCheck)' in widget_setup
+    assert "self.folderSkipExistingCheck" not in widget_setup
+    assert 'workflow_form.addRow("Skip existing", self.folderSkipExistingCheck)' not in widget_setup
     assert "force=not bool(self.folderSkipExistingCheck.checked)" in source
     assert "_configure_folder_batch_table_for_mode" in source
-    assert 'self.folderRunButton = qt.QPushButton("Run all")' in widget_setup
+    assert 'self.folderRunButton = qt.QPushButton("Run all")' not in widget_setup
     assert "_queue_folder_batch_row" in source
     assert "_start_next_folder_batch_job" in source
     assert "_load_folder_batch_outputs" in source
-    assert "slicer.util.loadTable(long_csv)" in source
-    assert 'loaded_table.SetName(Path(long_csv).stem)' in source
+    assert "slicer.util.loadTable(long_csv)" not in source
+    assert "loaded_table = self._measurement_table_from_csv(long_csv, Path(long_csv).stem)" in source
     assert 'self._table_count(self.folderBatchTable, "rowCount")' in source
     assert 'self._table_count(self.folderBatchTable, "columnCount")' in source
     assert "_folderBatchQueue" in source
@@ -523,7 +571,7 @@ def test_registered_series_preparation_builds_common_regions_before_measurement(
     assert "_register_to_baseline(" in source
     assert "_resample_registered_mask(" in source
     assert "sitk.WriteTransform" in source
-    assert "common_space" in source
+    assert '/ "xct" / "masks"' in source
     assert "common_masks" not in source
     assert 'workflow="CommonRegion"' in source
     assert '_shared_common_region_root(' in source
@@ -535,7 +583,10 @@ def test_registered_series_preparation_builds_common_regions_before_measurement(
     assert '"registration/composed"' not in manifest_logic
     assert '"common_space/common_masks"' not in manifest_logic
     assert 'f"native_space/ses-{row[\'session_id\']}/masks"' not in manifest_logic
-    assert 'f"native_space/ses-{row[\'session_id\']}/microarchitecture/maps"' in manifest_logic
+    assert "registered_session_output_dir(root, row)" in manifest_logic
+    assert '/ f"ses-{row[\'session_id\']}"' in source
+    assert '/ "xct"' in source
+    assert '/ "measurements"' in source
     assert 'write_manifest(' in prepare_logic
     assert '"producer": "registered_microarchitecture"' in prepare_logic
     assert "native_common" in source
@@ -624,18 +675,17 @@ def test_microarchitecture_folder_result_path_accepts_session_aliases(monkeypatc
         / "derivatives"
         / "Microarchitecture"
         / "sub-STRAMBO_0001"
-        / "site-radius_left"
-        / "native_space"
         / "ses-Y00"
+        / "xct"
         / "measurements"
-        / "sub-STRAMBO_0001_ses-Y00_site-radius_left_measurements.csv"
+        / "sub-STRAMBO_0001_ses-Y00_voi-radiusleft_measurements.csv"
     )
     output.parent.mkdir(parents=True)
     output.write_text("Parameter,Mean\nTb.BV/TV,0.1\n", encoding="utf-8")
 
     resolved = widget._folder_result_path_for_group(
         tmp_path,
-        {"subject": "STRAMBO_0001", "site": "radius_left", "session": "00", "mode": "independent"},
+        {"subject": "STRAMBO_0001", "site": "radiusleft", "session": "00", "mode": "independent"},
     )
 
     assert resolved == output

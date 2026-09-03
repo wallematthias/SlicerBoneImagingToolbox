@@ -8,9 +8,9 @@ PROFILE_DISPLAY_ORDER = [
     "eth-uofc",
     "multistack",
     "ped-fx",
+    "shriners",
     "standard",
-    "single-stack",
-    "low-memory",
+    "ucsf",
     "xct1-standard",
 ]
 

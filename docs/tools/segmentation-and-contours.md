@@ -46,7 +46,7 @@ The `Derive Labels` tab provides common mask utilities:
 
 - generate a missing compartment mask from any two of `full`, `trab`, and `cort`,
 - create HOM/material labelmaps from bone segmentation plus any two compartment masks,
-- use default material labels `126` for trabecular bone and `127` for cortical bone,
+- use default material labels `100` for trabecular bone and `127` for cortical bone,
 - run boolean mask operations: union, intersection, A-minus-B, and XOR,
 - relabel nonzero voxels in a mask,
 - validate full/trab/cort consistency and report voxel counts.

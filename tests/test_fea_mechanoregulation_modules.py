@@ -25,6 +25,18 @@ def test_parosol_module_has_public_metadata_and_root_resolution() -> None:
     assert "SLICER_PAROSOL_SOURCE" in bootstrap_body
 
 
+def test_parosol_workflow_profiles_use_shared_profile_registry() -> None:
+    source = PAROSOL_MODULE.read_text(encoding="utf-8")
+
+    assert "tool_profile_dir(tool)" in source
+    assert 'USER_WORKFLOW_ROOT = _shared_profile_tool_root("parosol-fea")' in source
+    assert "def _available_user_workflows" in source
+    assert 'list_profiles("parosol-fea")' in source
+    assert "register_profile_asset(" in source
+    assert '"parosol-workflow"' in source
+    assert "SlicerParOSolTemplates" not in source
+
+
 def test_mechanoregulation_module_has_public_metadata_and_root_resolution() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
 
@@ -93,17 +105,27 @@ def test_parosol_scene_ui_requires_explicit_derivative_dataset_context() -> None
     assert "def _fea_derivative_context(self, output_dir):" in source
 
 
-def test_parosol_module_contains_artifact_discovery_batch_tab() -> None:
+def test_parosol_module_keeps_artifact_batch_helpers_without_exposing_tab() -> None:
     source = PAROSOL_MODULE.read_text(encoding="utf-8")
+    setup_start = source.index("    def setup(self):", source.index("class ParOSolFEAWidget"))
+    setup_end = source.index("\n    def ", setup_start + len("    def setup(self):"))
+    setup_source = source[setup_start:setup_end]
 
     assert "discover_fea_batch_cases" in source
     assert "build_parosol_case_commands" in source
-    assert 'self.batchPage, batch_page_layout = self._workflow_tab_page("Batch")' in source
-    assert "self.batchDiscoverButton" in source
-    assert "self.batchRunButton" in source
+    assert "batch_profile_support_status" in source
+    assert 'self.batchPage, batch_page_layout = self._workflow_tab_page("Batch")' not in source
+    assert "self.batchDiscoverButton = qt.QPushButton" not in setup_source
+    assert "self.batchRunButton = qt.QPushButton" not in setup_source
+    assert "self.batchStopButton = qt.QPushButton" not in setup_source
+    assert "self.batchTable = qt.QTableWidget" not in setup_source
+    assert "self._feaBatchQueue = []" not in setup_source
+    assert "self._feaBatchCurrent = None" not in setup_source
+    assert "def _queue_fea_batch_row(self, row):" in source
+    assert "def _start_next_fea_batch_job(self):" in source
+    assert "def _load_fea_batch_row_outputs(self, row):" in source
     assert "def discover_fea_batch(self):" in source
     assert "def run_fea_batch(self):" in source
-    assert "def _run_next_fea_batch_case(self):" in source
 
 
 def test_mechanoregulation_module_contains_derivative_discovery_helpers() -> None:
@@ -117,27 +139,29 @@ def test_mechanoregulation_module_contains_derivative_discovery_helpers() -> Non
     assert "discover_mechanoregulation_manifests(root)" in discover_body
 
 
-def test_mechanoregulation_ui_uses_batch_and_review_tabs() -> None:
+def test_mechanoregulation_ui_uses_scene_and_review_tabs_only() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
-    setup_source = source[source.index("    def setup(self):", source.index("class MechanoregulationHRpQCTWidget")) :]
+    setup_start = source.index("    def setup(self):", source.index("class MechanoregulationHRpQCTWidget"))
+    setup_end = source.index("\n    def ", setup_start + len("    def setup(self):"))
+    setup_source = source[setup_start:setup_end]
 
     assert "self.modeTabs = qt.QTabWidget()" in setup_source
     assert 'self.modeTabs.addTab(scene_tab, "Scene")' in setup_source
-    assert 'self.modeTabs.addTab(batch_tab, "Batch")' in setup_source
+    assert 'self.modeTabs.addTab(batch_tab, "Batch")' not in setup_source
     assert 'self.modeTabs.addTab(review_tab, "Review")' in setup_source
-    assert 'box.text = "Batch"' in source
+    assert 'box.text = "Batch"' not in setup_source
     assert 'box.text = "Scene"' in source
     assert 'box.text = "Review"' in source
     assert 'self.runButton = qt.QPushButton("Run")' in source
-    assert 'self.batchDiscoveryGroup = qt.QGroupBox("Discovery")' in source
-    assert 'self.batchWorkflowGroup = qt.QGroupBox("Workflow")' in source
+    assert 'self.batchDiscoveryGroup = qt.QGroupBox("Discovery")' not in setup_source
+    assert 'self.batchWorkflowGroup = qt.QGroupBox("Workflow")' not in setup_source
     assert 'self.sceneDiscoveryGroup = qt.QGroupBox("Discovery")' in source
     assert 'self.sceneWorkflowGroup = qt.QGroupBox("Workflow")' in source
     assert "self.sceneProgressBar = qt.QProgressBar()" in source
     assert "self.sceneCurrentStepLabel = qt.QLabel(\"Current step: idle\")" in source
     scene_body = source.split("    def _build_scene_section", 1)[1].split("\n    def ", 1)[0]
-    assert scene_body.index("self.sceneDiscoveryGroup") < scene_body.index("self.sceneCaseTable")
-    assert scene_body.index("self.sceneCaseTable") < scene_body.index("self.sceneWorkflowGroup")
+    assert scene_body.index("self.sceneDiscoveryGroup") < scene_body.index("self.sceneRemodellingSelector")
+    assert scene_body.index("self.sceneRemodellingSelector") < scene_body.index("self.sceneWorkflowGroup")
     assert scene_body.index("self.sceneWorkflowGroup") < scene_body.index("self.sceneStatusLabel")
     assert scene_body.index("self.sceneStatusLabel") < scene_body.index("self.sceneRunButton")
 
@@ -148,24 +172,25 @@ def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api()
     assert "self.sceneDiscoverButton = qt.QPushButton(\"Discover\")" in source
     assert "self.sceneRunButton = qt.QPushButton(\"Run\")" in source
     assert "self.sceneStopButton = qt.QPushButton(\"Stop\")" in source
-    assert "self.sceneCaseTable = qt.QTableWidget()" in source
+    assert "self.sceneRemodellingSelector = slicer.qMRMLNodeComboBox()" in source
+    assert "self.sceneSedSelector = slicer.qMRMLNodeComboBox()" in source
+    assert "self.sceneAnalysisMaskSelector = slicer.qMRMLNodeComboBox()" in source
     assert "self.sceneProgressBar.visible = True" in source
     assert "self.sceneProgressBar.setRange" in source
     assert "self.sceneCurrentStepLabel.text = self._status_text(message)" in source
     assert "if text.startswith(\"[scene]\")" in source
-    assert "self.sceneCaseTable.setHorizontalHeaderLabels" in source
-    assert "\"Remodelling\"" in source
-    assert "\"Baseline SED\"" in source
-    assert "\"Baseline Seg\"" in source
-    assert "\"Trab\"" in source
-    assert "\"Cort\"" in source
-    assert "\"Full\"" in source
+    assert "\"Remodelling map\"" in source
+    assert "\"ParOSol / FEA SED\"" in source
+    scene_body = source.split("    def _build_scene_section", 1)[1].split("\n    def ", 1)[0]
+    assert "\"Baseline Seg\"" not in scene_body
+    assert "\"Trab\"" not in scene_body
+    assert "\"Cort\"" not in scene_body
+    assert "\"Full\"" not in scene_body
     assert "def discover_scene_cases(self):" in source
     assert "def _scene_volume_nodes" in source
     assert "def _scene_remodelling_candidates" in source
     assert "def _scene_sed_candidates" in source
-    assert "def _scene_mask_candidates" in source
-    assert "Generate" in source
+    assert "def _scene_parosol_output_candidates" in source
     assert "def _stage_scene_case(self, row):" in source
     assert "slicer.util.saveNode" in source
     assert "TimelapseCase(" in source
@@ -173,3 +198,21 @@ def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api()
     assert "baseline_sed_path" in source
     assert "outputs[\"sed\"].write_bytes" in source
     assert "self._load_scene_mechanoregulation_outputs" in source
+
+
+def test_mechanoregulation_scene_mode_consumes_loaded_parosol_outputs_without_fea_generation() -> None:
+    source = MECHREG_MODULE.read_text(encoding="utf-8")
+    scene_body = source.split("    def _build_scene_section", 1)[1].split("\n    def ", 1)[0]
+    discover_body = source.split("    def discover_scene_cases(self):", 1)[1].split("\n    def ", 1)[0]
+    stage_body = source.split("    def _stage_scene_case(self, row):", 1)[1].split("\n    def ", 1)[0]
+
+    assert 'scene_inputs.addRow("Remodelling map", self.sceneRemodellingSelector)' in scene_body
+    assert 'scene_inputs.addRow("ParOSol / FEA SED", self.sceneSedSelector)' in scene_body
+    assert 'scene_inputs.addRow("Analysis mask", self.sceneAnalysisMaskSelector)' in scene_body
+    assert "self._scene_parosol_output_candidates()" in discover_body
+    assert "baseline_sed_path = self._save_scene_node(self._scene_node_from_combo(row, 2)" in stage_body
+    assert "analysis_mask_path = self._save_scene_node(" in stage_body
+    assert '"generate"' not in stage_body
+    assert "Generate baseline SED requires" not in source
+    assert "self.sceneRemodellingSelector.setCurrentNode(remodelling_nodes[0])" in source
+    assert "self.sceneSedSelector.setCurrentNode(sed_nodes[0])" in source

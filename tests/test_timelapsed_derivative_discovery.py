@@ -52,7 +52,7 @@ def test_timelapsed_derivative_prerequisites_report_registration_and_common_regi
     assert '"CommonRegion"' in method
     assert "manifests = discover_manifests(dataset_root)" in method
     assert "available_records.extend(manifest.records)" in method
-    assert 'resolve_workflow_plan(\n            "Timelapsed"' in method
+    assert 'resolve_workflow_plan(\n            "Timelapse"' in method
     assert '"registration_available": "Registration" in available' in method
     assert '"common_region_available": "CommonRegion" in available' in method
     assert '"planned_steps": list(plan.steps)' in method

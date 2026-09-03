@@ -137,6 +137,22 @@ def test_motionscore_scene_subprocess_can_import_toolbox_runner():
     assert "str(_TOOLBOX_ROOT)" in source
 
 
+def test_motionscore_subprocess_prefers_local_core_checkout_when_present():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "MotionScoreHRpQCT"
+        / "MotionScoreHRpQCT.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'MOTIONSCORE_LOCAL_SRC = _active_repositories_root(_TOOLBOX_ROOT) / "MotionScoreCNN"' in source
+    assert "MOTIONSCORE_LOCAL_SRC.exists()" in source
+    assert "pythonpath_parts.append(str(MOTIONSCORE_LOCAL_SRC))" in source
+    assert "sys.path.insert(0" in source
+    assert 'full_args = ["-c", command] + list(args)' in source
+    assert f"from {{module_name}} import main" in source
+
+
 def test_motionscore_scene_review_loader_accepts_npz_scene_inputs():
     source = (
         Path(__file__).resolve().parents[1]

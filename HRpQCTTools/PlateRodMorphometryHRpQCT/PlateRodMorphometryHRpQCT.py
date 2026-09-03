@@ -20,6 +20,7 @@ TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 PLATE_ROD_LOCAL_REPO = TOOLBOX_ROOT.parent / "bone-plate-rod-thinning"
+BONE_DERIVATIVES_LOCAL_SRC = TOOLBOX_ROOT.parent / "bone-imaging-derivatives" / "src"
 
 
 def _use_local_core_repo():
@@ -203,12 +204,58 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
                              on_output=None, on_finished=None):
         proc = qt.QProcess()
         proc.setProcessChannelMode(qt.QProcess.MergedChannels)
-        proc.readyRead.connect(lambda: on_output and on_output(bytes(proc.readAll()).decode("utf-8", errors="replace")))
-        proc.finished.connect(lambda code, status: on_finished and on_finished(code, status))
+        if hasattr(qt, "QProcessEnvironment") and hasattr(proc, "setProcessEnvironment"):
+            env = qt.QProcessEnvironment.systemEnvironment()
+            pythonpath = self._folder_batch_pythonpath(env.value("PYTHONPATH") if env.contains("PYTHONPATH") else "")
+            if pythonpath:
+                env.insert("PYTHONPATH", pythonpath)
+            proc.setProcessEnvironment(env)
+        proc.readyRead.connect(lambda: on_output and on_output(self._decode_qbytearray(proc.readAll())))
+
+        def _finished(*signal_args):
+            if len(signal_args) >= 2:
+                exit_code = int(signal_args[0])
+                exit_status = signal_args[1]
+            elif len(signal_args) == 1:
+                exit_code = int(signal_args[0])
+                exit_status = 0
+            else:
+                exit_code = int(proc.exitCode())
+                exit_status = proc.exitStatus()
+            if on_finished:
+                on_finished(exit_code, exit_status)
+
+        proc.finished.connect(_finished)
         proc.start(slicer_python_executable(slicer.app.applicationFilePath()), self.folder_batch_command(
             dataset_root, subject_id=subject_id, site=site, use_common_region=use_common_region, force=force,
         ))
         return proc
+
+    @staticmethod
+    def _folder_batch_pythonpath(existing=""):
+        paths = []
+        if PLATE_ROD_LOCAL_REPO.exists():
+            paths.append(str(PLATE_ROD_LOCAL_REPO))
+        if BONE_DERIVATIVES_LOCAL_SRC.exists():
+            paths.append(str(BONE_DERIVATIVES_LOCAL_SRC))
+        if existing:
+            paths.append(str(existing))
+        return os.pathsep.join(paths)
+
+    @staticmethod
+    def _decode_qbytearray(raw):
+        if isinstance(raw, (bytes, bytearray)):
+            data = bytes(raw)
+        else:
+            try:
+                data = raw.data()
+                if isinstance(data, str):
+                    data = data.encode("utf-8", errors="replace")
+                else:
+                    data = bytes(data)
+            except Exception:
+                data = str(raw).encode("utf-8", errors="replace")
+        return data.decode("utf-8", errors="replace")
 
     def core_runtime_status(self):
         try:
@@ -737,11 +784,8 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.modeTabs = qt.QTabWidget()
         scene_tab = qt.QWidget()
-        batch_tab = qt.QWidget()
         scene_layout = qt.QVBoxLayout(scene_tab)
-        batch_layout = qt.QVBoxLayout(batch_tab)
         self.modeTabs.addTab(scene_tab, "Scene")
-        self.modeTabs.addTab(batch_tab, "Batch")
         self.layout.addWidget(self.modeTabs)
 
         parameters_collapsible = ctk.ctkCollapsibleButton()
@@ -833,69 +877,28 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.statusLabel.wordWrap = True
         form_layout.addRow("Status", self.statusLabel)
 
-        self.installCoreButton = qt.QPushButton("Install / update compiled plate-rod core")
-        self.installCoreButton.toolTip = "Install the published plate-rod-thinning wheel and verify the compiled backend."
-        self.installCoreButton.clicked.connect(self._install_or_update_core)
-        form_layout.addRow(self.installCoreButton)
         self._refresh_core_status()
-
-        discovery_box = qt.QGroupBox("Discovery")
-        batch_form = qt.QFormLayout(discovery_box)
-        batch_layout.addWidget(discovery_box)
-        self.folderDatasetRootEdit = qt.QLineEdit()
-        self.folderSubjectEdit = qt.QLineEdit()
-        self.folderSiteEdit = qt.QLineEdit()
-        self.folderDiscoverButton = qt.QPushButton("Discover")
-        self.folderDiscoverButton.clicked.connect(self._discover_folder_batch_groups)
-        batch_form.addRow("Dataset root", self.folderDatasetRootEdit)
-        batch_form.addRow("Subject filter", self.folderSubjectEdit)
-        batch_form.addRow("Site filter", self.folderSiteEdit)
-        batch_form.addRow("", self.folderDiscoverButton)
-
-        self.folderBatchTable = qt.QTableWidget()
-        self.folderBatchTable.setColumnCount(3)
-        self.folderBatchTable.setHorizontalHeaderLabels(["Subject", "Site", "Sessions"])
-        self.folderBatchTable.minimumHeight = 160
-        try:
-            self.folderBatchTable.horizontalHeader().setStretchLastSection(True)
-            self.folderBatchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
-        except Exception:
-            pass
-        batch_layout.addWidget(self.folderBatchTable)
-
-        workflow_box = qt.QGroupBox("Workflow")
-        workflow_form = qt.QFormLayout(workflow_box)
-        batch_layout.addWidget(workflow_box)
-        self.folderUseCommonRegionCheck = qt.QCheckBox()
-        self.folderUseCommonRegionCheck.checked = True
-        self.folderForceCheck = qt.QCheckBox()
-        self.folderRunButton = qt.QPushButton("Run Batch")
-        self.folderBatchStatus = qt.QLabel()
-        self.folderBatchStatus.wordWrap = True
-        self.folderRunButton.clicked.connect(self._run_folder_batch)
-        workflow_form.addRow("Use common region", self.folderUseCommonRegionCheck)
-        workflow_form.addRow("Force recompute", self.folderForceCheck)
-        workflow_form.addRow(self.folderRunButton)
-        batch_layout.addWidget(self.folderBatchStatus)
-        batch_layout.addStretch(1)
 
         self.layout.addStretch(1)
 
     def _run_folder_batch(self):
-        self.folderRunButton.enabled = False
-        self.folderBatchStatus.text = "Folder batch is running in the background."
-        self.logic.run_folder_batch_job(
-            self.folderDatasetRootEdit.text,
-            subject_id=self.folderSubjectEdit.text,
-            site=self.folderSiteEdit.text,
-            use_common_region=bool(self.folderUseCommonRegionCheck.checked),
-            force=bool(self.folderForceCheck.checked),
-            on_finished=self._on_folder_batch_finished,
-        )
+        if not self._folderBatchGroups:
+            self._discover_folder_batch_groups()
+        for row_index in range(len(self._folderBatchGroups)):
+            self._queue_folder_batch_row(row_index)
 
     def _on_folder_batch_finished(self, exit_code, _exit_status):
         self.folderRunButton.enabled = True
         self.folderBatchStatus.text = f"Folder batch finished with exit code {int(exit_code)}."
+
+    def _browse_folder_dataset_root(self):
+        path = qt.QFileDialog.getExistingDirectory(
+            slicer.util.mainWindow(),
+            "Select dataset root",
+            self.folderDatasetRootEdit.text,
+        )
+        if path:
+            self.folderDatasetRootEdit.text = str(path)
 
     def _discover_folder_batch_groups(self):
         root_text = str(self.folderDatasetRootEdit.text or "").strip()
@@ -903,42 +906,293 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.folderBatchStatus.text = "Select a dataset root before discovery."
             return
         root = Path(root_text).expanduser()
-        subject_filter = str(self.folderSubjectEdit.text or "").strip()
-        site_filter = str(self.folderSiteEdit.text or "").strip()
         groups = {}
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            name = path.name.lower()
-            if "mask" not in name or not (name.endswith(".nii") or name.endswith(".nii.gz")):
-                continue
-            subject = ""
-            site = ""
-            session = ""
-            for part in path.parts:
-                if part.startswith("sub-"):
-                    subject = part[4:]
-                elif part.startswith("site-"):
-                    site = part[5:]
-                elif part.startswith("ses-"):
-                    session = part[4:]
-            if subject_filter and subject != subject_filter:
-                continue
-            if site_filter and site != site_filter:
-                continue
-            if subject or site:
-                groups.setdefault((subject, site), set()).add(session)
-        self.folderBatchTable.setRowCount(len(groups))
-        for row_index, ((subject, site), sessions) in enumerate(sorted(groups.items())):
-            for column, value in enumerate([subject, site, ", ".join(sorted(s for s in sessions if s))]):
+        try:
+            from bone_imaging_derivatives import discover_artifacts, discover_manifests, find_records
+
+            manifests = list(discover_manifests(root))
+            records = []
+            for role in ("trabecular_mask", "bone_segmentation"):
+                records.extend(find_records(manifests, role=role, space="native"))
+            for record in records:
+                key = (str(record.subject_id), str(record.site), int(record.stack_index or 1))
+                role_key = "seg" if record.role == "bone_segmentation" else "trab"
+                group = groups.setdefault(
+                    key,
+                    {
+                        "subject": str(record.subject_id),
+                        "site": str(record.site),
+                        "stack_index": int(record.stack_index or 1),
+                        "sessions": set(),
+                        "records": [],
+                        "roles": {},
+                        "status": "Ready",
+                    },
+                )
+                session = str(record.session_id or "")
+                group["sessions"].add(session)
+                group["records"].append(record)
+                group["roles"].setdefault(session, set()).add(role_key)
+            for artifact in discover_artifacts(root, include_derivatives=True).records:
+                if artifact.kind != "mask" or artifact.role not in {"segmentation", "trab"}:
+                    continue
+                if not artifact.subject_id or not artifact.site:
+                    continue
+                key = (str(artifact.subject_id), str(artifact.site), int(artifact.stack_index or 1))
+                role_key = "seg" if artifact.role == "segmentation" else "trab"
+                group = groups.setdefault(
+                    key,
+                    {
+                        "subject": str(artifact.subject_id),
+                        "site": str(artifact.site),
+                        "stack_index": int(artifact.stack_index or 1),
+                        "sessions": set(),
+                        "records": [],
+                        "roles": {},
+                        "status": "Discovered",
+                    },
+                )
+                session = str(artifact.session_id or "")
+                group["sessions"].add(session)
+                group["roles"].setdefault(session, set()).add(role_key)
+        except Exception as exc:
+            self._append_folder_batch_log(f"[discover] shared artifact discovery failed: {exc}\n")
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                name = path.name.lower()
+                if "mask" not in name or not (
+                    name.endswith(".aim")
+                    or ".aim;" in name
+                    or name.endswith(".nii")
+                    or name.endswith(".nii.gz")
+                    or name.endswith(".npy")
+                ):
+                    continue
+                if not ("trab" in name or "seg" in name or "bone" in name):
+                    continue
+                subject = ""
+                site = ""
+                session = ""
+                for part in path.parts:
+                    if part.startswith("sub-"):
+                        subject = part[4:]
+                    elif part.startswith("site-"):
+                        site = part[5:]
+                    elif part.startswith("ses-"):
+                        session = part[4:]
+                if subject or site:
+                    group = groups.setdefault(
+                        (subject, site, 1),
+                        {"subject": subject, "site": site, "stack_index": 1, "sessions": set(), "records": [], "roles": {}, "status": "Discovered"},
+                    )
+                    group["sessions"].add(session)
+                    group["roles"].setdefault(session, set()).add("trab" if "trab" in name else "seg")
+        self._folderBatchGroups = sorted(groups.values(), key=lambda item: (item["subject"], item["site"], item["stack_index"]))
+        self.folderBatchTable.setRowCount(len(self._folderBatchGroups))
+        for row_index, group in enumerate(self._folderBatchGroups):
+            result_path = self._folder_result_path_for_group(root, group)
+            if result_path is not None:
+                group["result_path"] = str(result_path)
+                group["status"] = "Done"
+            elif any("seg" in roles and "trab" in roles for roles in group.get("roles", {}).values()):
+                group["status"] = "Ready"
+            elif any("trab" in roles for roles in group.get("roles", {}).values()):
+                group["status"] = "Ready (trab only)"
+            else:
+                group["status"] = "Missing trab ROI"
+            values = [
+                group.get("subject", ""),
+                group.get("site", ""),
+                ", ".join(sorted(s for s in group.get("sessions", set()) if s)),
+                group.get("status", "Discovered"),
+            ]
+            for column, value in enumerate(values, start=1):
                 item = qt.QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
                 self.folderBatchTable.setItem(row_index, column, item)
+            self._set_folder_group_action(row_index, "Load" if group.get("result_path") else "Run")
         try:
             self.folderBatchTable.resizeColumnsToContents()
         except Exception:
             pass
-        self.folderBatchStatus.text = f"Discovered {len(groups)} subject/site group(s)."
+        self.folderBatchStatus.text = f"Discovered {len(self._folderBatchGroups)} subject/site group(s)."
+
+    def _set_folder_group_status(self, row_index, status):
+        if row_index is None:
+            self.folderBatchStatus.text = str(status)
+            return
+        if 0 <= int(row_index) < self._table_count(self.folderBatchTable, "rowCount"):
+            item = qt.QTableWidgetItem(str(status))
+            item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+            status_column = self._table_count(self.folderBatchTable, "columnCount") - 1
+            self.folderBatchTable.setItem(int(row_index), status_column, item)
+
+    @staticmethod
+    def _table_count(table, attribute):
+        value = getattr(table, attribute)
+        return int(value() if callable(value) else value)
+
+    def _set_folder_group_action(self, row_index, action):
+        button = qt.QPushButton(str(action))
+        if str(action) == "Load":
+            button.clicked.connect(lambda _checked=False, index=row_index: self._load_folder_batch_outputs(index))
+        elif str(action) in {"Queued", "Running"}:
+            button.enabled = False
+        else:
+            button.clicked.connect(lambda _checked=False, index=row_index: self._queue_folder_batch_row(index))
+        self.folderBatchTable.setCellWidget(int(row_index), 0, button)
+
+    def _queue_folder_batch_row(self, row_index):
+        if row_index is None:
+            return
+        group = self._folderBatchGroups[int(row_index)]
+        if group.get("result_path") and Path(str(group.get("result_path"))).expanduser().exists():
+            self._set_folder_group_action(row_index, "Load")
+            self._set_folder_group_status(row_index, "Done")
+            return
+        if not any(job.get("row_index") == int(row_index) for job in self._folderBatchQueue):
+            self._folderBatchQueue.append({"row_index": int(row_index), "group": group})
+            self._set_folder_group_status(row_index, "Queued")
+            self._set_folder_group_action(row_index, "Queued")
+        self._start_next_folder_batch_job()
+
+    def _start_next_folder_batch_job(self):
+        if self._folderBatchCurrent is not None or not self._folderBatchQueue:
+            return
+        job = self._folderBatchQueue.pop(0)
+        self._folderBatchCurrent = job
+        row_index = int(job["row_index"])
+        group = job["group"]
+        self._set_folder_group_status(row_index, "Running")
+        self._set_folder_group_action(row_index, "Running")
+        self.folderRunButton.enabled = False
+        self.folderBatchStatus.text = f"Plate/Rod batch running; {len(self._folderBatchQueue)} queued."
+        try:
+            dataset_root = str(self.folderDatasetRootEdit.text or "").strip()
+            self._folderBatchProcess = self.logic.run_folder_batch_job(
+                dataset_root,
+                subject_id=str(group.get("subject", "")),
+                site=str(group.get("site", "")),
+                use_common_region=bool(self.folderUseCommonRegionCheck.checked),
+                force=not bool(self.folderSkipExistingCheck.checked),
+                on_output=self._append_folder_batch_log,
+                on_finished=self._on_folder_batch_job_finished,
+            )
+        except Exception as exc:
+            self._set_folder_group_status(row_index, "Failed")
+            self._set_folder_group_action(row_index, "Run")
+            self._folderBatchCurrent = None
+            self.folderBatchStatus.text = f"Plate/Rod batch row failed to start: {exc}"
+            self._start_next_folder_batch_job()
+
+    def _on_folder_batch_job_finished(self, exit_code, exit_status):
+        del exit_status
+        if self._folderBatchCurrent is None:
+            self._folderBatchProcess = None
+            self.folderRunButton.enabled = True
+            self.folderBatchStatus.text = f"Plate/Rod batch finished with exit code {int(exit_code)}."
+            return
+        row_index = int(self._folderBatchCurrent.get("row_index"))
+        group = self._folderBatchCurrent["group"]
+        self._set_folder_group_status(row_index, "Done" if int(exit_code) == 0 else "Failed")
+        if int(exit_code) == 0:
+            result_path = self._folder_result_path_for_group(self.folderDatasetRootEdit.text, group)
+            if result_path is not None:
+                self._folderBatchGroups[row_index]["result_path"] = str(result_path)
+            self._set_folder_group_action(row_index, "Load")
+        else:
+            self._set_folder_group_action(row_index, "Run")
+        self._folderBatchCurrent = None
+        self._folderBatchProcess = None
+        if self._folderBatchQueue:
+            self.folderBatchStatus.text = f"Plate/Rod batch running; {len(self._folderBatchQueue)} queued."
+            self._start_next_folder_batch_job()
+        else:
+            self.folderRunButton.enabled = True
+            self.folderBatchStatus.text = "Plate/Rod batch queue finished."
+
+    def _append_folder_batch_log(self, text):
+        if not text:
+            return
+        try:
+            self.folderBatchLogText.insertPlainText(str(text))
+            self.folderBatchLogText.moveCursor(qt.QTextCursor.End)
+        except Exception:
+            pass
+
+    def _folder_result_path_for_group(self, root, group):
+        root = Path(str(root)).expanduser()
+        manifest_path = root / "derivatives" / "PlateRodMorphometry" / "manifest.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            from bone_imaging_derivatives import read_manifest
+
+            manifest = read_manifest(manifest_path)
+        except Exception:
+            return None
+        subject = str(group.get("subject", ""))
+        site = str(group.get("site", ""))
+        for record in manifest.records:
+            if (
+                record.derivative == "PlateRodMorphometry"
+                and record.role == "plate_rod_measurements_table"
+                and str(record.subject_id) == subject
+                and str(record.site) == site
+                and Path(record.path).exists()
+            ):
+                return Path(record.path)
+        return None
+
+    def _load_folder_batch_outputs(self, row_index):
+        if row_index is None or not (0 <= int(row_index) < len(self._folderBatchGroups)):
+            return
+        group = self._folderBatchGroups[int(row_index)]
+        root = Path(str(self.folderDatasetRootEdit.text or "")).expanduser()
+        manifest_path = root / "derivatives" / "PlateRodMorphometry" / "manifest.json"
+        if not manifest_path.exists():
+            slicer.util.errorDisplay("No Plate/Rod batch manifest is available for this row.")
+            return
+        try:
+            from bone_imaging_derivatives import read_manifest
+
+            manifest = read_manifest(manifest_path)
+            loaded = 0
+            for record in manifest.records:
+                if str(record.subject_id) != str(group.get("subject", "")) or str(record.site) != str(group.get("site", "")):
+                    continue
+                path = Path(record.path)
+                if not path.exists():
+                    continue
+                if record.role == "plate_rod_measurements_table":
+                    table_path = path
+                    table_node = slicer.util.loadTable(str(table_path))
+                    if table_node:
+                        self._lastTable = table_node
+                        loaded += 1
+                elif record.role in {"plate_rod_label_map", "skeleton_map"}:
+                    if path.suffix.lower() == ".npy":
+                        node = self._load_plate_rod_npy_map(path, record.role)
+                    else:
+                        node = slicer.util.loadVolume(str(path), {"name": path.stem})
+                    if node and record.role == "plate_rod_label_map":
+                        set_labelmap_display_colors(node, "Full-thickness labels")
+                    elif node and record.role == "skeleton_map":
+                        set_labelmap_display_colors(node, "Skeleton topology labels")
+                    loaded += 1
+            self.folderBatchStatus.text = f"Loaded {loaded} Plate/Rod output(s)."
+        except Exception as exc:
+            slicer.util.errorDisplay(f"Could not load Plate/Rod batch outputs: {exc}")
+
+    def _load_plate_rod_npy_map(self, path, role):
+        array = np.load(str(path))
+        node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", Path(path).stem)
+        slicer.util.updateVolumeFromArray(node, np.asarray(array))
+        node.CreateDefaultDisplayNodes()
+        node.SetAttribute("BoneImaging.PlateRod.Engine", "plate_rod_thinning")
+        node.SetAttribute("BoneImaging.PlateRod.MapRole", str(role))
+        return node
 
     def _segmentation_input_row(self, node_selector, segment_selector):
         row = qt.QWidget()
@@ -998,7 +1252,6 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _install_or_update_core(self):
         with slicer.util.tryWithErrorDisplay("Failed to install/update plate-rod core.", waitCursor=True):
             self.runButton.enabled = False
-            self.installCoreButton.enabled = False
             completed = False
             try:
                 self._set_progress(True, "Installing/updating compiled plate-rod core...")
@@ -1009,7 +1262,6 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
                 if not completed:
                     self._set_progress(False, "Plate/rod core install/update stopped.")
                 self.runButton.enabled = True
-                self.installCoreButton.enabled = True
 
     def _set_progress(self, running, message):
         self.progressBar.visible = bool(running)
@@ -1031,7 +1283,6 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
             if self.logic._proc is not None:
                 raise RuntimeError("Plate/rod morphometry is already running.")
             self.runButton.enabled = False
-            self.installCoreButton.enabled = False
             try:
                 self._set_progress(True, "Reading selected masks...")
                 self._activePlateRodJob = self.logic.prepare_plate_rod_job(
@@ -1058,7 +1309,6 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self.logic.cleanup_plate_rod_job(self._activePlateRodJob)
                 self._activePlateRodJob = None
                 self.runButton.enabled = True
-                self.installCoreButton.enabled = True
                 self._set_progress(False, "Plate/rod morphometry stopped.")
                 raise
 
@@ -1077,7 +1327,6 @@ class PlateRodMorphometryHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.logic.cleanup_plate_rod_job(self._activePlateRodJob)
             self._activePlateRodJob = None
             self.runButton.enabled = True
-            self.installCoreButton.enabled = True
 
 
 class PlateRodMorphometryHRpQCTTest(ScriptedLoadableModuleTest):

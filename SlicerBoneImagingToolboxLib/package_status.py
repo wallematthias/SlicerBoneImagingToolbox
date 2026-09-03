@@ -329,6 +329,7 @@ def resolve_local_editable_repo(toolbox_root: Path, package_name: str) -> Path |
 def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
     if spec.package_name in {
         "bone-imaging-derivatives",
+        "bone-contouring",
         "timelapsed-hrpqct",
         "bone-microarchitecture",
         "plate-rod-thinning",

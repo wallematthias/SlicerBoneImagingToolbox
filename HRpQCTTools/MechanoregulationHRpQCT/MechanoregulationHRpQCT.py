@@ -248,6 +248,7 @@ class MechanoregulationHRpQCT(ScriptedLoadableModule):
         super().__init__(parent)
         parent.title = "Mechanoregulation"
         parent.categories = ["Bone Imaging.Microstructural Analysis"]
+        parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "MechanoregulationHRpQCT.png"))
         parent.index = 60
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
@@ -446,17 +447,13 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self._build_runtime_section()
         self.modeTabs = qt.QTabWidget()
-        batch_tab = qt.QWidget()
         scene_tab = qt.QWidget()
         review_tab = qt.QWidget()
-        batch_layout = qt.QVBoxLayout(batch_tab)
         scene_layout = qt.QVBoxLayout(scene_tab)
         review_layout = qt.QVBoxLayout(review_tab)
-        self.modeTabs.addTab(batch_tab, "Batch")
         self.modeTabs.addTab(scene_tab, "Scene")
         self.modeTabs.addTab(review_tab, "Review")
         self.layout.addWidget(self.modeTabs)
-        self._build_input_section(batch_layout)
         self._build_scene_section(scene_layout)
         self._build_review_section(review_layout)
 
@@ -472,11 +469,8 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.coreStatusLabel = qt.QLabel()
         self.coreStatusLabel.wordWrap = True
         row = qt.QHBoxLayout()
-        self.installButton = qt.QPushButton("Install / Update bone-mechanoregulation")
         self.checkButton = qt.QPushButton("Check Runtime")
-        self.installButton.clicked.connect(self.install_core)
         self.checkButton.clicked.connect(self.update_runtime_status)
-        row.addWidget(self.installButton)
         row.addWidget(self.checkButton)
         layout.addRow(row)
         layout.addRow("Status", self.coreStatusLabel)
@@ -581,20 +575,29 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         discover_row.addStretch(1)
         discovery_layout.addLayout(discover_row)
 
-        self.sceneCaseTable = qt.QTableWidget()
-        self.sceneCaseTable.setColumnCount(7)
-        self.sceneCaseTable.setHorizontalHeaderLabels(
-            ["Run", "Remodelling", "Baseline SED", "Baseline Seg", "Trab", "Cort", "Full"]
-        )
-        self.sceneCaseTable.minimumHeight = 150
-        self.sceneCaseTable.maximumHeight = 260
-        self.sceneCaseTable.setVerticalScrollBarPolicy(qt.Qt.ScrollBarAsNeeded)
-        try:
-            self.sceneCaseTable.horizontalHeader().setStretchLastSection(True)
-            self.sceneCaseTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
-        except Exception:
-            pass
-        discovery_layout.addWidget(self.sceneCaseTable)
+        scene_inputs = qt.QFormLayout()
+        self.sceneRemodellingSelector = slicer.qMRMLNodeComboBox()
+        self.sceneRemodellingSelector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode"]
+        self.sceneRemodellingSelector.noneEnabled = True
+        self.sceneRemodellingSelector.addEnabled = False
+        self.sceneRemodellingSelector.removeEnabled = False
+        self.sceneRemodellingSelector.setMRMLScene(slicer.mrmlScene)
+        self.sceneSedSelector = slicer.qMRMLNodeComboBox()
+        self.sceneSedSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
+        self.sceneSedSelector.noneEnabled = True
+        self.sceneSedSelector.addEnabled = False
+        self.sceneSedSelector.removeEnabled = False
+        self.sceneSedSelector.setMRMLScene(slicer.mrmlScene)
+        self.sceneAnalysisMaskSelector = slicer.qMRMLNodeComboBox()
+        self.sceneAnalysisMaskSelector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode", "vtkMRMLSegmentationNode"]
+        self.sceneAnalysisMaskSelector.noneEnabled = True
+        self.sceneAnalysisMaskSelector.addEnabled = False
+        self.sceneAnalysisMaskSelector.removeEnabled = False
+        self.sceneAnalysisMaskSelector.setMRMLScene(slicer.mrmlScene)
+        scene_inputs.addRow("Remodelling map", self.sceneRemodellingSelector)
+        scene_inputs.addRow("ParOSol / FEA SED", self.sceneSedSelector)
+        scene_inputs.addRow("Analysis mask", self.sceneAnalysisMaskSelector)
+        discovery_layout.addLayout(scene_inputs)
 
         self.sceneWorkflowGroup = qt.QGroupBox("Workflow")
         controls = qt.QFormLayout(self.sceneWorkflowGroup)
@@ -902,8 +905,15 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         return [
             node
             for node in self._scene_volume_nodes(("vtkMRMLScalarVolumeNode",))
-            if self._node_name_contains(node, ("sed", "strain", "fea"), exclude=("remodelling", "remodeling"))
+            if self._node_name_contains(
+                node,
+                ("sed", "strain", "fea", "parosol", "loadhistory"),
+                exclude=("remodelling", "remodeling", "material", "label"),
+            )
         ]
+
+    def _scene_parosol_output_candidates(self):
+        return self._scene_sed_candidates()
 
     def _scene_mask_candidates(self, role):
         role = str(role).lower()
@@ -943,54 +953,32 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def discover_scene_cases(self):
         remodelling_nodes = self._scene_remodelling_candidates()
-        sed_nodes = self._scene_sed_candidates()
-        seg_nodes = self._scene_mask_candidates("seg")
-        trab_nodes = self._scene_mask_candidates("trab")
-        cort_nodes = self._scene_mask_candidates("cort")
-        full_nodes = self._scene_mask_candidates("full")
-        self._sceneCases = [{"remodelling_node": node} for node in remodelling_nodes]
-        table = self.sceneCaseTable
-        table.setRowCount(len(self._sceneCases))
-        for row, case in enumerate(self._sceneCases):
-            run_item = qt.QTableWidgetItem("")
-            run_item.setFlags(run_item.flags() | qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
-            run_item.setCheckState(qt.Qt.Checked)
-            table.setItem(row, 0, run_item)
-            remodelling_item = qt.QTableWidgetItem(str(case["remodelling_node"].GetName()))
-            remodelling_item.setFlags(remodelling_item.flags() & ~qt.Qt.ItemIsEditable)
-            table.setItem(row, 1, remodelling_item)
-            table.setCellWidget(row, 2, self._node_combo(sed_nodes, include_generate=True, default_generate=not sed_nodes))
-            table.setCellWidget(row, 3, self._node_combo(seg_nodes, include_none=True))
-            table.setCellWidget(row, 4, self._node_combo(trab_nodes, include_none=True))
-            table.setCellWidget(row, 5, self._node_combo(cort_nodes, include_none=True))
-            table.setCellWidget(row, 6, self._node_combo(full_nodes, include_none=True))
-        try:
-            table.resizeColumnsToContents()
-        except Exception:
-            pass
+        sed_nodes = self._scene_parosol_output_candidates()
+        mask_nodes = self._scene_mask_candidates("full")
+        self._sceneCases = [{"remodelling_node": remodelling_nodes[0]}] if remodelling_nodes else []
+        if remodelling_nodes:
+            self.sceneRemodellingSelector.setCurrentNode(remodelling_nodes[0])
+        if sed_nodes:
+            self.sceneSedSelector.setCurrentNode(sed_nodes[0])
+        if mask_nodes:
+            self.sceneAnalysisMaskSelector.setCurrentNode(mask_nodes[0])
         self.sceneStatusLabel.text = (
-            f"Discovered {len(remodelling_nodes)} remodelling map(s), {len(sed_nodes)} baseline SED candidate(s), "
-            f"and {len(seg_nodes)} baseline segmentation candidate(s)."
+            f"Discovered {len(remodelling_nodes)} remodelling map(s), {len(sed_nodes)} loaded ParOSol/FEA SED candidate(s), "
+            f"and {len(mask_nodes)} optional analysis mask candidate(s)."
         )
 
     def _scene_selected_rows(self):
-        rows = []
-        for row in range(self.sceneCaseTable.rowCount):
-            item = self.sceneCaseTable.item(row, 0)
-            if item is None or item.checkState() == qt.Qt.Checked:
-                rows.append(row)
-        return rows
+        return [0] if self.sceneRemodellingSelector.currentNode() is not None else []
 
     def _scene_combo_value(self, row, column):
-        widget = self.sceneCaseTable.cellWidget(row, column)
-        if widget is None:
+        widget = {1: self.sceneRemodellingSelector, 2: self.sceneSedSelector, 6: self.sceneAnalysisMaskSelector}.get(int(column))
+        if widget is None or widget.currentNode() is None:
             return "none"
-        value = widget.currentData
-        return str(value if value is not None else widget.currentText or "none")
+        return str(widget.currentNode().GetID())
 
     def _scene_node_from_combo(self, row, column):
         node_id = self._scene_combo_value(row, column)
-        if node_id in {"", "none", "generate"}:
+        if node_id in {"", "none"}:
             return None
         return slicer.mrmlScene.GetNodeByID(node_id)
 
@@ -1008,44 +996,30 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         return path
 
     def _stage_scene_case(self, row):
-        case = self._sceneCases[row]
-        remodelling_node = case["remodelling_node"]
+        remodelling_node = self.sceneRemodellingSelector.currentNode()
+        if remodelling_node is None:
+            raise ValueError("Select a loaded Timelapsed remodelling map.")
         run_root = self._scene_run_root()
         input_dir = run_root / "input"
         output_dir = run_root / "output" / "derivatives" / "Mechanoregulation" / "sub-scene" / "site-scene" / "runs" / f"scene-row-{row + 1:02d}"
         remodelling_path = self._save_scene_node(remodelling_node, input_dir / f"scene-row-{row + 1:02d}_remodelling.nii.gz")
-        sed_choice = self._scene_combo_value(row, 2)
-        baseline_sed_path = None
-        if sed_choice not in {"generate", "none"}:
-            baseline_sed_path = self._save_scene_node(self._scene_node_from_combo(row, 2), input_dir / f"scene-row-{row + 1:02d}_sed.nii.gz")
-        baseline_segmentation_path = self._save_scene_node(
-            self._scene_node_from_combo(row, 3),
-            input_dir / f"scene-row-{row + 1:02d}_seg.nii.gz",
+        if self.sceneSedSelector.currentNode() is None:
+            raise ValueError("Select a loaded ParOSol/FEA SED map for each selected scene row.")
+        baseline_sed_path = self._save_scene_node(self._scene_node_from_combo(row, 2), input_dir / f"scene-row-{row + 1:02d}_sed.nii.gz")
+        analysis_mask_path = self._save_scene_node(
+            self.sceneAnalysisMaskSelector.currentNode(),
+            input_dir / f"scene-row-{row + 1:02d}_analysis-mask.nii.gz",
         )
-        trab_mask_path = self._save_scene_node(
-            self._scene_node_from_combo(row, 4),
-            input_dir / f"scene-row-{row + 1:02d}_mask-trab.nii.gz",
-        )
-        cort_mask_path = self._save_scene_node(
-            self._scene_node_from_combo(row, 5),
-            input_dir / f"scene-row-{row + 1:02d}_mask-cort.nii.gz",
-        )
-        full_mask_path = self._save_scene_node(
-            self._scene_node_from_combo(row, 6),
-            input_dir / f"scene-row-{row + 1:02d}_mask-full.nii.gz",
-        )
-        if sed_choice == "generate" and baseline_segmentation_path is None:
-            raise ValueError("Generate baseline SED requires a baseline segmentation for each selected scene row.")
         return {
             "subject_id": "sub-scene",
             "case_id": f"scene-row-{row + 1:02d}",
             "baseline_image_path": remodelling_path,
             "remodelling_image_path": remodelling_path,
             "output_dir": output_dir,
-            "baseline_segmentation_path": baseline_segmentation_path,
-            "trab_mask_path": trab_mask_path,
-            "cort_mask_path": cort_mask_path,
-            "full_mask_path": full_mask_path,
+            "baseline_segmentation_path": None,
+            "trab_mask_path": None,
+            "cort_mask_path": None,
+            "full_mask_path": analysis_mask_path,
             "baseline_sed_path": baseline_sed_path,
         }
 

@@ -8,11 +8,22 @@ from typing import Iterable
 import numpy as np
 import SimpleITK as sitk
 
-from .derivatives import DerivativeRecord, discover_manifests, normalize_role, normalize_session_id, normalize_site, normalize_subject_id
+from bone_imaging_derivatives import record_output_path
+
+from .derivatives import (
+    DerivativeRecord,
+    discover_manifests,
+    normalize_role,
+    normalize_session_id,
+    normalize_site,
+    normalize_subject_id,
+)
+from .derivatives import discover_shared_artifacts
 
 
 IMAGE_SUFFIXES = (".aim", ".nii", ".nii.gz", ".mha", ".mhd", ".nrrd", ".nhdr")
 DERIVATIVES_DIR_NAME = "derivatives"
+LABELMAP_BATCH_PROFILES = frozenset({"xtremecti", "xtremectii", "load_history_3", "load_history_6"})
 
 
 @dataclass(frozen=True)
@@ -80,6 +91,36 @@ def discover_fea_batch_cases(
         if artifact.path not in {existing.path for existing in artifacts_by_key[key]}:
             artifacts_by_key[key].append(artifact)
 
+    for artifact in discover_shared_artifacts(root, include_derivatives=True).records:
+        key = (
+            normalize_subject_id(_clean_token(artifact.subject_id)) or "",
+            normalize_site(_clean_token(artifact.site)) or "",
+            normalize_session_id(_clean_token(artifact.session_id)) or "",
+        )
+        if not key[0] or not key[1]:
+            continue
+        derivative = _artifact_derivative_family(artifact.path, root)
+        role = _normalize_artifact_role(artifact.role, str(artifact.path), derivative=derivative)
+        if role == "field_map":
+            continue
+        if artifact.kind == "image" and artifact.role == "map" and role not in {
+            "material_labelmap",
+            "hom_ls_model",
+            "model_labelmap",
+            "calibrated_image",
+            "density_image",
+        }:
+            continue
+        add_artifact(
+            key,
+            FEAArtifact(
+                role=role,
+                path=str(Path(artifact.path).expanduser()),
+                source=artifact.metadata.get("source", "artifact") if isinstance(artifact.metadata, dict) else "artifact",
+                derivative=derivative,
+            ),
+        )
+
     for record in _iter_manifest_records(root):
         key = (
             normalize_subject_id(_clean_token(record.subject_id)) or "",
@@ -129,12 +170,12 @@ def discover_fea_batch_cases(
 def workflow_role_requirements(workflow: str) -> dict[str, FEAWorkflowRoleRequirement]:
     """Return the artifact roles a workflow can consume, independent of folder layout."""
     key = str(workflow or "").strip().lower()
-    if key in {"xtremecti", "xtremectii"}:
+    if key in LABELMAP_BATCH_PROFILES:
         return {
             "image": FEAWorkflowRoleRequirement(
                 "image",
                 True,
-                ("material_labelmap", "generated_material_labelmap", "labelmap"),
+                ("material_labelmap", "hom_ls_model", "model_labelmap", "labelmap"),
             ),
             "mask": FEAWorkflowRoleRequirement(
                 "mask",
@@ -169,6 +210,14 @@ def workflow_role_requirements(workflow: str) -> dict[str, FEAWorkflowRoleRequir
     }
 
 
+def batch_profile_support_status(workflow: str) -> tuple[bool, str]:
+    """Return whether the batch discovery contract is implemented for a ParOSol profile."""
+    key = str(workflow or "").strip().lower()
+    if key in LABELMAP_BATCH_PROFILES:
+        return True, ""
+    return False, "Batch discovery for this profile is not implemented yet."
+
+
 def build_parosol_case_commands(
     dataset_root: str | Path,
     cases: Iterable[FEABatchCase],
@@ -180,18 +229,15 @@ def build_parosol_case_commands(
     """Build one ParOSol shortcut command argument list for each ready batch case."""
     root = str(Path(dataset_root).expanduser().resolve())
     selected_roles = selected_roles or {}
+    supported, _message = batch_profile_support_status(workflow)
+    if not supported:
+        return []
     requirements = workflow_role_requirements(workflow)
     commands: list[list[str]] = []
     for case in cases:
         case_id = _case_name(case, workflow)
         image_roles = (selected_roles.get("image"),) if selected_roles.get("image") else requirements["image"].preferred_roles
         image = case.first_artifact(role for role in image_roles if role)
-        if image is None and _workflow_can_generate_material_labelmap(workflow, selected_roles):
-            image = _generate_material_labelmap_artifact(
-                Path(root),
-                case,
-                case_id=case_id,
-            )
         if image is None:
             continue
         args = [
@@ -239,13 +285,7 @@ def case_readiness(
     for group, requirement in workflow_role_requirements(workflow).items():
         roles = (selected_roles.get(group),) if selected_roles.get(group) else requirement.preferred_roles
         has_existing = case.first_artifact(role for role in roles if role) is not None
-        has_provider = (
-            group == "image"
-            and _workflow_can_generate_material_labelmap(workflow, selected_roles)
-            and "generated_material_labelmap" in tuple(role for role in roles if role)
-            and _can_generate_material_labelmap(case)
-        )
-        if requirement.required and not has_existing and not has_provider:
+        if requirement.required and not has_existing:
             missing.append(group)
     return not missing, tuple(missing)
 
@@ -258,8 +298,6 @@ def discovered_role_options(cases: Iterable[FEABatchCase], group: str) -> list[s
         for artifact in case.artifacts
         if artifact.role in roles
     }
-    if group == "image" and any(_can_generate_material_labelmap(case) for case in cases):
-        found.add("generated_material_labelmap")
     return [role for role in roles if role in found]
 
 
@@ -287,14 +325,13 @@ def parosol_command_derivative_context(command: Iterable[str]) -> dict[str, str]
     if not dataset_root or not subject_id or not site:
         return {}
     session_id = _first_token(case_id, r"(?:^|[_/\-])ses-?([A-Za-z0-9]+)")
-    output_dir = (
-        Path(dataset_root).expanduser().resolve()
-        / DERIVATIVES_DIR_NAME
-        / "FEA"
-        / f"sub-{_clean_token(subject_id)}"
-        / f"site-{_clean_token(site)}"
-        / "runs"
-        / case_id
+    output_dir = record_output_path(
+        Path(dataset_root).expanduser().resolve(),
+        "FEA",
+        _clean_token(subject_id),
+        _clean_token(site),
+        "runs",
+        case_id,
     )
     return {
         "dataset_root": str(Path(dataset_root).expanduser().resolve()),
@@ -331,9 +368,26 @@ def _tokens_from_path(path: Path, root: Path) -> dict[str, str]:
     text = "/".join(path.relative_to(root).parts)
     return {
         "subject_id": normalize_subject_id(_first_token(text, r"(?:^|[_/\-])sub-?([A-Za-z0-9]+)")) or "",
-        "site": normalize_site(_first_token(text, r"(?:^|[_/\-])site-?([A-Za-z0-9]+)")) or "",
+        "site": normalize_site(
+            _first_token(text, r"(?:^|[_/\-])site-?([A-Za-z0-9]+)")
+            or _first_token(text, r"(?:^|[_/\-])voi-?([A-Za-z0-9]+)")
+        )
+        or "",
         "session_id": normalize_session_id(_first_token(text, r"(?:^|[_/\-])ses-?([A-Za-z0-9]+)")) or "",
     }
+
+
+def _artifact_derivative_family(path: Path, root: Path) -> str:
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return ""
+    lowered = [part.lower() for part in parts]
+    if DERIVATIVES_DIR_NAME in lowered:
+        index = lowered.index(DERIVATIVES_DIR_NAME)
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    return ""
 
 
 def _first_token(text: str, pattern: str) -> str:
@@ -375,7 +429,16 @@ def _normalize_artifact_role(role: str, path: str, *, derivative: str = "") -> s
         return "common_region_mask"
     if "mask" in role_text or (("mask" in name_text) and "seg" not in name_text):
         return "mask"
-    if "material" in text:
+    if (
+        "hom_ls" in text
+        or "hom-ls" in text
+        or "modellabel" in text
+        or "model_label" in text
+        or "model-label" in text
+        or "material_label" in text
+        or "material-label" in text
+        or "material" in text
+    ):
         return "material_labelmap"
     if "label" in text:
         return "labelmap"
@@ -385,14 +448,14 @@ def _normalize_artifact_role(role: str, path: str, *, derivative: str = "") -> s
         return "field_map"
     if "calibrated" in text or "calibration" in text or "bmd" in text or "density" in text:
         return "calibrated_image"
-    if Path(path).suffix.lower() == ".aim":
+    if re.search(r"(?i)\.aim(?:;\d+)?$", Path(path).name):
         return "raw_image"
     return "image"
 
 
 def _role_group_members(group: str) -> tuple[str, ...]:
     if group == "image":
-        return ("calibrated_image", "density_image", "material_labelmap", "generated_material_labelmap", "labelmap", "segmentation", "image", "raw_image")
+        return ("calibrated_image", "density_image", "material_labelmap", "hom_ls_model", "model_labelmap", "labelmap", "segmentation", "image", "raw_image")
     if group == "mask":
         return ("vertebra_mask", "mask_full", "mask", "common_region_mask", "mask_cort", "mask_trab")
     return (group,)
@@ -406,7 +469,8 @@ def _sort_artifacts(artifacts: Iterable[FEAArtifact]) -> list[FEAArtifact]:
                 "calibrated_image",
                 "density_image",
                 "material_labelmap",
-                "generated_material_labelmap",
+                "hom_ls_model",
+                "model_labelmap",
                 "labelmap",
                 "segmentation",
                 "image",
@@ -459,9 +523,7 @@ def _case_stem_from_command(args: list[str]) -> str:
 
 
 def _workflow_can_generate_material_labelmap(workflow: str, selected_roles: dict[str, str]) -> bool:
-    key = str(workflow or "").strip().lower()
-    selected = str(selected_roles.get("image", "") or "").strip()
-    return key in {"xtremecti", "xtremectii"} and selected in {"", "generated_material_labelmap"}
+    return False
 
 
 def _can_generate_material_labelmap(case: FEABatchCase) -> bool:

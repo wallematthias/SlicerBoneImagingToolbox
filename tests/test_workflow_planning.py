@@ -17,21 +17,21 @@ def _record(derivative):
     )
 
 
-def test_timelapsed_without_prerequisites_plans_registration_common_region_then_analysis():
-    plan = resolve_workflow_plan("Timelapsed", available_records=[], available_inputs={"masks": True})
+def test_timelapse_without_prerequisites_plans_registration_common_region_then_analysis():
+    plan = resolve_workflow_plan("Timelapse", available_records=[], available_inputs={"masks": True})
 
-    assert [step.workflow for step in plan.steps] == ["Registration", "CommonRegion", "Timelapsed"]
+    assert [step.workflow for step in plan.steps] == ["Registration", "CommonRegion", "Timelapse"]
     assert not plan.blocked
 
 
-def test_timelapsed_with_registration_only_plans_common_region_then_analysis():
+def test_timelapse_with_registration_only_plans_common_region_then_analysis():
     plan = resolve_workflow_plan(
-        "Timelapsed",
+        "Timelapse",
         available_records=[_record("Registration")],
         available_inputs={"masks": True},
     )
 
-    assert [step.workflow for step in plan.steps] == ["CommonRegion", "Timelapsed"]
+    assert [step.workflow for step in plan.steps] == ["CommonRegion", "Timelapse"]
 
 
 def test_microarchitecture_with_common_region_available_runs_only_microarchitecture():

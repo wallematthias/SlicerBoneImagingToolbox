@@ -72,6 +72,47 @@ def test_discover_fea_batch_cases_groups_raw_and_derivative_artifacts(tmp_path: 
     assert case.artifact_options("mask") == [str(mask)]
 
 
+def test_discover_fea_batch_cases_supports_normalized_voi_layout_and_bone_contours(tmp_path: Path) -> None:
+    raw = tmp_path / "sub-001" / "ses-001" / "xct" / "sub-001_ses-001_voi-radiusleft_xct.AIM"
+    material = (
+        tmp_path
+        / "derivatives"
+        / "FEA"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "sub-001_ses-001_voi-radiusleft_desc-material-labelmap_map.nii.gz"
+    )
+    trab = (
+        tmp_path
+        / "derivatives"
+        / "IPLContours"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "sub-001_ses-001_voi-radiusleft_desc-trab_mask.AIM"
+    )
+    full = (
+        tmp_path
+        / "derivatives"
+        / "BoneContours"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "sub-001_ses-001_voi-radiusleft_desc-full_mask.AIM"
+    )
+    for path in (raw, material, trab, full):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+
+    cases = discover_fea_batch_cases(tmp_path)
+
+    assert len(cases) == 1
+    assert cases[0].key == ("001", "radiusleft", "001")
+    assert cases[0].artifact_options("image")[:2] == [str(material), str(raw)]
+    assert cases[0].artifact_options("mask") == [str(full), str(trab)]
+
+
 def test_manifest_classification_uses_record_role_before_derivative_family(tmp_path: Path) -> None:
     """Segmentation derivative manifests must keep cort/full masks distinct from bone segmentation."""
     mask_cort = tmp_path / "derivatives" / "Segmentation" / "sub-001_ses-1_site-tibia_mask-cort.nii.gz"
@@ -126,11 +167,27 @@ def test_workflow_role_requirements_keep_profile_inputs_general() -> None:
     """Workflow requirements must describe roles, not a hard-coded raw image assumption."""
     assert workflow_role_requirements("spine-compression")["image"].preferred_roles[0] == "calibrated_image"
     assert workflow_role_requirements("XtremeCTII")["image"].preferred_roles[0] == "material_labelmap"
+    assert workflow_role_requirements("load_history_3")["image"].preferred_roles[0] == "material_labelmap"
+    assert workflow_role_requirements("load_history_6")["image"].preferred_roles[0] == "material_labelmap"
+
+
+def test_batch_discovery_support_is_limited_to_labelmap_profiles_for_now() -> None:
+    """The Slicer batch UI should not guess inputs for profiles whose batch contract is not defined yet."""
+    from SlicerBoneImagingToolboxLib.fea_batch import batch_profile_support_status
+
+    assert batch_profile_support_status("XtremeCTI") == (True, "")
+    assert batch_profile_support_status("XtremeCTII") == (True, "")
+    assert batch_profile_support_status("load_history_3") == (True, "")
+    assert batch_profile_support_status("load_history_6") == (True, "")
+    assert batch_profile_support_status("spine-compression") == (
+        False,
+        "Batch discovery for this profile is not implemented yet.",
+    )
 
 
 def test_build_parosol_case_commands_use_selected_artifact_roles(tmp_path: Path) -> None:
     """Changing command generation to ignore the selected artifact role would run FEA on the wrong image."""
-    image = tmp_path / "sub-001_ses-1_site-radius_desc-bmd_image.nii.gz"
+    image = tmp_path / "sub-001_ses-1_site-radius_material-labelmap.nii.gz"
     mask = tmp_path / "sub-001_ses-1_site-radius_mask-full.nii.gz"
     image.write_text("image", encoding="utf-8")
     mask.write_text("mask", encoding="utf-8")
@@ -139,8 +196,8 @@ def test_build_parosol_case_commands_use_selected_artifact_roles(tmp_path: Path)
     commands = build_parosol_case_commands(
         tmp_path,
         cases,
-        workflow="spine-compression",
-        selected_roles={"image": "calibrated_image", "mask": "mask_full"},
+        workflow="XtremeCTII",
+        selected_roles={"image": "material_labelmap", "mask": "mask_full"},
         dry_run=True,
     )
 
@@ -148,7 +205,7 @@ def test_build_parosol_case_commands_use_selected_artifact_roles(tmp_path: Path)
         [
             str(image),
             "--profile",
-            "spine-compression",
+            "XtremeCTII",
             "--mask",
             str(mask),
             "--dataset-root",
@@ -158,7 +215,7 @@ def test_build_parosol_case_commands_use_selected_artifact_roles(tmp_path: Path)
             "--site",
             "radius",
             "--name",
-            "sub-001_ses-1_site-radius_spine-compression",
+            "sub-001_ses-1_site-radius_XtremeCTII",
             "--dry-run",
         ]
     ]
@@ -213,7 +270,7 @@ def test_parosol_command_derivative_context_recovers_run_metadata(tmp_path: Path
         / "derivatives"
         / "FEA"
         / "sub-001"
-        / "site-radius"
+        / "xct"
         / "runs"
         / "sub-001_ses-2_site-radius_XtremeCTII"
     )
@@ -240,8 +297,8 @@ def test_remodelling_maps_are_not_candidate_fea_images(tmp_path: Path) -> None:
     assert build_parosol_case_commands(tmp_path, cases, workflow="XtremeCTII") == []
 
 
-def test_xtremect_batch_generates_material_labelmap_from_segmentation_and_masks(tmp_path: Path) -> None:
-    """XtremeCT batch must build the model label image when only segmentation masks exist."""
+def test_xtremect_batch_requires_existing_material_labelmap(tmp_path: Path) -> None:
+    """XtremeCT batch consumes model labels created upstream instead of generating them itself."""
     base = tmp_path / "sub-001" / "ses-1" / "site-radius"
     base.mkdir(parents=True)
     seg = base / "sub-001_ses-1_site-radius_mask-seg.nii.gz"
@@ -259,25 +316,12 @@ def test_xtremect_batch_generates_material_labelmap_from_segmentation_and_masks(
     cases = discover_fea_batch_cases(tmp_path)
     commands = build_parosol_case_commands(tmp_path, cases, workflow="XtremeCTII", dry_run=True)
 
-    generated = (
-        tmp_path
-        / "derivatives"
-        / "FEA"
-        / "sub-001"
-        / "site-radius"
-        / "runs"
-        / "sub-001_ses-1_site-radius_XtremeCTII"
-        / "model_labels.nii.gz"
-    )
-    assert commands[0][0] == str(generated)
-    assert generated.exists()
-    material = sitk.GetArrayFromImage(sitk.ReadImage(str(generated)))
-    assert int(np.count_nonzero(material == 100)) == 16
-    assert int(np.count_nonzero(material == 127)) == 8
+    assert commands == []
+    assert case_readiness(cases[0], "XtremeCTII") == (False, ("image",))
 
 
 def test_discovered_role_options_do_not_write_generated_masks(tmp_path: Path) -> None:
-    """Readiness checks may advertise generated material images without touching the dataset."""
+    """Readiness checks must not advertise generated material images or touch the dataset."""
     base = tmp_path / "sub-001" / "ses-1" / "site-radius"
     base.mkdir(parents=True)
     for name in (
@@ -289,33 +333,27 @@ def test_discovered_role_options_do_not_write_generated_masks(tmp_path: Path) ->
 
     cases = discover_fea_batch_cases(tmp_path)
 
-    assert "generated_material_labelmap" in discovered_role_options(cases, "image")
+    assert "generated_material_labelmap" not in discovered_role_options(cases, "image")
     assert not any(base.glob("*derived_mask-trab.nii.gz"))
 
 
-def test_generated_xtremect_material_labelmap_requires_matching_geometry(tmp_path: Path) -> None:
-    """XtremeCT model label generation must not combine masks in different image spaces."""
+def test_xtremect_material_labelmap_discovery_accepts_model_labels(tmp_path: Path) -> None:
+    """Existing material/model labelmaps are sufficient for supported XCT batch profiles."""
     base = tmp_path / "sub-001" / "ses-1" / "site-radius"
     base.mkdir(parents=True)
-    seg = base / "sub-001_ses-1_site-radius_mask-seg.nii.gz"
-    full = base / "sub-001_ses-1_site-radius_mask-full.nii.gz"
-    cort = base / "sub-001_ses-1_site-radius_mask-cort.nii.gz"
-    arr = np.ones((2, 3, 4), dtype=np.uint8)
-    seg_image = sitk.GetImageFromArray(arr)
-    full_image = sitk.GetImageFromArray(arr)
-    cort_image = sitk.GetImageFromArray(arr)
-    cort_image.SetSpacing((2.0, 1.0, 1.0))
-    for path, image in ((seg, seg_image), (full, full_image), (cort, cort_image)):
-        sitk.WriteImage(image, str(path))
+    model = base / "sub-001_ses-1_site-radius_model-labelmap.nii.gz"
+    sitk.WriteImage(sitk.GetImageFromArray(np.ones((2, 2, 2), dtype=np.uint8)), str(model))
 
     cases = discover_fea_batch_cases(tmp_path)
+    commands = build_parosol_case_commands(tmp_path, cases, workflow="XtremeCTII", dry_run=True)
 
-    with pytest.raises(ValueError, match="image geometry do not match"):
-        build_parosol_case_commands(tmp_path, cases, workflow="XtremeCTII", dry_run=True)
+    assert cases[0].artifact_options("image") == [str(model)]
+    assert commands[0][0] == str(model)
+    assert case_readiness(cases[0], "XtremeCTII") == (True, ())
 
 
-def test_xtremect_readiness_accepts_generated_material_labelmap_provider(tmp_path: Path) -> None:
-    """Cases with segmentation and compartment masks are ready for XtremeCT even before the material file exists."""
+def test_xtremect_readiness_rejects_segmentation_without_material_labelmap(tmp_path: Path) -> None:
+    """Segmentation and masks are not enough for ParOSol batch after contour-derived labels moved upstream."""
     base = tmp_path / "sub-001" / "ses-1" / "site-radius"
     base.mkdir(parents=True)
     for name in (
@@ -327,8 +365,7 @@ def test_xtremect_readiness_accepts_generated_material_labelmap_provider(tmp_pat
 
     case = discover_fea_batch_cases(tmp_path)[0]
 
-    assert case_readiness(case, "XtremeCTII") == (True, ())
-    assert case_readiness(case, "XtremeCTII", {"image": "generated_material_labelmap"}) == (True, ())
+    assert case_readiness(case, "XtremeCTII") == (False, ("image",))
 
 
 def test_role_options_for_workflow_hide_unsupported_discovered_artifacts(tmp_path: Path) -> None:
@@ -345,5 +382,5 @@ def test_role_options_for_workflow_hide_unsupported_discovered_artifacts(tmp_pat
 
     cases = discover_fea_batch_cases(tmp_path)
 
-    assert role_options_for_workflow(cases, "XtremeCTII", "image") == ["generated_material_labelmap"]
+    assert role_options_for_workflow(cases, "XtremeCTII", "image") == []
     assert role_options_for_workflow(cases, "spine-compression", "image") == ["image"]

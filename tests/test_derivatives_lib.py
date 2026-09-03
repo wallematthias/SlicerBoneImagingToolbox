@@ -11,6 +11,8 @@ from SlicerBoneImagingToolboxLib.derivatives import (
     normalize_site,
     site_category,
     suggested_filename,
+    suggested_mids_relative_path,
+    suggested_mids_relative_paths,
     read_manifest,
     write_manifest,
 )
@@ -150,11 +152,11 @@ def test_derivative_shim_exposes_shared_artifact_discovery(tmp_path: Path) -> No
 
     index = discover_artifacts(tmp_path)
 
-    assert normalize_site("RL") == "radius_left"
+    assert normalize_site("RL") == "radiusleft"
     assert site_category("RL") == "radius"
     assert normalize_session_id("ses-Y00") == "00"
-    assert len(index.find(kind="image", site="radius_left", session_id="00")) == 1
-    assert len(index.find(kind="mask", role="full", site="radius_left", session_id="00")) == 1
+    assert len(index.find(kind="image", site="radiusleft", session_id="00")) == 1
+    assert len(index.find(kind="mask", role="full", site="radiusleft", session_id="00")) == 1
 
 
 def test_derivative_shim_exposes_shared_naming_helpers(tmp_path: Path) -> None:
@@ -163,8 +165,14 @@ def test_derivative_shim_exposes_shared_naming_helpers(tmp_path: Path) -> None:
 
     rows = build_naming_rows(tmp_path)
 
-    assert rows[0].site == "radius_left"
-    assert suggested_filename(rows[0]) == "sub-SUBJ001_site-radius_left_ses-T1_image.AIM"
+    assert rows[0].site == "radiusleft"
+    assert suggested_filename(rows[0]) == "sub-SUBJ001_ses-T1_voi-radiusleft_image.AIM"
+    assert suggested_mids_relative_path(rows[0]) == Path(
+        "sub-subj001/ses-t1/xct/sub-subj001_ses-t1_voi-radiusleft_xct.AIM"
+    )
+    assert suggested_mids_relative_paths(rows)[rows[0].path] == Path(
+        "sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_xct.AIM"
+    )
 
 
 def test_discovery_keeps_shared_contract_manifests_when_legacy_manifests_exist(tmp_path: Path) -> None:

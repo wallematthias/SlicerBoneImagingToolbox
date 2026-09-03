@@ -1,3 +1,5 @@
+import re
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,20 @@ from SlicerBoneImagingToolboxLib.timelapsed_scene import (
     scene_segment_matches_role,
     timelapsed_scene_run_args,
 )
+
+
+def _timelapsed_widget_method(method_name: str):
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    method_source = source.split(f"    def {method_name}", 1)[1].split("\n    def ", 1)[0]
+    namespace = {"Path": Path, "re": re}
+    exec(f"def {method_name}" + textwrap.dedent(method_source), namespace)
+    return namespace[method_name]
 
 
 def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
@@ -224,7 +240,7 @@ def test_timelapsed_batch_tab_uses_uncapped_height() -> None:
     assert "layout.setContentsMargins(0, 0, 0, 0)" in source
 
 
-def test_timelapsed_batch_series_summary_is_parented_and_collapsed() -> None:
+def test_timelapsed_batch_cohort_summary_is_not_in_analysis_options() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
         / "HRpQCTTools"
@@ -235,14 +251,15 @@ def test_timelapsed_batch_series_summary_is_parented_and_collapsed() -> None:
 
     assert 'analysisSectionBox.text = "Analysis Options"' in source
     assert "analysisSectionBox.collapsed = False" in source
-    assert "analysisSectionLayout.addWidget(self.seriesSummaryBox)" in source
-    assert "self.seriesSummaryBox.visible = False" in source
+    assert 'qt.QGroupBox("Series Summary")' not in source
+    assert "seriesSummaryExportBtn" not in source
+    assert "analysisSectionLayout.addWidget(self.seriesSummaryBox)" not in source
     assert 'env.insert("PYTHONPATH", os.environ["PYTHONPATH"])' in source
     assert "_resolve_local_pipeline_paths" in source
     assert 'base / "TimelapsedHRpQCT"' in source
-    assert 'selected / "derivatives" / "TimelapsedHRpQCT"' in source
+    assert 'selected / "derivatives" / "Timelapse"' in source
     assert 'if selected.name == "derivatives":' in source
-    assert 'return selected / "TimelapsedHRpQCT"' in source
+    assert 'return selected / "Timelapse"' in source
     assert "timelapsedhrpqct.cli import main" in source
     assert 'MIN_PIPELINE_VERSION = "2.0.39"' in source
     assert "Move up" in source
@@ -301,6 +318,27 @@ def test_timelapsed_batch_custom_profile_exposes_analysis_options_without_cli_pr
     assert "self.analysisSectionBox.visible = scene_mode or custom" in visibility
 
 
+def test_timelapsed_profile_display_order_matches_public_profiles() -> None:
+    reporting_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCTLib"
+        / "Reporting.py"
+    )
+    reporting = reporting_path.read_text(encoding="utf-8")
+
+    assert '"eth-uofc"' in reporting
+    assert '"multistack"' in reporting
+    assert '"ped-fx"' in reporting
+    assert '"shriners"' in reporting
+    assert '"standard"' in reporting
+    assert '"ucsf"' in reporting
+    assert '"xct1-standard"' in reporting
+    assert '"single-stack"' not in reporting
+    assert '"low-memory"' not in reporting
+
+
 def test_timelapsed_batch_remodelling_loader_accepts_any_roi_and_prefers_full() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
@@ -327,6 +365,25 @@ def test_timelapsed_batch_remodelling_loader_accepts_any_roi_and_prefers_full() 
     assert "self._set_pair_metric_rows(saved_rows)" in load_selected
     assert "loaded as remodelling segmentation." in load_selected
     assert 'findText("remodelling image")' in source
+
+
+def test_remodelling_source_parser_accepts_current_voi_desc_filenames() -> None:
+    parse_context = _timelapsed_widget_method("_parse_remodelling_source_context")
+    filename = (
+        "/tmp/derivatives/Timelapse/sub-001/xct/analysis/visualize/"
+        "sub-001_voi-radiusleft_desc-roi_union_t0-001_t1-002_thr-225p0_cluster-5_remodelling.nii.gz"
+    )
+
+    ctx = parse_context(object(), filename)
+
+    assert ctx is not None
+    assert ctx["subject_id"] == "001"
+    assert ctx["site"] == "radiusleft"
+    assert ctx["compartment"] == "roi_union"
+    assert ctx["t0"] == "001"
+    assert ctx["t1"] == "002"
+    assert ctx["threshold"] == 225.0
+    assert ctx["cluster"] == 5
 
 
 def test_timelapsed_batch_loaded_remodelling_populates_current_comparison_from_saved_csv() -> None:
@@ -526,7 +583,7 @@ def test_timelapsed_batch_manual_fallback_supports_strambo_aim_names() -> None:
     assert r"(?i)\\.aim(?:;\\d+)?$" not in source
     assert "def _manual_metadata_from_filename" in source
     assert "STRAMBO_0003_TR_Y04.AIM" in source
-    assert "tibia_right" in source
+    assert "tibiaright" in source
     assert 'subject_id=metadata.get("subject_id", "MANUAL")' in source
     assert 'session_id=metadata.get("session_id", f"T{idx}")' in source
     assert "def _prefer_manual_aim_candidate" in source
@@ -1126,6 +1183,7 @@ def test_remodelling_scalar_overlay_uses_discrete_label_rendering() -> None:
     assert "SetInterpolate(False)" in style
     assert "SetWindowLevel(5.0, 2.5)" in style
     assert "TimelapsedHRpQCT_RemodellingColors" in source
+    assert "NamesInitialisedOn" not in source
 
 
 def test_scene_interactive_recompute_keeps_saved_input_path_with_scalar_display() -> None:
@@ -1224,6 +1282,7 @@ def test_scene_loadback_keeps_scene_nodes_native_by_default() -> None:
     assert "loaded_transform_nodes" in source
     assert 'SLICER_TIMELAPSED_APPLY_SCENE_TRANSFORMS' in source
     assert "applied_transforms = self._apply_scene_baseline_transforms(plan, loaded_transform_nodes)" in source
+    assert "loaded_result_rows = self._load_scene_results_table(plan, show=True, prefer_saved=True)" in source
     load_outputs = source.split("    def _load_scene_run_outputs", 1)[1].split("\n    def ", 1)[0]
     assert "apply_scene_transforms = str(os.environ.get(\"SLICER_TIMELAPSED_APPLY_SCENE_TRANSFORMS\", \"\")" in load_outputs
     assert "if apply_scene_transforms:" in load_outputs
@@ -1665,8 +1724,8 @@ def test_scene_discovery_ignores_generated_mask_loadback_from_storage_path() -> 
                 attributes={
                     "StorageFileName": (
                         "/tmp/SlicerBoneImagingToolbox/TimelapsedScene/derivatives/Timelapsed/"
-                        "scene_runs/run-1/output/derivatives/TimelapsedHRpQCT/sub-001/"
-                        "site-radius/ses-00/stacks/sub-001_ses-00_site-radius_mask-full.nii.gz"
+                        "scene_runs/run-1/output/derivatives/Timelapse/sub-001/"
+                        "ses-00/xct/stacks/sub-001_ses-00_voi-radius_mask-full.nii.gz"
                     )
                 },
             ),
@@ -1688,12 +1747,12 @@ def test_scene_discovery_keeps_bone_contouring_masks() -> None:
         [
             TimelapsedSceneNodeCandidate(
                 node_id="image-00",
-                name="sub-001_ses-00_site-radius_left_image",
+                name="sub-001_ses-00_site-radiusleft_image",
                 node_class="vtkMRMLScalarVolumeNode",
             ),
             TimelapsedSceneNodeCandidate(
                 node_id="full-00",
-                name="sub-001_ses-00_site-radius_left_mask-full",
+                name="sub-001_ses-00_site-radiusleft_mask-full",
                 node_class="vtkMRMLSegmentationNode",
                 attributes={"BoneImaging.MaskRoles": "full,trab,cort,seg"},
             ),
@@ -1900,14 +1959,14 @@ def test_timelapsed_scene_discovery_groups_loaded_images_and_optional_masks() ->
 def test_timelapsed_scene_discovery_reuses_scene_run_output_transforms() -> None:
     transform_storage_path = (
         "/tmp/SlicerBoneImagingToolbox/TimelapsedScene/derivatives/Timelapsed/"
-        "scene_runs/run-1/output/derivatives/TimelapsedHRpQCT/sub-SAMPLE001/"
-        "site-radius_left/registration/sub-SAMPLE001_site-radius_left_"
-        "from-ses-04_to-ses-00_final.tfm"
+        "scene_runs/run-1/output/derivatives/Registration/sub-SAMPLE001/"
+        "ses-04/xct/baseline/sub-SAMPLE001_ses-04_voi-radiusleft_stack-01_"
+        "from-ses-04_to-ses-00_baseline.tfm"
     )
     discovery = discover_timelapsed_scene_timepoints(
         [
-            TimelapsedSceneNodeCandidate("img00", "sub-SAMPLE001_ses-00_site-radius_left_image", "vtkMRMLScalarVolumeNode"),
-            TimelapsedSceneNodeCandidate("img04", "sub-SAMPLE001_ses-04_site-radius_left_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("img00", "sub-SAMPLE001_ses-00_site-radiusleft_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("img04", "sub-SAMPLE001_ses-04_site-radiusleft_image", "vtkMRMLScalarVolumeNode"),
             TimelapsedSceneNodeCandidate(
                 "tfm04",
                 "Loaded transform",
@@ -1924,17 +1983,17 @@ def test_timelapsed_scene_discovery_reuses_scene_run_output_transforms() -> None
 def test_timelapsed_scene_discovery_ignores_nonlinear_h5_initial_transforms() -> None:
     discovery = discover_timelapsed_scene_timepoints(
         [
-            TimelapsedSceneNodeCandidate("img00", "sub-SAMPLE001_ses-00_site-radius_left_image", "vtkMRMLScalarVolumeNode"),
-            TimelapsedSceneNodeCandidate("img04", "sub-SAMPLE001_ses-04_site-radius_left_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("img00", "sub-SAMPLE001_ses-00_site-radiusleft_image", "vtkMRMLScalarVolumeNode"),
+            TimelapsedSceneNodeCandidate("img04", "sub-SAMPLE001_ses-04_site-radiusleft_image", "vtkMRMLScalarVolumeNode"),
             TimelapsedSceneNodeCandidate(
                 "h5",
                 "Loaded nonlinear transform",
                 "vtkMRMLTransformNode",
                 {
                     "StorageFileName": (
-                        "/tmp/scene/output/derivatives/TimelapsedHRpQCT/sub-SAMPLE001/"
-                        "site-radius_left/registration/sub-SAMPLE001_site-radius_left_"
-                        "from-ses-04_to-ses-00_final.h5"
+                        "/tmp/scene/output/derivatives/Registration/sub-SAMPLE001/"
+                        "ses-04/xct/baseline/sub-SAMPLE001_ses-04_voi-radiusleft_stack-01_"
+                        "from-ses-04_to-ses-00_baseline.h5"
                     )
                 },
             ),

@@ -109,7 +109,7 @@ def relabel_nonzero_array(array, label):
     return relabelled
 
 
-def material_labels_from_arrays(seg, trab, cort, *, trab_label=126, cort_label=127, cort_source="cort_mask"):
+def material_labels_from_arrays(seg, trab, cort, *, trab_label=100, cort_label=127, cort_source="cort_mask"):
     seg = np.asarray(seg, dtype=bool)
     trab = np.asarray(trab, dtype=bool)
     cort = np.asarray(cort, dtype=bool)
@@ -243,7 +243,7 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         cort_mask_node=None,
         full_mask_node=None,
         *,
-        trab_label=126,
+        trab_label=100,
         cort_label=127,
         output_name="HRpQCT_HOM_material_labels",
     ):
@@ -352,7 +352,7 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.materialTrabLabelSpin = qt.QSpinBox()
         self.materialTrabLabelSpin.minimum = 1
         self.materialTrabLabelSpin.maximum = 255
-        self.materialTrabLabelSpin.value = 126
+        self.materialTrabLabelSpin.value = 100
         self.materialCortLabelSpin = qt.QSpinBox()
         self.materialCortLabelSpin.minimum = 1
         self.materialCortLabelSpin.maximum = 255

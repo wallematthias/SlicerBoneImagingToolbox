@@ -15,7 +15,8 @@ def test_spine_segmentation_ct_module_wraps_spine_segment_dependency() -> None:
     assert 'CONDA_RUNTIME_ENV = "spine-segment-pytorch"' in source
     assert "Install Slicer Runtime" not in source
     assert "self.installButton.clicked.connect(self._install_core)" not in source
-    assert "Install / Update Conda MPS Runtime" in source
+    assert "Install Conda MPS Runtime" not in source
+    assert "Check Toolbox Updates" not in source
     assert "Probe runtime" in source
     assert "RUNTIME_PROBE_SCRIPT" in source
     assert "mps_conv3d_supported" in source
@@ -41,7 +42,7 @@ def test_spine_segmentation_ct_ui_prioritizes_run_workflow() -> None:
 
     assert "self.spineModeTabs" in source
     assert '"Scene"' in source
-    assert '"Batch"' in source
+    assert 'self.spineModeTabs.addTab(self.batchPage, "Batch")' not in source
     assert '"Run spine CT segmentation"' in source
     assert '"Runtime setup"' in source
     assert "self.runtimeBox.collapsed = True" in source
@@ -86,3 +87,11 @@ def test_spine_segmentation_ct_module_is_registered_as_builtin_tool() -> None:
     assert "add_subdirectory(CTTools/SpineSegmentationCT)" in root_cmake
     assert "set(MODULE_NAME SpineSegmentationCT)" in module_cmake
     assert "SpineSegmentationCT.py" in module_cmake
+
+
+def test_spine_segmentation_ct_uses_module_icon() -> None:
+    source = MODULE.read_text(encoding="utf-8")
+    icon_path = MODULE_DIR / "Resources" / "Icons" / "SpineSegmentationCT.png"
+
+    assert icon_path.is_file()
+    assert 'parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "SpineSegmentationCT.png"))' in source

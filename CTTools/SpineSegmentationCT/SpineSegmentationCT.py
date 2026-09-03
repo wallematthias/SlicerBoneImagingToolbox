@@ -28,7 +28,6 @@ TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
-from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
 from SlicerBoneImagingToolboxLib.spine_segmentation_batch import (
     build_spine_segmentation_batch_commands,
     discover_spine_segmentation_batch_cases,
@@ -160,6 +159,7 @@ class SpineSegmentationCT(ScriptedLoadableModule):
         super().__init__(parent)
         parent.title = "Spine Segmentation"
         parent.categories = ["Bone Imaging.CT Analysis"]
+        parent.icon = qt.QIcon(str(Path(__file__).with_name("Resources") / "Icons" / "SpineSegmentationCT.png"))
         parent.index = 10
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
@@ -371,7 +371,7 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
         elif mode == "conda":
             raise RuntimeError(
                 f"Conda runtime Python does not exist: {conda_path}. "
-                "Click Install / Update Conda MPS Runtime or choose a valid Python path."
+                "Use the Setup module to install runtime packages or choose a valid Python path."
             )
 
         python_exe = self._python_slicer_executable()
@@ -603,10 +603,6 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         self._currentInputPath = None
         self._currentOutputDir = None
         self._currentMode = "full"
-        self._spineBatchCases = []
-        self._spineBatchCommands = []
-        self._spineBatchCommandIndex = 0
-        self._spineBatchDatasetRoot = None
 
         self._build_main_section()
         self.layout.addStretch(1)
@@ -619,9 +615,7 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
     def _build_main_section(self):
         self.spineModeTabs = qt.QTabWidget()
         self.scenePage = qt.QWidget()
-        self.batchPage = qt.QWidget()
         self.spineModeTabs.addTab(self.scenePage, "Scene")
-        self.spineModeTabs.addTab(self.batchPage, "Batch")
         self.layout.addWidget(self.spineModeTabs)
 
         scene_layout = qt.QVBoxLayout(self.scenePage)
@@ -697,29 +691,11 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
         form.addRow(self.progressBar)
         scene_layout.addStretch(1)
 
-        self._build_batch_section(self.batchPage)
-
         self.runtimeBox = ctk.ctkCollapsibleButton()
         self.runtimeBox.text = "Runtime setup"
         self.runtimeBox.collapsed = True
         self.layout.addWidget(self.runtimeBox)
         runtime_form = qt.QFormLayout(self.runtimeBox)
-
-        self.installCondaButton = qt.QPushButton("Install Conda MPS Runtime")
-        self.updateToolboxButton = qt.QPushButton("Check Toolbox Updates")
-        self._tip(
-            self.installCondaButton,
-            "Create or update the arm64 conda runtime used for faster Apple Silicon inference outside Slicer Python.",
-        )
-        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        self.installCondaButton.clicked.connect(self._install_conda_runtime)
-        self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
-        install_row_widget = qt.QWidget()
-        install_row = qt.QHBoxLayout(install_row_widget)
-        install_row.setContentsMargins(0, 0, 0, 0)
-        install_row.addWidget(self.installCondaButton)
-        install_row.addWidget(self.updateToolboxButton)
-        runtime_form.addRow("Install", install_row_widget)
 
         self.runtimeCombo = qt.QComboBox()
         for label, value in [
@@ -893,9 +869,6 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
             self._refresh_status()
         except Exception as exc:
             self._error(exc)
-
-    def _check_toolbox_updates(self):
-        run_toolbox_update_dialog(__file__, log=self._append_log)
 
     def _conda_python_path(self):
         return Path(self.condaPythonEdit.text).expanduser()
@@ -1153,7 +1126,8 @@ class SpineSegmentationCTWidget(ScriptedLoadableModuleWidget):
     def _set_running(self, running, text):
         self.runButton.enabled = not bool(running)
         self.stopButton.enabled = bool(running)
-        self.installCondaButton.enabled = not bool(running)
+        if hasattr(self, "installCondaButton"):
+            self.installCondaButton.enabled = not bool(running)
         self.probeRuntimeButton.enabled = not bool(running)
         self.progressLabel.text = str(text)
         if running:

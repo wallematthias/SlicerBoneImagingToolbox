@@ -1,4 +1,4 @@
-# HR-pQCT Batch Layout Contract
+# Batch Processor Layout Contract
 
 ## Goal
 
@@ -6,7 +6,7 @@ Define a stable dataset, derivative, and batch-job contract for HR-pQCT workflow
 
 ## Design Position
 
-HR-pQCT Batch should require a normalized dataset. Loose historical filenames remain acceptable for discovery and normalization, but not as the stable execution contract. The normalization helper may rename data into the contract, write a manifest of every rename, and undo the rename after processing if the user wants the original filenames back.
+Batch Processor should require a normalized dataset. Loose historical filenames remain acceptable for discovery and normalization, but not as the stable execution contract. The normalization helper may rename data into the contract, write a manifest of every rename, and undo the rename after processing if the user wants the original filenames back.
 
 The layout contract lives in `bone-imaging-derivatives`. Processing packages and Slicer modules must not invent output folders. They ask the shared package to discover artifacts, plan jobs, write derivative paths, write manifests, and decide whether compatible outputs already exist.
 
@@ -48,7 +48,7 @@ If a timepoint is known, preserve the meaningful label after normalization:
 
 If only one timepoint is present and no session can be inferred, the normalization helper assigns `ses-001`. This keeps single-timepoint tools such as contouring, microarchitecture, plate/rod morphometry, FEA, and motion scoring usable without forcing the user to invent a longitudinal label.
 
-If multiple timepoints are present and no stable order can be inferred, HR-pQCT Batch must stop at the normalization/preflight table and ask the user to assign sessions before running longitudinal tools. Single-session tools may still run row-by-row after the user confirms the mapping.
+If multiple timepoints are present and no stable order can be inferred, Batch Processor must stop at the normalization/preflight table and ask the user to assign sessions before running longitudinal tools. Single-session tools may still run row-by-row after the user confirms the mapping.
 
 When AIM metadata are available, discovery should use `py-aimio`/`aim_info` to validate and enrich session assignment. Filename parsing remains the first pass because it also supports NIfTI, NRRD, MHA, and other non-AIM files, but AIM metadata should be used to check:
 
@@ -126,7 +126,7 @@ The expected public families are:
 - `Mechanoregulation`: combined remodelling and mechanical stimulus outputs
 - `MotionScoring`: motion scores, diagnostic images, and review tables
 
-Motion scoring is the least perfect fit because it is a quality-control tool rather than a derivative consumer. It should still write outputs under `derivatives/MotionScoring/sub-*/ses-*/xct/` and participate in HR-pQCT Batch as a single-session tool.
+Motion scoring is the least perfect fit because it is a quality-control tool rather than a derivative consumer. It should still write outputs under `derivatives/MotionScoring/sub-*/ses-*/xct/` and participate in Batch Processor as a single-session tool.
 
 ## Filename Pattern
 
@@ -324,11 +324,11 @@ Outputs:
 - diagnostic PNG or image
 - optional CSV/table
 
-It can run from HR-pQCT Batch as a single-session quality-control job. It does not need the same ROI/mask dependency model as analysis tools.
+It can run from Batch Processor as a single-session quality-control job. It does not need the same ROI/mask dependency model as analysis tools.
 
-## HR-pQCT Batch Module
+## Batch Processor Module
 
-HR-pQCT Batch is a stable dataset processor, not a loose-file importer.
+Batch Processor is a stable dataset processor, not a loose-file importer.
 
 Flow:
 
@@ -343,11 +343,11 @@ Flow:
 9. Monitor progress.
 10. Load selected outputs.
 
-The module should not replace expert batch tabs immediately. Tool-specific batch tabs remain useful for focused workflows and debugging. HR-pQCT Batch becomes the recommended stable path for full-dataset processing.
+The module should not replace expert batch tabs immediately. Tool-specific batch tabs remain useful for focused workflows and debugging. Batch Processor becomes the recommended stable path for full-dataset processing.
 
 ## Batch Table Interaction Contract
 
-Every current and future batch mode should follow the same table interaction model, whether it appears in HR-pQCT Batch or inside a tool-specific expert tab.
+Every current and future batch mode should follow the same table interaction model, whether it appears in Batch Processor or inside a tool-specific expert tab.
 
 Required controls:
 
@@ -445,7 +445,7 @@ If compatible outputs exist, the job status is `loadable` or `reused`. If `skip_
 
 This contract is the forward path:
 
-- HR-pQCT Batch requires normalized datasets.
+- Batch Processor requires normalized datasets.
 - Loose filenames are for normalization only.
 - Derivatives are written through `bone-imaging-derivatives`.
 - VOI is encoded in filenames and manifest metadata, not folder levels.

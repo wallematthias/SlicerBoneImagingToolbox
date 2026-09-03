@@ -7,6 +7,8 @@ import slicer
 DEFAULT_BUILTIN_MODULE_DIRS = (
     "Setup/BoneImagingToolboxSetup",
     "IOTools/ScancoIO",
+    "IOTools/DatasetNamingHelper",
+    "IOTools/BatchProcessor",
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
     "HRpQCTTools/DeriveLabelsHRpQCT",
@@ -21,9 +23,10 @@ LEGACY_MODULE_DIR_NAMES = {
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "ScancoIO",
+    "BatchProcessor",
+    "HRpQCTBatch",
     "SegmentationHRpQCT",
     "DeriveLabelsHRpQCT",
-    "RegisteredCommonRegion",
     "MicroarchitectureHRpQCT",
     "BoneMicroarchitecture",
     "PlateRodMorphometryHRpQCT",
@@ -65,6 +68,8 @@ def _is_stale_toolbox_path(path, repo_root, active_module_paths):
     resolved = path_obj.resolve()
     if str(resolved) in active_module_paths:
         return False
+    if resolved.name in LEGACY_MODULE_DIR_NAMES:
+        return True
     try:
         resolved.relative_to(repo_root)
     except ValueError:

@@ -6,6 +6,7 @@ import json
 from importlib import metadata
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -40,7 +41,6 @@ from SlicerBoneImagingToolboxLib.segmentation_methods import (  # noqa: E402
     ENDOSTEAL_CONTOUR_METHODS,
     PERIOSTEAL_CONTOUR_METHODS,
 )
-from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog  # noqa: E402
 
 from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModule,
@@ -84,7 +84,7 @@ class BoneMicroarchitecture(ScriptedLoadableModule):
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
-            "Compute HR-pQCT microarchitecture measurements from Slicer masks.\n"
+            "Compute bone microarchitecture measurements, including Tt.BMD, from Slicer masks.\n"
             f"Module version: {MODULE_VERSION}"
         )
         parent.acknowledgementText = (
@@ -313,7 +313,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             root = Path(output_text).expanduser()
         else:
             root = Path(str(dataset_root)).expanduser()
-        return self._derivative_family_root(root, "Microarchitecture") / REGISTERED_MICROARCHITECTURE_DIR_NAME
+        return self._derivative_family_root(root, "Microarchitecture")
 
     def _derivative_family_root(self, root, family):
         root = Path(str(root)).expanduser()
@@ -325,15 +325,19 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             return root / family
         return root / "derivatives" / family
 
-    def registered_subject_site_dir(self, output_root, subject_id, site):
-        return Path(output_root) / f"sub-{subject_id}" / f"site-{site or 'unknown'}"
+    @staticmethod
+    def _voi_token(site):
+        return re.sub(r"[^A-Za-z0-9]+", "", str(site or "").strip()).lower() or "unknown"
+
+    def registered_subject_dir(self, output_root, subject_id):
+        return Path(output_root) / f"sub-{subject_id}"
 
     def registered_session_output_dir(self, output_root, row):
         return (
-            self.registered_subject_site_dir(output_root, row["subject_id"], row["site"])
-            / "native_space"
+            self.registered_subject_dir(output_root, row["subject_id"])
             / f"ses-{row['session_id']}"
-            / "microarchitecture"
+            / "xct"
+            / "measurements"
         )
 
     def discover_registered_series(self, dataset_root, *, subject_filter="", site_filter=""):
@@ -435,10 +439,10 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
     def _canonical_microarchitecture_site(site):
         normalized = str(site or "").strip().lower()
         return {
-            "rl": "radius_left",
-            "rr": "radius_right",
-            "tl": "tibia_left",
-            "tr": "tibia_right",
+            "rl": "radiusleft",
+            "rr": "radiusright",
+            "tl": "tibialeft",
+            "tr": "tibiaright",
         }.get(normalized, normalized)
 
     @staticmethod
@@ -478,11 +482,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         root = self.registered_microarchitecture_root(dataset_root, output_root)
         root.mkdir(parents=True, exist_ok=True)
         for row in rows:
-            subject_site_dir = self.registered_subject_site_dir(root, row["subject_id"], row["site"])
-            for relative_dir in (
-                f"native_space/ses-{row['session_id']}/microarchitecture/maps",
-            ):
-                (subject_site_dir / relative_dir).mkdir(parents=True, exist_ok=True)
+            (self.registered_session_output_dir(root, row) / "maps").mkdir(parents=True, exist_ok=True)
         manifest = {
             "workflow": REGISTERED_MICROARCHITECTURE_DIR_NAME,
             "dataset_root": str(Path(str(dataset_root)).expanduser()),
@@ -569,18 +569,17 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         return (
             self._shared_common_region_root(dataset_root)
             / f"sub-{row['subject_id']}"
-            / f"site-{row['site']}"
-            / f"stack-{int(row.get('stack_index', 1)):02d}"
+            / "xct"
         )
 
     def _shared_common_region_common_mask_path(self, dataset_root, row):
-        return self._shared_common_region_subject_site_dir(dataset_root, row) / "common_space" / "masks" / (
-            f"sub-{row['subject_id']}_site-{row['site']}_stack-{int(row.get('stack_index', 1)):02d}_mask-scan-region_common.nii.gz"
+        return self._shared_common_region_subject_site_dir(dataset_root, row) / "masks" / (
+            f"sub-{row['subject_id']}_voi-{self._voi_token(row['site'])}_stack-{int(row.get('stack_index', 1)):02d}_mask-scan-region_common.nii.gz"
         )
 
     def _shared_common_region_native_mask_path(self, dataset_root, row):
-        return self._shared_common_region_subject_site_dir(dataset_root, row) / "native_space" / f"ses-{row['session_id']}" / "masks" / (
-            f"sub-{row['subject_id']}_ses-{row['session_id']}_site-{row['site']}_mask-scan-region_native_common.nii.gz"
+        return self._shared_common_region_root(dataset_root) / f"sub-{row['subject_id']}" / f"ses-{row['session_id']}" / "xct" / "masks" / (
+            f"sub-{row['subject_id']}_ses-{row['session_id']}_voi-{self._voi_token(row['site'])}_mask-scan-region_native_common.nii.gz"
         )
 
     def _read_existing_registered_transform(self, path):
@@ -596,12 +595,11 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             / "derivatives"
             / "Registration"
             / f"sub-{moving_row['subject_id']}"
-            / f"site-{moving_row['site']}"
-            / "registration"
-            / f"stack-{int(moving_row.get('stack_index', 1)):02d}"
+            / f"ses-{moving_row['session_id']}"
+            / "xct"
             / "pairwise"
             / (
-                f"sub-{moving_row['subject_id']}_site-{moving_row['site']}_"
+                f"sub-{moving_row['subject_id']}_ses-{moving_row['session_id']}_voi-{self._voi_token(moving_row['site'])}_"
                 f"stack-{int(moving_row.get('stack_index', 1)):02d}_"
                 f"from-ses-{moving_row['session_id']}_to-ses-{fixed_row['session_id']}_pairwise.tfm"
             )
@@ -627,12 +625,11 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             / "derivatives"
             / "Registration"
             / f"sub-{row['subject_id']}"
-            / f"site-{row['site']}"
-            / "registration"
-            / f"stack-{int(row.get('stack_index', 1)):02d}"
+            / f"ses-{row['session_id']}"
+            / "xct"
             / "baseline"
             / (
-                f"sub-{row['subject_id']}_site-{row['site']}_"
+                f"sub-{row['subject_id']}_ses-{row['session_id']}_voi-{self._voi_token(row['site'])}_"
                 f"stack-{int(row.get('stack_index', 1)):02d}_"
                 f"from-ses-{row['session_id']}_to-ses-{baseline_row['session_id']}_baseline.tfm"
             )
@@ -990,11 +987,12 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             session_dir = self.registered_session_output_dir(root, row)
             maps_dir = session_dir / "maps"
             maps_dir.mkdir(parents=True, exist_ok=True)
-            csv_path = session_dir / "measurements.csv"
+            prefix = f"sub-{row['subject_id']}_ses-{row['session_id']}_voi-{self._voi_token(row['site'])}"
+            csv_path = session_dir / f"{prefix}_measurements.csv"
             write_measurement_csv(csv_path, result.measurements, result.maps)
             for map_role, array in result.maps.items():
                 map_image = self._array_to_sitk_like(array, trab_mask)
-                sitk.WriteImage(map_image, str(maps_dir / f"{map_role.replace('.', '')}.nii.gz"))
+                sitk.WriteImage(map_image, str(maps_dir / f"{prefix}_map-{map_role.lower().replace('.', '-')}.nii.gz"))
             for summary_row in measurement_rows(result.measurements, result.maps):
                 long_row = {
                     "Subject": row["subject_id"],
@@ -1188,7 +1186,88 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             volume_node.CopyOrientation(reference_node)
         volume_node.SetAttribute("BoneImaging.Microarchitecture.Engine", "bone_microarchitecture")
         volume_node.SetAttribute("BoneImaging.Microarchitecture.MapRole", map_role)
+        self._style_microarchitecture_map(volume_node, map_role)
         return volume_node
+
+    def _style_microarchitecture_map(self, volume_node, map_role):
+        if volume_node is None:
+            return
+        try:
+            volume_node.CreateDefaultDisplayNodes()
+            display_node = volume_node.GetDisplayNode()
+        except Exception:
+            display_node = None
+        if display_node is None:
+            return
+        try:
+            display_node.SetAndObserveColorNodeID("vtkMRMLColorTableNodeGrey")
+        except Exception:
+            pass
+        for method_name in ("AutoWindowLevelOn", "AutoThresholdOff"):
+            method = getattr(display_node, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    pass
+
+    def _map_role_from_path(self, path):
+        stem = str(Path(path).name)
+        if stem.endswith(".nii.gz"):
+            stem = stem[:-7]
+        else:
+            stem = Path(stem).stem
+        marker = "_map-"
+        if marker in stem:
+            token = stem.rsplit(marker, 1)[-1]
+        else:
+            token = stem
+        return token.replace("-", ".")
+
+    @staticmethod
+    def _microarchitecture_map_folder_name(path, group=None):
+        path = Path(str(path))
+        path_text = str(path).replace("\\", "/").lower()
+        suffix = "_xct_registered_microstructure" if "/registered_measurements/" in path_text else "_xct_microstructure"
+        match = re.search(r"(?i)(sub-[^_]+)_(ses-[^_]+)_voi-([^_]+)", path.name)
+        if match:
+            return f"{match.group(1)}_{match.group(2)}_voi-{match.group(3)}{suffix}"
+        if group:
+            subject = str(group.get("subject") or "microarchitecture")
+            session = str(group.get("session") or "session")
+            site = str(group.get("site") or group.get("voi") or "voi")
+            if not subject.startswith("sub-"):
+                subject = f"sub-{subject}"
+            if not session.startswith("ses-"):
+                session = f"ses-{session}"
+            if not site.startswith("voi-"):
+                site = f"voi-{site}"
+            return f"{subject}_{session}_{site}{suffix}"
+        return f"microarchitecture{suffix}"
+
+    @staticmethod
+    def _put_node_in_subject_hierarchy_folder(node, folder_name):
+        try:
+            if node is None or not folder_name:
+                return False
+            sh_node = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+            if sh_node is None:
+                return False
+            scene_item = sh_node.GetSceneItemID()
+            folder_item = sh_node.GetItemChildWithName(scene_item, str(folder_name))
+            if not folder_item:
+                folder_item = sh_node.CreateFolderItem(scene_item, str(folder_name))
+            try:
+                slicer.app.processEvents()
+            except Exception:
+                pass
+            node_item = sh_node.GetItemByDataNode(node)
+            if node_item:
+                sh_node.SetItemParent(node_item, folder_item)
+                return True
+            return False
+        except Exception:
+            return False
 
     def _array_to_sitk_like(self, array, reference_image):
         image = sitk.GetImageFromArray(np.asarray(array, dtype=np.float32))
@@ -1479,9 +1558,9 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._lastMetrics = None
         self._lastMaps = None
         self._lastTableNode = None
+        self._lastTableBaseName = "microarchitecture_measurements"
         self._lastMeasurementColumns = []
         self._lastMeasurementRows = []
-        self._lastFilteredTableNode = None
         self._lastRegisteredRows = []
         self._allRegisteredRows = []
 
@@ -1500,19 +1579,6 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self.statusLabel.wordWrap = True
         self._tip(self.statusLabel, "Shows whether the microarchitecture core is available in Slicer Python.")
         form.addRow("Status", self.statusLabel)
-
-        status_buttons = qt.QWidget()
-        status_layout = qt.QHBoxLayout(status_buttons)
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        self.installButton = qt.QPushButton("Install / update microarchitecture core")
-        self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
-        self._tip(self.installButton, "Install or update the lightweight Python core used for microarchitecture measurements.")
-        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        self.installButton.clicked.connect(self._install_core)
-        self.updateToolboxButton.clicked.connect(self._check_toolbox_updates)
-        status_layout.addWidget(self.installButton)
-        status_layout.addWidget(self.updateToolboxButton)
-        form.addRow(status_buttons)
 
         self.grayscaleSelector = slicer.qMRMLNodeComboBox()
         self.grayscaleSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
@@ -1635,20 +1701,6 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         )
         form.addRow(self.runButton)
 
-        filter_widget = qt.QWidget()
-        filter_layout = qt.QHBoxLayout(filter_widget)
-        filter_layout.setContentsMargins(0, 0, 0, 0)
-        self.measurementFilterEdit = qt.QLineEdit()
-        self.measurementFilterEdit.placeholderText = "Filter rows, e.g. Tb.BMD or cortical"
-        self.measurementFilterEdit.textChanged.connect(self._apply_measurement_filter)
-        self._tip(self.measurementFilterEdit, "Filter the current measurement table by parameter, compartment, statistic, units, or any visible value.")
-        self.clearMeasurementFilterButton = qt.QPushButton("Clear")
-        self.clearMeasurementFilterButton.clicked.connect(self.measurementFilterEdit.clear)
-        self._tip(self.clearMeasurementFilterButton, "Clear the measurement table filter.")
-        filter_layout.addWidget(self.measurementFilterEdit)
-        filter_layout.addWidget(self.clearMeasurementFilterButton)
-        form.addRow("Filter results", filter_widget)
-
         self.exportCsvButton = qt.QPushButton("Export measurements CSV")
         self.exportCsvButton.enabled = False
         self.exportCsvButton.clicked.connect(self._export_measurements_csv)
@@ -1662,87 +1714,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         single_layout.addWidget(self.logText)
         single_layout.addStretch(1)
 
-        batch_tab = qt.QWidget()
-        batch_layout = qt.QVBoxLayout(batch_tab)
-        self._folderBatchGroups = []
-        self._folderBatchQueue = []
-        self._folderBatchCurrent = None
-        self._folderBatchProcess = None
-        discovery_box = qt.QGroupBox("Discovery")
-        discovery_form = qt.QFormLayout(discovery_box)
-        batch_layout.addWidget(discovery_box)
-        self.folderDatasetRootEdit = qt.QLineEdit()
-        self.folderBrowseDatasetButton = qt.QPushButton("Browse")
-        self.folderBrowseDatasetButton.clicked.connect(self._browse_folder_dataset_root)
-        self.folderDiscoverButton = qt.QPushButton("Discover")
-        self.folderBatchTable = qt.QTableWidget()
-        self._configure_folder_batch_table_for_mode()
-        self.folderBatchTable.minimumHeight = 160
-        try:
-            self.folderBatchTable.horizontalHeader().setStretchLastSection(False)
-            self.folderBatchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
-        except Exception:
-            pass
-        self.folderDiscoverButton.clicked.connect(self._discover_folder_batch_groups)
-        folder_root_row = qt.QWidget()
-        folder_root_layout = qt.QHBoxLayout(folder_root_row)
-        folder_root_layout.setContentsMargins(0, 0, 0, 0)
-        folder_root_layout.addWidget(self.folderDatasetRootEdit, 1)
-        folder_root_layout.addWidget(self.folderBrowseDatasetButton)
-        discovery_form.addRow("Dataset root", folder_root_row)
-        discovery_form.addRow("", self.folderDiscoverButton)
-        batch_layout.addWidget(self.folderBatchTable)
-
-        workflow_box = qt.QGroupBox("Workflow")
-        workflow_form = qt.QFormLayout(workflow_box)
-        batch_layout.addWidget(workflow_box)
-        self.folderRegisteredCheck = qt.QCheckBox()
-        self.folderRegisteredCheck.checked = False
-        self.folderRegisteredCheck.toggled.connect(self._update_folder_registered_options)
-        self.folderRegisteredCheck.toggled.connect(self._discover_folder_batch_groups)
-        self.folderRegisteredWorkflowCombo = qt.QComboBox()
-        self.folderRegisteredWorkflowCombo.addItem("Measure microarchitecture", "measure")
-        self.folderRegisteredWorkflowCombo.addItem("Prepare common region only", "common_region_only")
-        self._tip(
-            self.folderRegisteredWorkflowCombo,
-            "For registered series, either run microarchitecture after preparing shared Registration/CommonRegion derivatives, or stop after preparing the common region.",
-        )
-        self.folderSkipExistingCheck = qt.QCheckBox()
-        self.folderSkipExistingCheck.checked = True
-        self.folderRunButton = qt.QPushButton("Run all")
-        self.folderBatchStatus = qt.QLabel()
-        self.folderBatchStatus.wordWrap = True
-        self.folderRunButton.clicked.connect(self._run_folder_batch)
-        workflow_form.addRow("Register", self.folderRegisteredCheck)
-        workflow_form.addRow("Registered workflow", self.folderRegisteredWorkflowCombo)
-        workflow_form.addRow("Skip existing", self.folderSkipExistingCheck)
-
-        batch_thickness_row = qt.QWidget()
-        batch_thickness_layout = qt.QHBoxLayout(batch_thickness_row)
-        batch_thickness_layout.setContentsMargins(0, 0, 0, 0)
-        self.folderThicknessMethodCombo = qt.QComboBox()
-        for label, value in [("Exact sphere fitting", "hildebrand"), ("Bounded EDT", "edt")]:
-            self.folderThicknessMethodCombo.addItem(label, value)
-        self.folderThicknessBackendCombo = qt.QComboBox()
-        for label, value in [("Auto", "auto"), ("CPU", "cpu"), ("Apple MPS (macOS)", "mps"), ("OpenCL GPU", "opencl")]:
-            self.folderThicknessBackendCombo.addItem(label, value)
-        batch_thickness_layout.addWidget(qt.QLabel("Method"))
-        batch_thickness_layout.addWidget(self.folderThicknessMethodCombo)
-        batch_thickness_layout.addWidget(qt.QLabel("Backend"))
-        batch_thickness_layout.addWidget(self.folderThicknessBackendCombo)
-        workflow_form.addRow("Thickness", batch_thickness_row)
-        workflow_form.addRow(self.folderRunButton)
-        self._update_folder_registered_options()
-        batch_layout.addWidget(self.folderBatchStatus)
-        self.folderBatchLogText = qt.QTextEdit()
-        self.folderBatchLogText.readOnly = True
-        self.folderBatchLogText.minimumHeight = 110
-        self.folderBatchLogText.placeholderText = "Batch log"
-        batch_layout.addWidget(self.folderBatchLogText)
-        batch_layout.addStretch(1)
-
         self.modeTabs.addTab(single_tab, "Scene")
-        self.modeTabs.addTab(batch_tab, "Batch")
         self.layout.addStretch(1)
         self._update_dependency_ui()
 
@@ -1928,6 +1900,7 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         root = Path(str(root)).expanduser()
         candidates = []
         for session_part in self._folder_result_session_parts(session):
+            prefix = f"sub-{subject}_{session_part}_voi-{BoneMicroarchitectureLogic._voi_token(site)}"
             for family_root in (
                 root / "derivatives" / "Microarchitecture",
                 root / "Microarchitecture",
@@ -1935,11 +1908,10 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
                 candidates.append(
                     family_root
                     / f"sub-{subject}"
-                    / f"site-{site}"
-                    / "native_space"
                     / session_part
+                    / "xct"
                     / "measurements"
-                    / f"sub-{subject}_{session_part}_site-{site}_measurements.csv"
+                    / f"{prefix}_measurements.csv"
                 )
         existing = next((path for path in candidates if path.exists()), None)
         if existing is not None or existing_only:
@@ -2081,21 +2053,10 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             long_csv = str(outputs.get("long_csv") or "")
             loaded_table = None
             if long_csv and Path(long_csv).exists():
-                loaded = slicer.util.loadTable(long_csv)
-                if isinstance(loaded, tuple):
-                    success, loaded_table = loaded
-                else:
-                    success, loaded_table = bool(loaded), loaded
-                if success and loaded_table is not None:
-                    try:
-                        loaded_table.SetName(Path(long_csv).stem)
-                    except Exception:
-                        pass
-                    self._lastTableNode = loaded_table
-                    self._cache_measurement_rows_from_table(loaded_table)
-                    self.exportCsvButton.enabled = True
-                    self._show_measurement_table(loaded_table)
-                    self._apply_measurement_filter()
+                loaded_table = self._measurement_table_from_csv(long_csv, Path(long_csv).stem)
+                self._lastTableNode = loaded_table
+                self.exportCsvButton.enabled = True
+                self._show_measurement_table(loaded_table)
             loaded_maps = 0
             for csv_path in outputs.get("session_csvs", []) or []:
                 maps_dir = Path(str(csv_path)).expanduser().parent.parent / "maps"
@@ -2116,6 +2077,11 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
                             node.SetName(name)
                         except Exception:
                             pass
+                        self._style_microarchitecture_map(node, self._map_role_from_path(map_path))
+                        self._put_node_in_subject_hierarchy_folder(
+                            node,
+                            self._microarchitecture_map_folder_name(map_path, group),
+                        )
                         loaded_maps += 1
             self.folderBatchStatus.text = f"Loaded registered measurements and {loaded_maps} map volume(s)."
         except Exception as exc:
@@ -2259,13 +2225,6 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._log("[setup] microarchitecture core installed or updated.")
         self._update_dependency_ui()
 
-    def _check_toolbox_updates(self):
-        try:
-            run_toolbox_update_dialog(__file__, parent=slicer.util.mainWindow())
-        except Exception as exc:
-            slicer.util.errorDisplay(f"Toolbox update check failed:\n{exc}")
-            self._log(f"[toolbox] update check failed: {exc}")
-
     def _show_measurement_table(self, table_node):
         try:
             slicer.util.selectModule("Tables")
@@ -2290,24 +2249,15 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
             rows.append(row)
         self._cache_measurement_rows(columns, rows)
 
-    def _filtered_measurement_rows(self):
-        query = str(getattr(self.measurementFilterEdit, "text", "") or "").strip().lower()
-        if not query:
-            return list(self._lastMeasurementRows)
-        terms = [term for term in query.split() if term]
-        if not terms:
-            return list(self._lastMeasurementRows)
-        filtered = []
-        for row in self._lastMeasurementRows:
-            haystack = " ".join(str(row.get(column, "")) for column in self._lastMeasurementColumns).lower()
-            if all(term in haystack for term in terms):
-                filtered.append(row)
-        return filtered
-
     def _measurement_table_from_rows(self, rows, name):
+        if self._lastTableNode is not None:
+            try:
+                slicer.mrmlScene.RemoveNode(self._lastTableNode)
+            except Exception:
+                pass
+            self._lastTableNode = None
         table_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", name)
         table_node.SetAttribute("BoneImaging.Microarchitecture.Engine", "bone_microarchitecture")
-        table_node.SetAttribute("BoneImaging.Microarchitecture.Filtered", "true")
         for column_name in self._lastMeasurementColumns:
             column = vtk.vtkStringArray()
             column.SetName(column_name)
@@ -2317,31 +2267,14 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         table_node.Modified()
         return table_node
 
-    def _apply_measurement_filter(self, *_args):
-        if not self._lastTableNode or not self._lastMeasurementRows:
-            return
-        query = str(self.measurementFilterEdit.text or "").strip()
-        if self._lastFilteredTableNode is not None:
-            try:
-                slicer.mrmlScene.RemoveNode(self._lastFilteredTableNode)
-            except Exception:
-                pass
-            self._lastFilteredTableNode = None
-        if not query:
-            self._show_measurement_table(self._lastTableNode)
-            return
-        filtered_rows = self._filtered_measurement_rows()
-        table_name = f"{self._lastTableNode.GetName()}_filtered"
-        self._lastFilteredTableNode = self._measurement_table_from_rows(filtered_rows, table_name)
-        self._show_measurement_table(self._lastFilteredTableNode)
-        self._log(f"[microarchitecture] filter '{query}' matched {len(filtered_rows)} of {len(self._lastMeasurementRows)} row(s).")
-
-    def _write_filtered_measurement_csv(self, path):
-        rows = self._filtered_measurement_rows()
-        with open(path, "w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=list(self._lastMeasurementColumns))
-            writer.writeheader()
-            writer.writerows(rows)
+    def _measurement_table_from_csv(self, path, name=None):
+        with open(path, newline="", encoding="utf-8") as stream:
+            reader = csv.DictReader(stream)
+            rows = [dict(row) for row in reader]
+            columns = list(reader.fieldnames or [])
+        self._cache_measurement_rows(columns, rows)
+        self._lastTableBaseName = str(name or Path(path).stem)
+        return self._measurement_table_from_rows(rows, self._lastTableBaseName)
 
     def _export_measurements_csv(self):
         if not self._lastMetrics and not self._lastMeasurementRows:
@@ -2361,12 +2294,9 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         if not path.lower().endswith(".csv"):
             path = f"{path}.csv"
         try:
-            if self._lastMeasurementRows and (str(self.measurementFilterEdit.text or "").strip() or not self._lastMetrics):
-                self._write_filtered_measurement_csv(path)
-            else:
-                from bone_microarchitecture.results import write_measurement_csv
+            from bone_microarchitecture.results import write_measurement_csv
 
-                write_measurement_csv(path, self._lastMetrics, self._lastMaps)
+            write_measurement_csv(path, self._lastMetrics, self._lastMaps)
         except Exception as exc:
             slicer.util.errorDisplay(f"Measurement CSV export failed:\n{exc}")
             self._log(f"[export] failed: {exc}")
@@ -2410,12 +2340,12 @@ class BoneMicroarchitectureWidget(ScriptedLoadableModuleWidget):
         self._lastMetrics = dict(metrics)
         self._lastMaps = dict(maps)
         self._lastTableNode = table_node
+        self._lastTableBaseName = table_node.GetName()
         from bone_microarchitecture.results import SUMMARY_COLUMNS, measurement_rows
 
         self._cache_measurement_rows(SUMMARY_COLUMNS, measurement_rows(metrics, maps))
         self.exportCsvButton.enabled = True
         self._show_measurement_table(table_node)
-        self._apply_measurement_filter()
         self._log(f"[microarchitecture] wrote table: {table_node.GetName()}")
         for key, node in output_nodes.items():
             if key != "table":

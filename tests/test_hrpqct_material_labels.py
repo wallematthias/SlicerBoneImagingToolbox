@@ -52,7 +52,7 @@ def test_material_label_arrays_support_derived_cortical_region():
     )
 
     assert counts == {"trab": 4, "cort": 4, "cort_source": "derived_from_full_minus_trab"}
-    assert np.count_nonzero(material == 126) == 4
+    assert np.count_nonzero(material == 100) == 4
     assert np.count_nonzero(material == 127) == 4
 
 

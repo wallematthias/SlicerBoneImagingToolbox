@@ -163,6 +163,16 @@ def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
     assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 
+def test_bone_contouring_install_uses_local_editable_checkout() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+    commands = install_commands(specs["bone-contouring"], installed=False)
+
+    assert len(commands) == 2
+    assert commands[0] == "--prefer-binary numpy>=1.26,<3.0 SimpleITK>=2.3"
+    assert commands[1].startswith("--no-deps -e ")
+    assert commands[1].endswith("/bone-contouring")
+
+
 def test_microarchitecture_runtime_package_has_user_facing_setup_name() -> None:
     specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
 

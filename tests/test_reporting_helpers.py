@@ -24,8 +24,8 @@ from TimelapsedHRpQCTReporting import (  # noqa: E402
 def test_profile_order_leads_with_eth_uofc_then_multistack() -> None:
     assert PROFILE_DISPLAY_ORDER[:2] == ["eth-uofc", "multistack"]
     assert PROFILE_DISPLAY_ORDER.index("ped-fx") < PROFILE_DISPLAY_ORDER.index("standard")
-    assert "shriners" not in PROFILE_DISPLAY_ORDER
-    assert "ucsf" not in PROFILE_DISPLAY_ORDER
+    assert "shriners" in PROFILE_DISPLAY_ORDER
+    assert "ucsf" in PROFILE_DISPLAY_ORDER
 
 
 def test_legacy_reporting_module_reexports_helpers() -> None:

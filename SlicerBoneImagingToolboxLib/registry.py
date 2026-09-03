@@ -12,6 +12,8 @@ MANIFEST_NAME = "toolbox_modules.json"
 DEFAULT_BUILTIN_MODULE_DIRS = (
     "Setup/BoneImagingToolboxSetup",
     "IOTools/ScancoIO",
+    "IOTools/DatasetNamingHelper",
+    "IOTools/BatchProcessor",
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
     "HRpQCTTools/DeriveLabelsHRpQCT",

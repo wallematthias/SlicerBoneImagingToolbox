@@ -62,6 +62,12 @@ from slicer.ScriptedLoadableModule import (
 
 
 MODULE_VERSION = "0.2.0"
+SEGMENT_COLORS = {
+    "full": (0.2, 0.8, 0.25),
+    "trab": (0.0, 0.75, 1.0),
+    "cort": (1.0, 0.55, 0.1),
+    "seg": (1.0, 0.95, 0.3),
+}
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
 AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
@@ -172,6 +178,21 @@ METHOD_PRESETS = {
     },
 }
 
+CONTOUR_PROFILE_PRESETS = (
+    ("XtremeCT I - Radius", "xct1", "radius", "laplace_hamming", "standard", "standard"),
+    ("XtremeCT I - Tibia", "xct1", "tibia", "laplace_hamming", "standard", "standard"),
+    ("XtremeCT I - Knee", "xct1", "knee", "laplace_hamming", "standard", "standard"),
+    ("XtremeCT II - Radius", "xct2", "radius", "seg_gauss", "standard", "standard"),
+    ("XtremeCT II - Tibia", "xct2", "tibia", "seg_gauss", "standard", "standard"),
+    ("XtremeCT II - Knee", "xct2", "knee", "seg_gauss", "standard", "standard"),
+    ("XtremeCT II Geodesic - Radius", "xct2", "radius", "seg_gauss", "geodesic_fracture", "standard"),
+    ("XtremeCT II Geodesic - Tibia", "xct2", "tibia", "seg_gauss", "geodesic_fracture", "standard"),
+    ("XtremeCT II Geodesic - Knee", "xct2", "knee", "seg_gauss", "geodesic_fracture", "standard"),
+    ("XtremeCT II LH - Radius", "xct2", "radius", "laplace_hamming", "standard", "standard"),
+    ("XtremeCT II LH - Tibia", "xct2", "tibia", "laplace_hamming", "standard", "standard"),
+    ("XtremeCT II LH - Knee", "xct2", "knee", "laplace_hamming", "standard", "standard"),
+)
+
 SEGMENTATION_METHODS = set(BONE_SEGMENTATION_METHODS)
 PERIOSTEAL_CONTOUR_METHOD_IDS = set(PERIOSTEAL_CONTOUR_METHODS)
 ENDOSTEAL_CONTOUR_METHOD_IDS = set(ENDOSTEAL_CONTOUR_METHODS)
@@ -193,6 +214,33 @@ def _image_output_stem(path):
 
 def _is_aim_path(path):
     return ".aim" in Path(path).name.lower()
+
+
+def _safe_mids_token(value, default="unknown"):
+    text = re.sub(r"[^A-Za-z0-9]+", "", str(value or "").strip()).lower()
+    return text or default
+
+
+def _normalized_batch_output_prefix(item):
+    image_path = Path(item["path"])
+    subject = _safe_mids_token(item.get("subject"), "unparsed")
+    session = _safe_mids_token(item.get("session"), _safe_mids_token(_image_output_stem(image_path)))
+    site = _safe_mids_token(item.get("site") or "unknown")
+    stack = item.get("stack")
+    stack_text = ""
+    if stack not in (None, ""):
+        try:
+            stack_text = f"_stack-{int(stack):02d}"
+        except (TypeError, ValueError):
+            stack_text = f"_stack-{_safe_mids_token(stack)}"
+    return f"sub-{subject}_ses-{session}_voi-{site}{stack_text}"
+
+
+def _batch_prefix_item(item, fallback_site):
+    prefix_item = dict(item or {})
+    if not str(prefix_item.get("site") or "").strip():
+        prefix_item["site"] = fallback_site
+    return prefix_item
 
 
 def _truthy_env(value):
@@ -348,7 +396,7 @@ def _relabel_nonzero_array(array, label):
     return relabelled
 
 
-def _material_labels_from_arrays(seg, trab, cort, *, trab_label=126, cort_label=127, cort_source="cort_mask"):
+def _material_labels_from_arrays(seg, trab, cort, *, trab_label=100, cort_label=127, cort_source="cort_mask"):
     seg = np.asarray(seg, dtype=bool)
     trab = np.asarray(trab, dtype=bool)
     cort = np.asarray(cort, dtype=bool)
@@ -541,6 +589,16 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             return {}
 
     def _write_mask_aim_if_supported(self, mask_image, source_path, output_path, metadata=None, role=None):
+        return self._write_aim_contour_if_supported(
+            mask_image,
+            source_path,
+            output_path,
+            metadata=metadata,
+            role=role,
+            content_type="mask",
+        )
+
+    def _write_aim_contour_if_supported(self, image, source_path, output_path, metadata=None, role=None, content_type="mask"):
         source_path = Path(source_path)
         if ".aim" not in source_path.name.lower():
             return None
@@ -549,14 +607,16 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
 
             metadata = dict(metadata if metadata is not None else self._aim_metadata_from_source(source_path))
             metadata["source_file"] = str(source_path)
+            metadata["content_type"] = str(content_type)
             if role:
-                metadata["mask_role"] = str(role)
+                metadata["contour_role"] = str(role)
+            output_image = sitk.Cast(image > 0, sitk.sitkUInt8) if content_type == "mask" else sitk.Cast(image, sitk.sitkUInt8)
             aim_io.write_aim(
-                sitk.Cast(mask_image > 0, sitk.sitkUInt8),
+                output_image,
                 Path(output_path),
                 metadata=metadata,
                 unit="native",
-                mask=True,
+                mask=content_type == "mask",
             )
             return str(output_path)
         except Exception as exc:
@@ -653,10 +713,11 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             "segmentation_input_reason": "Laplace-Hamming threshold is calibrated for native Scanco attenuation values.",
         }
 
-    def _sitk_to_labelmap(self, image, name, reference_node):
+    def _sitk_to_labelmap(self, image, name, reference_node, *, binary=True):
         with tempfile.TemporaryDirectory(prefix="hrpqct_seg_out_") as temp_dir:
             path = Path(temp_dir) / f"{name}.nrrd"
-            sitk.WriteImage(sitk.Cast(image > 0, sitk.sitkUInt8), str(path))
+            output = sitk.Cast(image > 0, sitk.sitkUInt8) if binary else sitk.Cast(image, sitk.sitkUInt8)
+            sitk.WriteImage(output, str(path))
             loaded = slicer.util.loadLabelVolume(str(path), {"name": name})
         if isinstance(loaded, tuple):
             success, label_node = loaded
@@ -673,6 +734,9 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         if segment is None:
             return
         segment.SetName(str(segment_name))
+        color = SEGMENT_COLORS.get(str(role))
+        if color is not None:
+            segment.SetColor(color[0], color[1], color[2])
         if role is not None and hasattr(segment, "SetTag"):
             segment.SetTag("HRpQCT.Role", str(role))
 
@@ -1120,11 +1184,19 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         if not compartment_split_generated:
             output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
         generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
+        generated.metadata["emitted_label_roles"] = ["fea-materials"]
         for role, image_out, segment_name in output_specs:
             self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node, role)
             if create_labelmaps:
                 label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
                 outputs[role] = label_node
+        if create_labelmaps:
+            outputs["fea-materials"] = self._sitk_to_labelmap(
+                generated.material,
+                f"{prefix}_fea-materials",
+                volume_node,
+                binary=False,
+            )
 
         self._remove_empty_duplicate_segmentation_nodes(segmentation_node)
         if open_segment_editor:
@@ -1485,11 +1557,19 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         if not compartment_split_generated:
             output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
         generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
+        generated.metadata["emitted_label_roles"] = ["fea-materials"]
         for role, image_out, segment_name in output_specs:
             self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node, role)
             if create_labelmaps:
                 label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
                 outputs[role] = label_node
+        if create_labelmaps:
+            outputs["fea-materials"] = self._sitk_to_labelmap(
+                generated.material,
+                f"{prefix}_fea-materials",
+                volume_node,
+                binary=False,
+            )
 
         self._remove_empty_duplicate_segmentation_nodes(segmentation_node)
 
@@ -1547,7 +1627,7 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             if write_aim_output and not is_aim_input:
                 raise ValueError("AIM output requires an AIM input so source scanner metadata can be preserved.")
             source_aim_metadata = self._aim_metadata_from_source(image_path) if is_aim_input else None
-            stem = _image_output_stem(image_path)
+            stem = prefix
             for role in metadata.get("emitted_roles", []):
                 label_node = outputs.get(role)
                 if label_node is None:
@@ -1557,7 +1637,7 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
                     aim_result = self._write_mask_aim_if_supported(
                         mask_image,
                         image_path,
-                        output_dir / f"{stem}_mask-{role}.AIM",
+                        output_dir / f"{stem}_desc-{role}_mask.AIM",
                         metadata=source_aim_metadata,
                         role=role,
                     )
@@ -1567,12 +1647,51 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
                     written[role] = aim_result
                     mask_path = Path(aim_result)
                 else:
-                    out_path = output_dir / f"{stem}_mask-{role}.nii.gz"
+                    out_path = output_dir / f"{stem}_desc-{role}_mask.nii.gz"
                     slicer.util.saveNode(label_node, str(out_path))
                     written[role] = str(out_path)
                     mask_path = out_path
                 sidecars[role] = self._write_mask_sidecar(
                     mask_path,
+                    role=role,
+                    source_path=image_path,
+                    site=site,
+                    segmentation_method=segmentation_method,
+                    periosteal_method=periosteal_contour_method,
+                    endosteal_method=endosteal_contour_method,
+                    output_format="aim" if write_aim_output else "nifti",
+                    params=params,
+                    metadata=metadata,
+                    source_metadata=source_aim_metadata or {},
+                )
+                if not keep_loaded:
+                    slicer.mrmlScene.RemoveNode(label_node)
+            for role in metadata.get("emitted_label_roles", []):
+                label_node = outputs.get(role)
+                if label_node is None:
+                    raise RuntimeError(f"Generated {role} labelmap was not returned by the contour pipeline.")
+                label_image = self._volume_to_sitk(label_node)
+                if write_aim_output:
+                    aim_result = self._write_aim_contour_if_supported(
+                        label_image,
+                        image_path,
+                        output_dir / f"{stem}_desc-{role}_label.AIM",
+                        metadata=source_aim_metadata,
+                        role=role,
+                        content_type="label",
+                    )
+                    if isinstance(aim_result, dict):
+                        raise RuntimeError(f"Could not write AIM {role} labelmap: {aim_result['error']}")
+                    aim_written[role] = aim_result
+                    written[role] = aim_result
+                    label_path = Path(aim_result)
+                else:
+                    out_path = output_dir / f"{stem}_desc-{role}_label.nii.gz"
+                    slicer.util.saveNode(label_node, str(out_path))
+                    written[role] = str(out_path)
+                    label_path = out_path
+                sidecars[role] = self._write_mask_sidecar(
+                    label_path,
                     role=role,
                     source_path=image_path,
                     site=site,
@@ -1609,32 +1728,20 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         super().setup()
         self.logic = SegmentationHRpQCTLogic()
         self._geodesic_cancel_requested = False
-        self._batchImagePaths = []
-        self._batchImageRows = []
-        self._batchRowOutputs = {}
-        self._batchQueue = []
-        self._batchQueueRunning = False
-        self._batchProcess = None
-        self._batchRunningRow = None
-        self._batchProcessStdout = ""
-        self._batchProcessStderr = ""
-        self._batchCancelRequested = False
+        self._suppressMethodCustomSwitch = False
         self._build_segmentation_section()
         self._build_log_section()
         self.layout.addStretch(1)
         self._apply_modality_preset()
         self._apply_preset_values(update_segmentation_method=False)
-        self._refresh_parameter_mode_ui()
         self._refresh_method_dependent_ui()
         self._update_dependency_ui()
         self._log("Ready.")
 
     def _build_segmentation_section(self):
-        self.toolTabs = qt.QTabWidget()
-        self.layout.addWidget(self.toolTabs)
-
-        generate_tab = qt.QWidget()
-        generate_layout = qt.QVBoxLayout(generate_tab)
+        contouring_widget = qt.QWidget()
+        generate_layout = qt.QVBoxLayout(contouring_widget)
+        self.layout.addWidget(contouring_widget)
         form = qt.QFormLayout()
         self._generateForm = form
         self._extraInputRows = {}
@@ -1655,17 +1762,13 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.volumeSelector, "Input volume used to generate masks and bone segmentation.")
         form.addRow("Input volume", self.volumeSelector)
 
-        self.parameterModeCombo = qt.QComboBox()
-        for label, value in [("Preset", "preset"), ("Custom", "custom")]:
-            self.parameterModeCombo.addItem(label, value)
-        self.parameterModeCombo.currentIndexChanged.connect(self._on_parameter_mode_changed)
-        self.parameterModeCombo.currentIndexChanged.connect(self._refresh_parameter_mode_ui)
-        self.parameterModeCombo.currentIndexChanged.connect(self._update_batch_options_summary)
-        self._tip(
-            self.parameterModeCombo,
-            "Preset shows modality/site controls and applies defaults. Custom hides preset controls and preserves expert settings.",
-        )
-        form.addRow("Parameters", self.parameterModeCombo)
+        self.contourProfileCombo = qt.QComboBox()
+        self._populate_contour_profile_combo()
+        self.contourProfileCombo.currentIndexChanged.connect(self._apply_preset_values)
+        self.contourProfileCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
+        self._tip(self.contourProfileCombo, "Named contouring profile. Expert settings below can be edited after a profile is selected.")
+        form.addRow("Profile", self.contourProfileCombo)
+        self._topRows["profile"] = (form.labelForField(self.contourProfileCombo), self.contourProfileCombo)
 
         self.modalityCombo = qt.QComboBox()
         for label, value in [("XtremeCT I", "xct1"), ("XtremeCT II", "xct2")]:
@@ -1673,8 +1776,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modalityCombo.currentIndexChanged.connect(self._on_modality_changed)
         self.modalityCombo.currentIndexChanged.connect(self._update_batch_options_summary)
         self._tip(self.modalityCombo, "Applies scanner-specific defaults while keeping the segmentation method names general.")
-        form.addRow("Modality preset", self.modalityCombo)
-        self._topRows["modality"] = (form.labelForField(self.modalityCombo), self.modalityCombo)
 
         self.siteCombo = qt.QComboBox()
         for label, value in [("Auto", "auto"), ("Radius", "radius"), ("Tibia", "tibia"), ("Knee", "knee")]:
@@ -1683,8 +1784,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.siteCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
         self.siteCombo.currentIndexChanged.connect(self._update_batch_options_summary)
         self._tip(self.siteCombo, "Auto detects radius, tibia, or knee from loaded/discovered filenames; concrete sites apply that site everywhere.")
-        form.addRow("Site preset", self.siteCombo)
-        self._topRows["site"] = (form.labelForField(self.siteCombo), self.siteCombo)
 
         self.segmentationMethodCombo = qt.QComboBox()
         for value, descriptor in BONE_SEGMENTATION_METHODS.items():
@@ -1696,41 +1795,19 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.segmentationMethodCombo,
             "Bone binarization method. Laplace-Hamming uses native Scanco attenuation values from AIM metadata/source.",
         )
-        form.addRow("Bone segmentation", self.segmentationMethodCombo)
-
         self.periostealContourCombo = qt.QComboBox()
         for value, descriptor in PERIOSTEAL_CONTOUR_METHODS.items():
             self.periostealContourCombo.addItem(_clean_method_label(descriptor.label), value)
-        self.periostealContourCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
+        self.periostealContourCombo.currentIndexChanged.connect(self._on_contour_method_changed)
         self.periostealContourCombo.currentIndexChanged.connect(self._update_batch_options_summary)
         self._tip(self.periostealContourCombo, "Outer contour method for the full bone mask.")
-        form.addRow("Periosteal (outer) contour", self.periostealContourCombo)
 
         self.endostealContourCombo = qt.QComboBox()
         for value, descriptor in ENDOSTEAL_CONTOUR_METHODS.items():
             self.endostealContourCombo.addItem(_clean_method_label(descriptor.label), value)
-        self.endostealContourCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
+        self.endostealContourCombo.currentIndexChanged.connect(self._on_contour_method_changed)
         self.endostealContourCombo.currentIndexChanged.connect(self._update_batch_options_summary)
         self._tip(self.endostealContourCombo, "Inner contour method used to split full mask into trabecular and cortical compartments.")
-        form.addRow("Endosteal (inner) contour", self.endostealContourCombo)
-
-        self.outputPrefixEdit = qt.QLineEdit()
-        self._tip(self.outputPrefixEdit, "Optional prefix for generated Slicer nodes. Leave empty to use the input volume name.")
-        form.addRow("Output prefix", self.outputPrefixEdit)
-
-        self.customRecipeRowWidget = qt.QWidget()
-        custom_recipe_layout = qt.QHBoxLayout(self.customRecipeRowWidget)
-        custom_recipe_layout.setContentsMargins(0, 0, 0, 0)
-        self.loadRecipeButton = qt.QPushButton("Load Recipe")
-        self.saveRecipeButton = qt.QPushButton("Save Recipe")
-        self.loadRecipeButton.clicked.connect(self._load_custom_recipe)
-        self.saveRecipeButton.clicked.connect(self._save_custom_recipe)
-        self._tip(self.loadRecipeButton, "Load a saved custom contouring recipe JSON file.")
-        self._tip(self.saveRecipeButton, "Save the current methods and expert settings as a reusable recipe JSON file.")
-        custom_recipe_layout.addWidget(self.loadRecipeButton)
-        custom_recipe_layout.addWidget(self.saveRecipeButton)
-        form.addRow("Custom recipe", self.customRecipeRowWidget)
-        self.customRecipeLabel = form.labelForField(self.customRecipeRowWidget)
 
         self.expertSettingsButton = ctk.ctkCollapsibleButton()
         self.expertSettingsButton.text = "Expert Settings"
@@ -1740,12 +1817,14 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._expertSections = {}
 
         expert_layout = qt.QVBoxLayout(self.expertSettingsButton)
+
         segmentation_expert = ctk.ctkCollapsibleButton()
         segmentation_expert.text = "Segmentation Settings"
         segmentation_expert.collapsed = False
         expert_layout.addWidget(segmentation_expert)
         segmentation_form = qt.QFormLayout(segmentation_expert)
         self._expertSections["Bone segmentation"] = segmentation_expert
+        segmentation_form.addRow("Method", self.segmentationMethodCombo)
 
         periosteal_expert = ctk.ctkCollapsibleButton()
         periosteal_expert.text = "Periosteal Contour Settings"
@@ -1753,6 +1832,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         expert_layout.addWidget(periosteal_expert)
         periosteal_form = qt.QFormLayout(periosteal_expert)
         self._expertSections["Periosteal contour"] = periosteal_expert
+        periosteal_form.addRow("Method", self.periostealContourCombo)
 
         endosteal_expert = ctk.ctkCollapsibleButton()
         endosteal_expert.text = "Endosteal Contour Settings"
@@ -1760,6 +1840,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         expert_layout.addWidget(endosteal_expert)
         endosteal_form = qt.QFormLayout(endosteal_expert)
         self._expertSections["Endosteal contour"] = endosteal_expert
+        endosteal_form.addRow("Method", self.endostealContourCombo)
         self._expertForm = segmentation_form
 
         self.trabThresholdSpin = self._double_spin(0, 5000, 1, 320.0)
@@ -1906,6 +1987,32 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         endosteal_form.addRow("Endosteal threshold", self.endostealThresholdSpin)
         self._remember_expert_row("endosteal_threshold", self.endostealThresholdSpin, form=endosteal_form, group="Endosteal contour")
 
+        self.customRecipeRowWidget = qt.QWidget()
+        profile_form = qt.QFormLayout(self.customRecipeRowWidget)
+        profile_form.setContentsMargins(0, 0, 0, 0)
+        self.workflowDisplayNameEdit = qt.QLineEdit()
+        self.workflowDisplayNameEdit.placeholderText = "Custom contour profile"
+        self._tip(self.workflowDisplayNameEdit, "Display name stored with an exported contouring profile.")
+        profile_form.addRow("Workflow display name", self.workflowDisplayNameEdit)
+        profile_button_widget = qt.QWidget()
+        custom_recipe_layout = qt.QHBoxLayout(profile_button_widget)
+        custom_recipe_layout.setContentsMargins(0, 0, 0, 0)
+        self.loadRecipeButton = qt.QPushButton("Load Profile")
+        self.exportProfileButton = qt.QPushButton("Export Profile")
+        self.deleteProfileButton = qt.QPushButton("Delete Profile")
+        self.loadRecipeButton.clicked.connect(self._load_custom_recipe)
+        self.exportProfileButton.clicked.connect(self._save_custom_recipe)
+        self.deleteProfileButton.clicked.connect(self._delete_selected_custom_profile)
+        self._tip(self.loadRecipeButton, "Load a saved custom contouring profile JSON file.")
+        self._tip(self.exportProfileButton, "Export the current methods and expert settings as a reusable profile JSON file.")
+        self._tip(self.deleteProfileButton, "Delete the selected custom profile. Built-in profiles cannot be deleted.")
+        custom_recipe_layout.addWidget(self.loadRecipeButton)
+        custom_recipe_layout.addWidget(self.exportProfileButton)
+        custom_recipe_layout.addWidget(self.deleteProfileButton)
+        custom_recipe_layout.addStretch(1)
+        profile_form.addRow(profile_button_widget)
+        expert_layout.addWidget(self.customRecipeRowWidget)
+
         self.createButton = qt.QPushButton("Generate")
         self.createButton.clicked.connect(self._create_segmentation)
         self._tip(self.createButton, "Run contour and segmentation generation with the selected methods and expert settings.")
@@ -1917,76 +2024,11 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
         )
         generate_layout.addWidget(self.createButton)
-        self.toolTabs.addTab(generate_tab, "Scene")
-        self._build_batch_tab()
 
-    def _build_batch_tab(self):
-        batch_tab = qt.QWidget()
-        batch_layout = qt.QVBoxLayout(batch_tab)
-        batch_form = qt.QFormLayout()
-        batch_layout.addLayout(batch_form)
-
-        self.batchInputRootEdit = ctk.ctkPathLineEdit()
-        self.batchInputRootEdit.filters = ctk.ctkPathLineEdit.Dirs
-        self.batchInputRootEdit.currentPath = ""
-        self._tip(self.batchInputRootEdit, "Folder containing images to process.")
-        batch_form.addRow("Input folder", self.batchInputRootEdit)
-
-        self.batchOutputRootEdit = ctk.ctkPathLineEdit()
-        self.batchOutputRootEdit.filters = ctk.ctkPathLineEdit.Dirs
-        self.batchOutputRootEdit.currentPath = ""
-        self._tip(self.batchOutputRootEdit, "Folder where generated mask labelmaps will be written.")
-        if hasattr(self.batchOutputRootEdit, "currentPathChanged"):
-            self.batchOutputRootEdit.currentPathChanged.connect(self._update_batch_options_summary)
-        batch_form.addRow("Output folder", self.batchOutputRootEdit)
-
-        batch_advanced = ctk.ctkCollapsibleButton()
-        batch_advanced.text = "Advanced"
-        batch_advanced.collapsed = True
-        batch_layout.addWidget(batch_advanced)
-        batch_advanced_form = qt.QFormLayout(batch_advanced)
-        self.batchOutputFormatCombo = qt.QComboBox()
-        for label, value in [("Auto", "auto"), ("AIM", "aim"), ("NIfTI", "nifti")]:
-            self.batchOutputFormatCombo.addItem(label, value)
-        self.batchOutputFormatCombo.currentIndexChanged.connect(self._update_batch_options_summary)
-        self._tip(
-            self.batchOutputFormatCombo,
-            "Batch mask output format. Auto writes AIM masks for AIM inputs and NIfTI labelmaps for other image formats.",
-        )
-        batch_advanced_form.addRow("Output format", self.batchOutputFormatCombo)
-
-        button_row_widget = qt.QWidget()
-        button_row = qt.QHBoxLayout(button_row_widget)
-        button_row.setContentsMargins(0, 0, 0, 0)
-        self.batchDiscoverButton = qt.QPushButton("Discover Images")
-        self.batchDiscoverButton.clicked.connect(self._discover_batch_images)
-        button_row.addWidget(self.batchDiscoverButton)
-        batch_form.addRow(button_row_widget)
-
-        self.batchSummaryTable = qt.QTableWidget()
-        self.batchSummaryTable.setColumnCount(6)
-        self.batchSummaryTable.setHorizontalHeaderLabels(["Action", "Image", "Subject", "Session", "Site", "Status"])
-        self.batchSummaryTable.setMaximumHeight(220)
-        self.batchSummaryTable.setMinimumHeight(120)
-        self.batchSummaryTable.horizontalHeader().setStretchLastSection(True)
-        batch_layout.addWidget(self.batchSummaryTable)
-        self.batchRunButton = qt.QPushButton("Run All")
-        self.batchRunButton.clicked.connect(self._queue_all_batch_rows)
-        self.batchRunButton.setStyleSheet(
-            "QPushButton { background:#1f6feb; color:white; border:1px solid #175cc5; "
-            "font-weight:600; padding:7px 14px; border-radius:4px; } "
-            "QPushButton:hover { background:#1a5fd0; } "
-            "QPushButton:pressed { background:#154ea8; } "
-            "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
-        )
-        batch_layout.addWidget(self.batchRunButton)
-        self.batchOptionsSummaryLabel = qt.QLabel()
-        self.batchOptionsSummaryLabel.wordWrap = True
-        self._tip(self.batchOptionsSummaryLabel, "Current scene settings that will be applied to queued batch rows.")
-        batch_layout.addWidget(self.batchOptionsSummaryLabel)
-        batch_layout.addStretch(1)
-        self.toolTabs.addTab(batch_tab, "Batch")
-        self._update_batch_options_summary()
+        default_profile_index = self.contourProfileCombo.findText("XtremeCT II - Radius")
+        if default_profile_index >= 0:
+            self.contourProfileCombo.setCurrentIndex(default_profile_index)
+        self._apply_preset_values(update_segmentation_method=False)
 
     def _labelmap_selector(self):
         selector = slicer.qMRMLNodeComboBox()
@@ -2100,19 +2142,11 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             section.visible = any(parameter in visible_parameters for parameter in group_parameters)
 
     def _refresh_parameter_mode_ui(self):
-        if not hasattr(self, "parameterModeCombo"):
-            return
-        preset_mode = str(self._combo_data(self.parameterModeCombo, "preset")) == "preset"
-        for label, widget in getattr(self, "_topRows", {}).values():
-            if label is not None:
-                label.visible = bool(preset_mode)
-            widget.visible = bool(preset_mode)
-        if hasattr(self, "customRecipeRowWidget"):
-            self.customRecipeRowWidget.visible = not preset_mode
-        if hasattr(self, "customRecipeLabel") and self.customRecipeLabel is not None:
-            self.customRecipeLabel.visible = not preset_mode
-        if hasattr(self, "expertSettingsButton") and not preset_mode:
-            self.expertSettingsButton.collapsed = False
+        return
+
+    def _update_batch_options_summary(self, *args):
+        del args
+        self._refresh_method_dependent_ui()
 
     def _build_log_section(self):
         self.messageLabel = qt.QLabel()
@@ -2120,9 +2154,63 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.layout.addWidget(self.messageLabel)
 
     def _default_recipe_dir(self):
-        path = Path.home() / ".slicerboneimagingtoolbox" / "bone-contour-recipes"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        try:
+            from bone_imaging_derivatives import tool_profile_dir
+
+            return tool_profile_dir("bone-contouring")
+        except Exception:
+            path = Path.home() / ".slicerboneimagingtoolbox" / "profiles" / "bone-contouring"
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+
+    def _populate_contour_profile_combo(self):
+        if not hasattr(self, "contourProfileCombo"):
+            return
+        previous = self.contourProfileCombo.blockSignals(True)
+        try:
+            self.contourProfileCombo.clear()
+            for label, modality, site, segmentation_method, periosteal_method, endosteal_method in CONTOUR_PROFILE_PRESETS:
+                self.contourProfileCombo.addItem(
+                    label,
+                    json.dumps(
+                        {
+                            "display_name": label,
+                            "modality": modality,
+                            "site": site,
+                            "segmentation_method": segmentation_method,
+                            "periosteal_method": periosteal_method,
+                            "endosteal_method": endosteal_method,
+                        },
+                        sort_keys=True,
+                    ),
+                )
+            self._add_user_contour_profiles()
+        finally:
+            self.contourProfileCombo.blockSignals(previous)
+
+    def _add_user_contour_profiles(self):
+        try:
+            from bone_imaging_derivatives import list_profiles, load_profile_payload
+
+            for record in list_profiles("bone-contouring"):
+                if str(record.kind).lower() != "json":
+                    continue
+                try:
+                    recipe = load_profile_payload(record)
+                except Exception:
+                    continue
+                if recipe.get("schema") != "bone-contour-recipe-v1":
+                    continue
+                display_name = str(recipe.get("display_name") or record.name or record.path.stem).strip()
+                recipe.update(
+                    {
+                        "display_name": display_name,
+                        "user_profile_path": str(record.path),
+                    }
+                )
+                self.contourProfileCombo.addItem(display_name, json.dumps(recipe, sort_keys=True))
+        except Exception:
+            return
 
     def _set_combo_by_data(self, combo, value):
         count = combo.count
@@ -2134,22 +2222,68 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return True
         return False
 
-    def _on_parameter_mode_changed(self):
-        self._apply_preset_values(update_segmentation_method=False)
-
     def _on_modality_changed(self):
         self._apply_preset_values(update_segmentation_method=True)
 
     def _on_segmentation_method_changed(self):
-        self._apply_preset_values(update_segmentation_method=False)
+        self._mark_contour_methods_custom()
+        self._apply_segmentation_preset()
+        self._refresh_method_dependent_ui()
 
-    def _apply_preset_values(self, update_segmentation_method=False):
-        if str(self._combo_data(self.parameterModeCombo, "preset")) != "preset":
+    def _on_contour_method_changed(self):
+        self._mark_contour_methods_custom()
+        self._refresh_method_dependent_ui()
+
+    def _mark_contour_methods_custom(self):
+        if getattr(self, "_suppressMethodCustomSwitch", False):
             return
-        if update_segmentation_method:
+        if hasattr(self, "expertSettingsButton"):
+            self.expertSettingsButton.collapsed = False
+
+    def _apply_preset_values(self, *args, update_segmentation_method=False):
+        profile = self._current_contour_profile()
+        if profile.get("schema") == "bone-contour-recipe-v1":
+            self._apply_recipe(profile)
+            return
+        self._apply_profile_preset()
+        if update_segmentation_method and not hasattr(self, "contourProfileCombo"):
             self._apply_modality_preset()
         self._apply_segmentation_preset()
         self._apply_site_preset()
+
+    def _current_contour_profile(self):
+        if not hasattr(self, "contourProfileCombo"):
+            return {}
+        data = self.contourProfileCombo.currentData
+        try:
+            return json.loads(str(data or "{}"))
+        except Exception:
+            return {}
+
+    def _apply_profile_preset(self):
+        profile = self._current_contour_profile()
+        if not profile:
+            return
+        previous_suppression = getattr(self, "_suppressMethodCustomSwitch", False)
+        self._suppressMethodCustomSwitch = True
+        try:
+            for combo, key in (
+                (getattr(self, "modalityCombo", None), "modality"),
+                (getattr(self, "siteCombo", None), "site"),
+                (getattr(self, "segmentationMethodCombo", None), "segmentation_method"),
+                (getattr(self, "periostealContourCombo", None), "periosteal_method"),
+                (getattr(self, "endostealContourCombo", None), "endosteal_method"),
+            ):
+                if combo is None or not profile.get(key):
+                    continue
+                previous = combo.blockSignals(True)
+                try:
+                    self._set_combo_by_data(combo, profile[key])
+                finally:
+                    combo.blockSignals(previous)
+            self._refresh_method_dependent_ui()
+        finally:
+            self._suppressMethodCustomSwitch = previous_suppression
 
     def _apply_modality_preset(self):
         if not hasattr(self, "modalityCombo") or not hasattr(self, "segmentationMethodCombo"):
@@ -2166,10 +2300,15 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             site = self._selected_site(volume_node=self.volumeSelector.currentNode(), strict=False)
             if site == "unparsed":
                 site = str(self._combo_data(self.siteCombo, "auto"))
+            display_name = str(self.workflowDisplayNameEdit.text or "").strip()
+            if not display_name:
+                display_name = self._combo_label(self.contourProfileCombo) if hasattr(self, "contourProfileCombo") else "Custom contour profile"
             recipe = {
                 "schema": "bone-contour-recipe-v1",
+                "display_name": display_name,
                 "modality": str(self._combo_data(self.modalityCombo, "xct2")),
                 "site": str(site),
+                "kind": "contour-recipe",
                 "methods": {
                     "bone_segmentation": str(self.segmentationMethodCombo.currentData),
                     "periosteal_contour": str(self.periostealContourCombo.currentData),
@@ -2177,10 +2316,10 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 },
                 "parameters": self._collect_params(site=site, use_site_defaults=False),
             }
-            default_path = str(self._default_recipe_dir() / "bone_contour_recipe.json")
+            default_path = str(self._default_recipe_dir() / f"{_sanitize_filename(display_name)}.json")
             selected = qt.QFileDialog.getSaveFileName(
                 slicer.util.mainWindow(),
-                "Save Bone Contour Recipe",
+                "Save Bone Contour Profile",
                 default_path,
                 "JSON files (*.json)",
             )
@@ -2191,7 +2330,21 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             if path.suffix.lower() != ".json":
                 path = path.with_suffix(".json")
             path.write_text(json.dumps(recipe, indent=2, sort_keys=True), encoding="utf-8")
-            self._log(f"Saved custom recipe: {path}")
+            try:
+                from bone_imaging_derivatives import register_profile_asset, tool_profile_dir
+
+                tool_profile_dir("bone-contouring")
+                register_profile_asset(
+                    "bone-contouring",
+                    display_name,
+                    path,
+                    kind="json",
+                    metadata={"kind": "contour-recipe", "display_name": display_name},
+                )
+                self._populate_contour_profile_combo()
+            except Exception as registry_exc:
+                self._log(f"Saved profile, but could not update shared registry: {registry_exc}")
+            self._log(f"Saved custom profile: {path}")
         except Exception as exc:
             self._error(exc)
 
@@ -2199,7 +2352,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         try:
             selected = qt.QFileDialog.getOpenFileName(
                 slicer.util.mainWindow(),
-                "Load Bone Contour Recipe",
+                "Load Bone Contour Profile",
                 str(self._default_recipe_dir()),
                 "JSON files (*.json)",
             )
@@ -2209,26 +2362,80 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             path = Path(str(path_text))
             recipe = json.loads(path.read_text(encoding="utf-8"))
             self._apply_recipe(recipe)
-            self._log(f"Loaded custom recipe: {path}")
+            display_name = str(recipe.get("display_name") or path.stem.replace("_", " ").replace("-", " ").title()).strip()
+            try:
+                from bone_imaging_derivatives import register_profile_asset
+
+                register_profile_asset(
+                    "bone-contouring",
+                    display_name,
+                    path,
+                    kind="json",
+                    metadata={"kind": "contour-recipe", "display_name": display_name},
+                )
+                self._populate_contour_profile_combo()
+            except Exception as registry_exc:
+                self._log(f"Loaded profile, but could not update shared registry: {registry_exc}")
+            self._log(f"Loaded custom profile: {path}")
+        except Exception as exc:
+            self._error(exc)
+
+    def _delete_selected_custom_profile(self):
+        try:
+            profile = self._current_contour_profile()
+            path_text = str(profile.get("user_profile_path") or "").strip()
+            if not path_text:
+                self._log("Built-in profiles cannot be deleted from Contouring.")
+                return
+            path = Path(path_text).expanduser()
+            if path.exists():
+                path.unlink()
+            try:
+                from bone_imaging_derivatives import delete_profile
+
+                display_name = str(profile.get("display_name") or path.stem).strip()
+                delete_profile("bone-contouring", display_name, "json")
+            except Exception as registry_exc:
+                self._log(f"Deleted profile file, but could not update shared registry: {registry_exc}")
+            self._populate_contour_profile_combo()
+            default_profile_index = self.contourProfileCombo.findText("XtremeCT II - Radius")
+            if default_profile_index >= 0:
+                self.contourProfileCombo.setCurrentIndex(default_profile_index)
+            self._log(f"Deleted custom profile: {path}")
         except Exception as exc:
             self._error(exc)
 
     def _apply_recipe(self, recipe):
         if recipe.get("schema") != "bone-contour-recipe-v1":
-            raise ValueError("Recipe is not a bone-contour-recipe-v1 JSON file.")
-        self._set_combo_by_data(self.parameterModeCombo, "custom")
-        if recipe.get("modality"):
-            self._set_combo_by_data(self.modalityCombo, recipe["modality"])
-        if recipe.get("site"):
-            self._set_combo_by_data(self.siteCombo, recipe["site"])
-        methods = dict(recipe.get("methods") or {})
-        if methods.get("bone_segmentation"):
-            self._set_combo_by_data(self.segmentationMethodCombo, methods["bone_segmentation"])
-        if methods.get("periosteal_contour"):
-            self._set_combo_by_data(self.periostealContourCombo, methods["periosteal_contour"])
-        if methods.get("endosteal_contour"):
-            self._set_combo_by_data(self.endostealContourCombo, methods["endosteal_contour"])
-        self._apply_params_to_widgets(recipe.get("parameters") or {})
+            raise ValueError("Profile is not a bone-contour-recipe-v1 JSON file.")
+        changed_combos = []
+        try:
+            for combo, value in (
+                (getattr(self, "modalityCombo", None), recipe.get("modality")),
+                (getattr(self, "siteCombo", None), recipe.get("site")),
+            ):
+                if combo is None or not value:
+                    continue
+                previous = combo.blockSignals(True)
+                changed_combos.append((combo, previous))
+                self._set_combo_by_data(combo, value)
+            if recipe.get("display_name") and hasattr(self, "workflowDisplayNameEdit"):
+                self.workflowDisplayNameEdit.text = str(recipe["display_name"])
+            methods = dict(recipe.get("methods") or {})
+            for combo, value in (
+                (getattr(self, "segmentationMethodCombo", None), methods.get("bone_segmentation")),
+                (getattr(self, "periostealContourCombo", None), methods.get("periosteal_contour")),
+                (getattr(self, "endostealContourCombo", None), methods.get("endosteal_contour")),
+            ):
+                if combo is None or not value:
+                    continue
+                previous = combo.blockSignals(True)
+                changed_combos.append((combo, previous))
+                self._set_combo_by_data(combo, value)
+            self._apply_params_to_widgets(recipe.get("parameters") or {})
+        finally:
+            for combo, previous in reversed(changed_combos):
+                combo.blockSignals(previous)
         self._refresh_parameter_mode_ui()
         self._refresh_method_dependent_ui()
         self._update_batch_options_summary()
@@ -2291,8 +2498,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _apply_site_preset(self):
         if not hasattr(self, "siteCombo"):
-            return
-        if str(self._combo_data(self.parameterModeCombo, "preset")) != "preset":
             return
         site = str(self.siteCombo.currentData)
         if site not in SITE_PRESETS:
@@ -2515,521 +2720,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         text = combo.currentText
         return str(text() if callable(text) else text)
 
-    def _update_batch_options_summary(self):
-        if not hasattr(self, "batchOptionsSummaryLabel"):
-            return
-        output_root_text = str(self.batchOutputRootEdit.currentPath or "").strip()
-        output_text = output_root_text or "input folder"
-        self.batchOptionsSummaryLabel.text = (
-            "Batch settings: "
-            f"modality={self._combo_label(self.modalityCombo)}, "
-            f"site={self._combo_label(self.siteCombo)}, "
-            f"parameters={self._combo_label(self.parameterModeCombo) if hasattr(self, 'parameterModeCombo') else 'Preset'}, "
-            f"bone segmentation={self._combo_label(self.segmentationMethodCombo)}, "
-            f"periosteal={self._combo_label(self.periostealContourCombo)}, "
-            f"endosteal={self._combo_label(self.endostealContourCombo)}, "
-            f"format={self._combo_label(self.batchOutputFormatCombo) if hasattr(self, 'batchOutputFormatCombo') else 'Auto'}, "
-            f"output={output_text}."
-        )
-
-    def _set_batch_row(self, row, image_path, status, parsed=None):
-        parsed = parsed or {}
-        self.batchSummaryTable.setItem(row, 1, qt.QTableWidgetItem(Path(image_path).name))
-        self.batchSummaryTable.setItem(row, 2, qt.QTableWidgetItem(str(parsed.get("subject") or "Unparsed")))
-        self.batchSummaryTable.setItem(row, 3, qt.QTableWidgetItem(str(parsed.get("session") or "Unparsed")))
-        self.batchSummaryTable.setItem(row, 4, qt.QTableWidgetItem(str(parsed.get("site") or "Use selected")))
-        self.batchSummaryTable.setItem(row, 5, qt.QTableWidgetItem(str(status)))
-        action = "Load" if self._batchRowOutputs.get(row) else "Run"
-        self._set_batch_action(row, action)
-
-    def _set_batch_action(self, row, action):
-        button = qt.QPushButton(str(action))
-        if str(action) == "Load":
-            button.clicked.connect(lambda _checked=False, row=row: self._load_batch_row_outputs(row))
-        elif str(action) == "Cancel":
-            button.clicked.connect(lambda _checked=False, row=row: self._cancel_batch_row(row))
-        else:
-            button.clicked.connect(lambda _checked=False, row=row: self._queue_batch_row(row))
-        self.batchSummaryTable.setCellWidget(row, 0, button)
-
-    def _resize_batch_table_columns(self):
-        self.batchSummaryTable.resizeColumnsToContents()
-        self.batchSummaryTable.setColumnWidth(0, 80)
-
-    def _discover_batch_images(self):
-        try:
-            input_root = Path(self.batchInputRootEdit.currentPath or "").expanduser()
-            if not input_root.is_dir():
-                raise ValueError("Select an input folder.")
-            image_paths = sorted(
-                path for path in input_root.iterdir() if path.is_file() and self._is_batch_image_path(path)
-            )
-            self._batchImagePaths = image_paths
-            self._batchImageRows = [
-                {"path": path, **self._parse_batch_image_path(path)}
-                for path in image_paths
-            ]
-            self._batchRowOutputs = {}
-            self._batchQueue = []
-            self._batchQueueRunning = False
-            self.batchSummaryTable.setRowCount(len(image_paths))
-            for row, item in enumerate(self._batchImageRows):
-                outputs, format_label = self._preferred_existing_batch_outputs(item)
-                if outputs:
-                    self._batchRowOutputs[row] = outputs
-                    self._set_batch_row(row, item["path"], f"Finished {format_label} ({','.join(outputs)})", item)
-                else:
-                    self._set_batch_row(row, item["path"], "Ready", item)
-            self._resize_batch_table_columns()
-            self._log(f"Discovered {len(image_paths)} image(s) for batch contouring.")
-        except Exception as exc:
-            self._error(exc)
-
-    def _ensure_batch_rows(self):
-        if not self._batchImagePaths:
-            self._discover_batch_images()
-        if not self._batchImagePaths:
-            raise ValueError("No images discovered.")
-        if not self._batchImageRows:
-            self._batchImageRows = [
-                {"path": path, **self._parse_batch_image_path(path)}
-                for path in self._batchImagePaths
-            ]
-
-    def _batch_output_root_text(self):
-        output_root_text = str(self.batchOutputRootEdit.currentPath or "").strip()
-        if not output_root_text:
-            output_root_text = str(self.batchInputRootEdit.currentPath or "").strip()
-        return output_root_text
-
-    def _derivative_family_root(self, root_text, family):
-        root = Path(str(root_text)).expanduser()
-        if root.name == family:
-            return root
-        if root.name == "derivatives":
-            return root / family
-        return root / "derivatives" / family
-
-    def _batch_output_root(self):
-        output_root_text = self._batch_output_root_text()
-        output_root = self._derivative_family_root(output_root_text, "Segmentation")
-        output_root.mkdir(parents=True, exist_ok=True)
-        return output_root
-
-    def _batch_item_site(self, item):
-        return self._selected_site(item=item)
-
-    def _batch_item_output_dir(self, item, output_root=None):
-        output_root = Path(output_root) if output_root is not None else self._batch_output_root()
-        image_path = Path(item["path"])
-        subject = item.get("subject") or "unparsed"
-        site = self._batch_item_site(item)
-        session = item.get("session") or _image_output_stem(image_path)
-        return output_root / f"sub-{subject}" / f"site-{site}" / f"ses-{session}" / "masks"
-
-    def _find_existing_batch_outputs(self, item):
-        output_root_text = self._batch_output_root_text()
-        if not output_root_text:
-            return {}, {}
-        image_path = Path(item["path"])
-        output_dir = self._batch_item_output_dir(item, self._derivative_family_root(output_root_text, "Segmentation"))
-        stem = _image_output_stem(image_path)
-        nifti_outputs = {}
-        aim_outputs = {}
-        for role in ("full", "trab", "cort", "seg"):
-            nifti_path = output_dir / f"{stem}_mask-{role}.nii.gz"
-            aim_path = output_dir / f"{stem}_mask-{role}.AIM"
-            if nifti_path.exists():
-                nifti_outputs[role] = str(nifti_path)
-            if aim_path.exists():
-                aim_outputs[role] = str(aim_path)
-        return nifti_outputs, aim_outputs
-
-    def _batch_output_format(self):
-        if not hasattr(self, "batchOutputFormatCombo"):
-            return "auto"
-        return str(self.batchOutputFormatCombo.currentData or "auto").strip().lower()
-
-    def _use_site_preset_params(self):
-        if not hasattr(self, "parameterModeCombo"):
-            return True
-        return str(self._combo_data(self.parameterModeCombo, "preset")) == "preset"
-
-    def _preferred_existing_batch_outputs(self, item):
-        nifti_outputs, aim_outputs = self._find_existing_batch_outputs(item)
-        output_format = self._batch_output_format()
-        prefer_aim = output_format == "aim" or (output_format == "auto" and _is_aim_path(item["path"]))
-        if prefer_aim:
-            return aim_outputs, "AIM"
-        return nifti_outputs, "NIfTI"
-
-    def _queue_batch_row(self, row):
-        try:
-            self._ensure_batch_rows()
-            if row < 0 or row >= len(self._batchImageRows):
-                raise ValueError("Batch row is no longer available.")
-            if row not in self._batchQueue and row not in self._batchRowOutputs:
-                self._batchQueue.append(row)
-                self._set_batch_row(row, self._batchImageRows[row]["path"], "Queued", self._batchImageRows[row])
-                self._set_batch_action(row, "Cancel")
-            if not self._batchQueueRunning:
-                qt.QTimer.singleShot(0, self._process_next_batch_job)
-        except Exception as exc:
-            self._error(exc)
-
-    def _queue_all_batch_rows(self):
-        try:
-            self._ensure_batch_rows()
-            queued = 0
-            for row, item in enumerate(self._batchImageRows):
-                if row in self._batchRowOutputs or row in self._batchQueue:
-                    continue
-                self._batchQueue.append(row)
-                self._set_batch_row(row, item["path"], "Queued", item)
-                self._set_batch_action(row, "Cancel")
-                queued += 1
-            self._log(f"Queued {queued} batch job(s).")
-            if queued and not self._batchQueueRunning:
-                qt.QTimer.singleShot(0, self._process_next_batch_job)
-        except Exception as exc:
-            self._error(exc)
-
-    def _process_next_batch_job(self):
-        if self._batchProcess is not None:
-            self._batchQueueRunning = True
-            return
-        if not self._batchQueue:
-            self._batchQueueRunning = False
-            self.batchRunButton.enabled = True
-            self._log("Batch queue complete.")
-            return
-        self._batchQueueRunning = True
-        self.batchRunButton.enabled = False
-        row = self._batchQueue.pop(0)
-        self._start_batch_worker(row)
-
-    def _batch_worker_environment(self):
-        environment = qt.QProcessEnvironment.systemEnvironment()
-        environment.insert("PYTHONUNBUFFERED", "1")
-        for key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
-            if environment.contains(key):
-                environment.remove(key)
-            environment.insert(key, "")
-        python_paths = [
-            str(_TOOLBOX_ROOT),
-            str(_SCANCO_IO_DIR),
-            str(_BONE_CONTOURING_LOCAL_SRC),
-            str(_GEODESIC_CONTOUR_LOCAL_SRC),
-        ]
-        existing = str(environment.value("PYTHONPATH") or "")
-        if existing:
-            python_paths.append(existing)
-        environment.insert("PYTHONPATH", ":".join(path for path in python_paths if path))
-        return environment
-
-    def _python_slicer_executable(self):
-        executable = Path(sys.executable)
-        candidates = []
-        if executable.name == "python-real":
-            candidates.append(executable.with_name("PythonSlicer"))
-        try:
-            app_dir = Path(slicer.app.applicationDirPath())
-            candidates.extend(
-                [
-                    app_dir / "PythonSlicer",
-                    app_dir.parent / "bin" / "PythonSlicer",
-                    app_dir.parent / "MacOS" / "PythonSlicer",
-                ]
-            )
-        except Exception:
-            pass
-        candidates.append(executable)
-        for candidate in candidates:
-            if candidate.exists():
-                return str(candidate)
-        return str(executable)
-
-    def _qbytearray_to_text(self, raw):
-        if isinstance(raw, (bytes, bytearray)):
-            data = bytes(raw)
-        else:
-            try:
-                data = raw.data()
-                if isinstance(data, str):
-                    data = data.encode("utf-8", errors="replace")
-                else:
-                    data = bytes(data)
-            except Exception:
-                try:
-                    data = bytes(raw)
-                except Exception:
-                    data = str(raw).encode("utf-8", errors="replace")
-        return data.decode("utf-8", errors="replace")
-
-    def _append_batch_worker_output(self, process, stream_name):
-        if stream_name == "stdout":
-            text = self._qbytearray_to_text(process.readAllStandardOutput())
-            self._batchProcessStdout += text
-        else:
-            text = self._qbytearray_to_text(process.readAllStandardError())
-            self._batchProcessStderr += text
-        for line in text.splitlines():
-            line = line.strip()
-            if line and not line.startswith("{"):
-                self._log(f"[contour-worker] {line}")
-
-    def _cancel_batch_row(self, row):
-        try:
-            if row in self._batchQueue:
-                self._batchQueue = [queued_row for queued_row in self._batchQueue if queued_row != row]
-                self._set_batch_row(row, self._batchImageRows[row]["path"], "Cancelled", self._batchImageRows[row])
-                self._log(f"Cancelled queued batch row: {Path(self._batchImageRows[row]['path']).name}.")
-                return
-            if row == self._batchRunningRow and self._batchProcess is not None:
-                self._batchCancelRequested = True
-                self._set_batch_row(row, self._batchImageRows[row]["path"], "Cancelling", self._batchImageRows[row])
-                self._batchProcess.terminate()
-                if not self._batchProcess.waitForFinished(1500):
-                    self._batchProcess.kill()
-                return
-        except Exception as exc:
-            self._error(exc)
-
-    def _start_batch_worker(self, row):
-        try:
-            self._ensure_batch_rows()
-            if row < 0 or row >= len(self._batchImageRows):
-                raise ValueError("Batch row is no longer available.")
-            item = self._batchImageRows[row]
-            image_path = Path(item["path"])
-            output_root = self._batch_output_root()
-            site = self._selected_site(item=item, strict=self._use_site_preset_params())
-            image_output_dir = self._batch_item_output_dir(item, output_root)
-            config_dir = output_root / "slicer_run_configs"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_path = config_dir / f"{_image_output_stem(image_path)}_batch_contour.json"
-            config = {
-                "image_path": str(image_path),
-                "output_dir": str(image_output_dir),
-                "site": site,
-                "segmentation_method": str(self.segmentationMethodCombo.currentData),
-                "periosteal_contour_method": str(self.periostealContourCombo.currentData),
-                "endosteal_contour_method": str(self.endostealContourCombo.currentData),
-                "output_prefix": _image_output_stem(image_path),
-                "output_format": self._batch_output_format(),
-                "params": self._collect_params(site=site, use_site_defaults=self._use_site_preset_params()),
-            }
-            config_path.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
-            worker_path = _TOOLBOX_ROOT / "SlicerBoneImagingToolboxLib" / "bone_contour_batch_worker.py"
-            process = qt.QProcess()
-            process.setProcessEnvironment(self._batch_worker_environment())
-            process.readyReadStandardOutput.connect(
-                lambda process=process: self._append_batch_worker_output(process, "stdout")
-            )
-            process.readyReadStandardError.connect(
-                lambda process=process: self._append_batch_worker_output(process, "stderr")
-            )
-            process.finished.connect(
-                lambda *signal_args, row=row, process=process: self._batch_worker_finished(
-                    row,
-                    process,
-                    *signal_args,
-                )
-            )
-            self._batchProcess = process
-            self._batchRunningRow = row
-            self._batchProcessStdout = ""
-            self._batchProcessStderr = ""
-            self._batchCancelRequested = False
-            self._set_batch_row(row, image_path, "Running", item)
-            self._set_batch_action(row, "Cancel")
-            program = self._python_slicer_executable()
-            process.start(program, [str(worker_path), "--config", str(config_path)])
-            if not process.waitForStarted(1000):
-                raise RuntimeError("Could not start batch contour worker.")
-            self._log(f"Started batch contour worker: {image_path.name} ({program}).")
-        except Exception as exc:
-            if 0 <= row < len(self._batchImageRows):
-                self._set_batch_row(row, self._batchImageRows[row]["path"], f"Error: {exc}", self._batchImageRows[row])
-            self._batchProcess = None
-            self._batchRunningRow = None
-            self._error(exc)
-            qt.QTimer.singleShot(0, self._process_next_batch_job)
-
-    def _batch_worker_finished(self, row, process, *signal_args):
-        try:
-            self._append_batch_worker_output(process, "stdout")
-            self._append_batch_worker_output(process, "stderr")
-            stdout = self._batchProcessStdout.strip()
-            stderr = self._batchProcessStderr.strip()
-            if self._batchCancelRequested:
-                self._set_batch_row(row, self._batchImageRows[row]["path"], "Cancelled", self._batchImageRows[row])
-                self._log(f"Cancelled running batch row: {Path(self._batchImageRows[row]['path']).name}.")
-                return
-            if len(signal_args) >= 1:
-                exit_code = int(signal_args[0])
-            else:
-                exit_code = int(process.exitCode())
-            if exit_code != 0:
-                raise RuntimeError(stderr or stdout or f"Batch contour worker exited with code {exit_code}.")
-            lines = [line for line in stdout.splitlines() if line.strip()]
-            if not lines:
-                raise RuntimeError("Batch contour worker did not return a result.")
-            result = json.loads(lines[-1])
-            written = result.get("written") or {}
-            metadata = result.get("metadata") or {}
-            self._batchRowOutputs[row] = written
-            roles = ",".join(written) or ",".join(metadata.get("emitted_roles", []))
-            if metadata.get("output_format") == "aim":
-                roles = f"AIM {roles}"
-            self._set_batch_row(row, self._batchImageRows[row]["path"], f"Wrote {roles}", self._batchImageRows[row])
-            self._resize_batch_table_columns()
-            self._log(f"Batch row complete: {Path(self._batchImageRows[row]['path']).name}.")
-        except Exception as exc:
-            if 0 <= row < len(self._batchImageRows):
-                self._set_batch_row(row, self._batchImageRows[row]["path"], f"Error: {exc}", self._batchImageRows[row])
-            self._error(exc)
-        finally:
-            process.deleteLater()
-            if self._batchProcess is process:
-                self._batchProcess = None
-                self._batchRunningRow = None
-                self._batchProcessStdout = ""
-                self._batchProcessStderr = ""
-                self._batchCancelRequested = False
-            qt.QTimer.singleShot(0, self._process_next_batch_job)
-
-    def _execute_batch_row(self, row):
-        try:
-            self._ensure_batch_rows()
-            if row < 0 or row >= len(self._batchImageRows):
-                raise ValueError("Batch row is no longer available.")
-            if not self.logic.is_pipeline_available():
-                raise RuntimeError("Install or update bone-contouring first.")
-            item = self._batchImageRows[row]
-            image_path = item["path"]
-            self._set_batch_row(row, image_path, "Running", item)
-            slicer.app.processEvents()
-            output_root = self._batch_output_root()
-            site = self._selected_site(item=item, strict=self._use_site_preset_params())
-            image_output_dir = self._batch_item_output_dir(item, output_root)
-            metadata, written = self.logic.write_bone_mask_files(
-                image_path,
-                image_output_dir,
-                site=site,
-                segmentation_method=str(self.segmentationMethodCombo.currentData),
-                periosteal_contour_method=str(self.periostealContourCombo.currentData),
-                endosteal_contour_method=str(self.endostealContourCombo.currentData),
-                output_prefix=_image_output_stem(image_path),
-                output_format=self._batch_output_format(),
-                keep_loaded=False,
-                params=self._collect_params(site=site, use_site_defaults=self._use_site_preset_params()),
-            )
-            self._batchRowOutputs[row] = written
-            roles = ",".join(written) or ",".join(metadata.get("emitted_roles", []))
-            aim_outputs = metadata.get("aim_outputs", {})
-            if aim_outputs:
-                roles = f"AIM {','.join(aim_outputs)}"
-            self._set_batch_row(row, image_path, f"Wrote {roles}", item)
-            self._resize_batch_table_columns()
-            self._log(f"Batch row complete: {image_path.name}.")
-        except Exception as exc:
-            if 0 <= row < len(self._batchImageRows):
-                self._set_batch_row(row, self._batchImageRows[row]["path"], f"Error: {exc}", self._batchImageRows[row])
-            self._error(exc)
-
-    def _run_batch(self):
-        self._queue_all_batch_rows()
-
-    def _find_loaded_batch_source_volume(self, item):
-        source_path = str((item or {}).get("path") or "")
-        source_stem = _image_output_stem(source_path) if source_path else ""
-        nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
-        for index in range(nodes.GetNumberOfItems()):
-            node = nodes.GetItemAsObject(index)
-            if node is None:
-                continue
-            candidates = [
-                node.GetAttribute(AIM_SOURCE_ATTRIBUTE),
-                node.GetName(),
-            ]
-            storage_node = node.GetStorageNode()
-            if storage_node is not None:
-                candidates.append(storage_node.GetFileName())
-            for candidate in candidates:
-                if not candidate:
-                    continue
-                candidate_text = str(candidate)
-                if source_path and candidate_text == source_path:
-                    return node
-                if source_path and Path(candidate_text).name == Path(source_path).name:
-                    return node
-                if source_stem and _image_output_stem(candidate_text) == source_stem:
-                    return node
-        return None
-
-    def _load_batch_row_outputs(self, row):
-        try:
-            written = self._batchRowOutputs.get(row) or {}
-            if not written:
-                raise ValueError("Run this row before loading outputs.")
-            item = self._batchImageRows[row] if 0 <= row < len(self._batchImageRows) else {}
-            source_name = _image_output_stem(item.get("path") or next(iter(written.values())))
-            segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
-                "vtkMRMLSegmentationNode",
-                f"{source_name}_HRpQCT_segmentation",
-            )
-            segmentation_node.CreateDefaultDisplayNodes()
-            self.logic._configure_segmentation_display(segmentation_node)
-            segment_names = {
-                "full": "Full mask",
-                "trab": "Trabecular mask",
-                "cort": "Cortical mask",
-                "seg": "Bone segmentation",
-            }
-            loaded = []
-            reference_node = None
-            source_volume = self._find_loaded_batch_source_volume(item)
-            for role in ("full", "trab", "cort", "seg"):
-                path = written.get(role)
-                if not path:
-                    continue
-                mask_image, mask_metadata = self.logic.read_mask_image_file(path)
-                if reference_node is None:
-                    reference_node = slicer.mrmlScene.AddNewNodeByClass(
-                        "vtkMRMLScalarVolumeNode",
-                        f"__{source_name}_batch_mask_reference__",
-                    )
-                    reference_node.SetHideFromEditors(True)
-                    slicer.util.updateVolumeFromArray(reference_node, sitk.GetArrayFromImage(mask_image))
-                    _set_slicer_volume_geometry_from_sitk_image(reference_node, mask_image)
-                    if mask_metadata:
-                        reference_node.SetAttribute(AIM_METADATA_ATTRIBUTE, json.dumps(mask_metadata, sort_keys=True, default=str))
-                        reference_node.SetAttribute(AIM_SOURCE_ATTRIBUTE, str(path))
-                        reference_node.SetAttribute(AIM_SCALING_ATTRIBUTE, "native")
-                    segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)
-                self.logic._add_sitk_segment(
-                    mask_image,
-                    segmentation_node,
-                    segment_names.get(role, role),
-                    reference_node,
-                    role,
-                )
-                loaded.append(role)
-            if reference_node is not None:
-                self.logic._copy_aim_attributes(reference_node, segmentation_node)
-            if reference_node is not None and source_volume is not None:
-                slicer.mrmlScene.RemoveNode(reference_node)
-            segmentation_node.SetAttribute("BoneImaging.MaskRoles", ",".join(loaded))
-            self.logic._configure_segmentation_display(segmentation_node)
-            background_node = source_volume if source_volume is not None else reference_node
-            if background_node is not None:
-                slicer.util.setSliceViewerLayers(background=background_node, fit=False)
-            self._center_slices_on_node(background_node or segmentation_node)
-            self._log(f"Loaded batch segmentation with masks: {', '.join(loaded)}.")
-        except Exception as exc:
-            self._error(exc)
-
     def _center_slices_on_node(self, node_to_center):
         if node_to_center is None:
             return
@@ -3120,7 +2810,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                     segmentation_method=segmentation_method,
                     periosteal_contour_method=periosteal_method,
                     endosteal_contour_method=endosteal_method,
-                    output_prefix=self.outputPrefixEdit.text.strip() or None,
+                    output_prefix=None,
                     create_labelmaps=False,
                     open_segment_editor=False,
                     params=params,

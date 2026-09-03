@@ -34,9 +34,9 @@ def test_segmentation_module_exposes_geodesic_method_for_local_testing():
 def test_segmentation_module_splits_segmentation_and_contour_choices():
     source = MODULE.read_text()
 
-    assert "form.addRow(\"Bone segmentation\", self.segmentationMethodCombo)" in source
-    assert "form.addRow(\"Periosteal (outer) contour\", self.periostealContourCombo)" in source
-    assert "form.addRow(\"Endosteal (inner) contour\", self.endostealContourCombo)" in source
+    assert "segmentation_form.addRow(\"Method\", self.segmentationMethodCombo)" in source
+    assert "periosteal_form.addRow(\"Method\", self.periostealContourCombo)" in source
+    assert "endosteal_form.addRow(\"Method\", self.endostealContourCombo)" in source
     assert "SEGMENTATION_METHODS = set(BONE_SEGMENTATION_METHODS)" in source
     assert "PERIOSTEAL_CONTOUR_METHOD_IDS = set(PERIOSTEAL_CONTOUR_METHODS)" in source
     assert "ENDOSTEAL_CONTOUR_METHOD_IDS = set(ENDOSTEAL_CONTOUR_METHODS)" in source
@@ -171,11 +171,16 @@ def test_laplace_hamming_shows_busy_progress_dialog():
     assert "dialog.setCancelButton(None)" in source
 
 
-def test_segmentation_module_uses_tabs_for_tool_groups():
+def test_segmentation_module_uses_single_generate_workflow():
     source = MODULE.read_text()
 
-    assert "self.toolTabs = qt.QTabWidget()" in source
-    assert "self.toolTabs.addTab(generate_tab, \"Scene\")" in source
+    builder = source[
+        source.index("    def _build_segmentation_section(self):")
+        : source.index("    def _labelmap_selector(self):")
+    ]
+    assert "self.toolTabs = qt.QTabWidget()" not in builder
+    assert "self.layout.addWidget(contouring_widget)" in builder
+    assert "self.createButton = qt.QPushButton(\"Generate\")" in builder
     assert "self.toolTabs.addTab(derive_tab" not in source
 
 

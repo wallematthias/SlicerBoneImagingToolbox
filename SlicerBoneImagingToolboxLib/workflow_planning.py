@@ -9,7 +9,7 @@ from SlicerBoneImagingToolboxLib.derivatives import DerivativeRecord
 
 WORKFLOW_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "CommonRegion": ("Registration",),
-    "Timelapsed": ("Registration", "CommonRegion"),
+    "Timelapse": ("Registration", "CommonRegion"),
     "Microarchitecture": (),
     "PlateRodMorphometry": (),
     "FEA": (),
@@ -20,7 +20,7 @@ WORKFLOW_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 MASK_CONSUMING_WORKFLOWS = {
     "Microarchitecture",
     "PlateRodMorphometry",
-    "Timelapsed",
+    "Timelapse",
     "FEA",
     "Mechanoregulation",
     "VoidSpace",

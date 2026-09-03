@@ -29,7 +29,16 @@ _TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
 
-from SlicerBoneImagingToolboxLib.slicer_update_ui import run_toolbox_update_dialog
+
+def _active_repositories_root(toolbox_root):
+    root = Path(toolbox_root).resolve()
+    if root.parent.name == ".worktrees" and len(root.parents) > 2:
+        return root.parents[2]
+    return root.parent
+
+
+MOTIONSCORE_LOCAL_SRC = _active_repositories_root(_TOOLBOX_ROOT) / "MotionScoreCNN"
+
 from SlicerBoneImagingToolboxLib.motionscore_scene import (
     build_motionscore_scene_plan,
     motionscore_scene_runner_args,
@@ -118,6 +127,8 @@ class MotionScoreHRpQCTLogic(ScriptedLoadableModuleLogic):
         env.insert("PYTHONUNBUFFERED", "1")
         existing_pythonpath = str(env.value("PYTHONPATH", "") or "")
         pythonpath_parts = [str(_TOOLBOX_ROOT)]
+        if MOTIONSCORE_LOCAL_SRC.exists():
+            pythonpath_parts.append(str(MOTIONSCORE_LOCAL_SRC))
         if existing_pythonpath:
             pythonpath_parts.append(existing_pythonpath)
         env.insert("PYTHONPATH", os.pathsep.join(pythonpath_parts))
@@ -178,7 +189,17 @@ class MotionScoreHRpQCTLogic(ScriptedLoadableModuleLogic):
         if python_exe is None:
             raise RuntimeError("Could not find Python executable")
 
-        full_args = ["-m", module_name] + list(args)
+        local_paths = [str(_TOOLBOX_ROOT)]
+        if MOTIONSCORE_LOCAL_SRC.exists():
+            local_paths.append(str(MOTIONSCORE_LOCAL_SRC))
+        bootstrap = "; ".join(f"sys.path.insert(0, {path!r})" for path in reversed(local_paths))
+        command = (
+            "import sys; "
+            f"{bootstrap}; "
+            f"from {module_name} import main; "
+            "raise SystemExit(main())"
+        )
+        full_args = ["-c", command] + list(args)
         if on_output:
             on_output(f"[process] launching: {python_exe} {' '.join(full_args)}\n")
 
@@ -308,17 +329,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modelVersionEdit = qt.QLineEdit()
         self.modelVersionEdit.setText(self._settings().value("MotionScore/ModelVersion", "v1"))
 
-        self.quickSetupButton = qt.QPushButton("Install / Download Models")
-        self.updateToolboxButton = qt.QPushButton("Check toolbox updates")
-        self._tip(self.quickSetupButton, "Install the MotionScore core package and download/register the default model bundle.")
-        self._tip(self.updateToolboxButton, "Check whether this local Slicer toolbox checkout has upstream updates.")
-        setupRow = qt.QHBoxLayout()
-        setupRow.addWidget(self.quickSetupButton)
-        setupRow.addWidget(self.updateToolboxButton)
-        licenseLayout.addLayout(setupRow)
-
         self.licenseFlowHelpLabel = qt.QLabel(
-            "Install the MotionScore package and download the default model weights."
+            "MotionScore package and model weights are managed from the Setup module."
         )
         self.licenseFlowHelpLabel.setWordWrap(True)
         self._tip(self.licenseFlowHelpLabel, "Setup status and expected model-installation path.")
@@ -768,8 +780,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.refreshButton.clicked.connect(self.onRefreshReview)
         self.exportButton.clicked.connect(self.onExport)
         self.importButton.clicked.connect(self.onImportFinalGrades)
-        self.quickSetupButton.clicked.connect(self.onQuickSetup)
-        self.updateToolboxButton.clicked.connect(self.onCheckToolboxUpdates)
         self.backButton.clicked.connect(self.onBackToPreviousScan)
         self.clearButton.clicked.connect(self.onClearGrades)
         self.loadScanButton.clicked.connect(self.onLoadSelectedScan)
@@ -1673,7 +1683,8 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.applyButton.enabled = review_enabled
         self.backButton.enabled = bool(review_enabled and self._grade_history)
         self.clearButton.enabled = enabled
-        self.quickSetupButton.enabled = enabled
+        if hasattr(self, "quickSetupButton"):
+            self.quickSetupButton.enabled = enabled
         self.trainingModeCheck.enabled = enabled
         self.forcePredictCheck.enabled = enabled
         self.runModeCombo.enabled = enabled
@@ -1798,9 +1809,6 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_license_status("Setup complete (package reinstalled and local models ready).")
         self._log("[setup] complete: package force-reinstalled and local models ready\n")
         self._refresh_model_profiles()
-
-    def onCheckToolboxUpdates(self):
-        run_toolbox_update_dialog(__file__, log=self._log)
 
     def onDownloadModelBundle(self):
         if not self._ensure_core_package():
@@ -2935,7 +2943,21 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.progressLabel.setText("Processing scans...")
 
     def _update_predict_progress_from_output(self, text):
-        completed = len(re.findall(r"(?m)^\[predict\]\s+", text))
+        total_match = re.search(r"(?m)^\[predict\]\s+total=(\d+)\s*$", text)
+        if total_match:
+            self._predict_total = int(total_match.group(1))
+            self._predict_done = min(self._predict_done, self._predict_total)
+            self.progressBar.minimum = 0
+            self.progressBar.maximum = max(1, self._predict_total)
+            self.progressBar.value = self._predict_done
+            self.progressLabel.setText(f"Processing scan {self._predict_done}/{self._predict_total}")
+
+        completed = len(
+            re.findall(
+                r"(?m)^\[predict\]\s+(?!total=).*(?:grade=|skipped existing|failed:|manual-only initialized)",
+                text,
+            )
+        )
         if completed <= 0:
             return
         self._predict_done += completed

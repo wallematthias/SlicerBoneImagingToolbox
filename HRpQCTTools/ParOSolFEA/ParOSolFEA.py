@@ -145,6 +145,7 @@ if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
 from SlicerBoneImagingToolboxLib.fea_batch import (
+    batch_profile_support_status,
     build_parosol_case_commands,
     case_readiness,
     discover_fea_batch_cases,
@@ -168,7 +169,18 @@ COMMON_MPI_LAUNCHER_CANDIDATES = (
     Path.home() / "anaconda3/envs/parosol/bin/mpirun",
     Path.home() / "anaconda3/envs/parosol/bin/mpiexec",
 )
-USER_WORKFLOW_ROOT = Path.home() / "SlicerParOSolTemplates"
+def _shared_profile_tool_root(tool):
+    try:
+        from bone_imaging_derivatives import tool_profile_dir
+
+        return tool_profile_dir(tool)
+    except Exception:
+        path = Path.home() / ".slicerboneimagingtoolbox" / "profiles" / str(tool)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+
+USER_WORKFLOW_ROOT = _shared_profile_tool_root("parosol-fea")
 WORKFLOW_SEARCH_ROOTS = (USER_WORKFLOW_ROOT,)
 WORKFLOW_BUNDLE_EXCLUDED_FILES = {"slicer_input.nii.gz", "slicer_mask.nii.gz"}
 PREFERRED_WORKFLOW = "interactive_custom"
@@ -393,6 +405,39 @@ def _parosol_py_workflow_path(name):
     return Path(path)
 
 
+def _available_user_workflows():
+    try:
+        from bone_imaging_derivatives import list_profiles
+
+        return tuple(
+            str(record.name)
+            for record in list_profiles("parosol-fea")
+            if str(record.kind) == "parosol-workflow" and Path(record.path).expanduser().is_file()
+        )
+    except Exception:
+        return ()
+
+
+def _registered_user_workflow_path(name):
+    token = str(name or "").strip()
+    if not token:
+        return None
+    try:
+        from bone_imaging_derivatives import list_profiles
+
+        for record in list_profiles("parosol-fea"):
+            if str(record.kind) != "parosol-workflow":
+                continue
+            if str(record.name).strip() != token:
+                continue
+            path = Path(record.path).expanduser()
+            if path.is_file():
+                return path
+    except Exception:
+        return None
+    return None
+
+
 def _workflow_path_in_roots(name):
     token = str(name or "").strip()
     if not token:
@@ -421,6 +466,9 @@ def _builtin_workflow_path(name):
     path = _parosol_py_workflow_path(name)
     if path is not None:
         return path
+    path = _registered_user_workflow_path(name)
+    if path is not None:
+        return path
     return _workflow_path_in_roots(name)
 
 
@@ -430,7 +478,11 @@ def _is_backup_workflow_name(name):
 
 
 def _default_profiles():
-    return (*_available_builtin_workflows(), PREFERRED_WORKFLOW)
+    profiles = [*_available_builtin_workflows(), PREFERRED_WORKFLOW]
+    for name in _available_user_workflows():
+        if name not in profiles:
+            profiles.append(name)
+    return tuple(profiles)
 
 
 DEFAULT_PROFILES = (PREFERRED_WORKFLOW,)
@@ -3148,9 +3200,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         runtime_layout.addWidget(self.runtimeStatusLabel)
         runtime_buttons = qt.QHBoxLayout()
         self.checkRuntimeButton = qt.QPushButton("Check Runtime")
-        self.installPypiButton = qt.QPushButton("Install from PyPI")
         runtime_buttons.addWidget(self.checkRuntimeButton)
-        runtime_buttons.addWidget(self.installPypiButton)
         runtime_layout.addLayout(runtime_buttons)
 
         self.workflowTabs = qt.QTabWidget()
@@ -4123,71 +4173,6 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         deformed_layout.addWidget(self.deleteDeformedButton)
         results_layout.addLayout(deformed_layout)
 
-        self.batchPage, batch_page_layout = self._workflow_tab_page("Batch")
-        self.batchCollapsible = qt.QWidget()
-        batch_page_layout.insertWidget(batch_page_layout.count() - 1, self.batchCollapsible)
-        batch_layout = qt.QVBoxLayout(self.batchCollapsible)
-        batch_layout.setContentsMargins(0, 0, 0, 0)
-        batch_layout.setSpacing(8)
-
-        self.batchDiscoveryGroup = qt.QGroupBox("Discovery")
-        batch_discovery_form = qt.QFormLayout(self.batchDiscoveryGroup)
-        batch_layout.addWidget(self.batchDiscoveryGroup)
-        self.batchDatasetRootSelector = ctk.ctkPathLineEdit()
-        self.batchDatasetRootSelector.filters = ctk.ctkPathLineEdit.Dirs
-        batch_discovery_form.addRow("Dataset root", self.batchDatasetRootSelector)
-        self.batchSubjectEdit = qt.QLineEdit()
-        self.batchSiteEdit = qt.QLineEdit()
-        self.batchSessionEdit = qt.QLineEdit()
-        batch_discovery_form.addRow("Subject filter", self.batchSubjectEdit)
-        batch_discovery_form.addRow("Site filter", self.batchSiteEdit)
-        batch_discovery_form.addRow("Session filter", self.batchSessionEdit)
-        self.batchDiscoverButton = qt.QPushButton("Discover")
-        batch_discovery_form.addRow("", self.batchDiscoverButton)
-
-        self.batchTable = qt.QTableWidget()
-        self.batchTable.setColumnCount(6)
-        self.batchTable.setHorizontalHeaderLabels(["Run", "Subject", "Site", "Session", "Images", "Masks"])
-        self.batchTable.minimumHeight = 180
-        try:
-            self.batchTable.horizontalHeader().setStretchLastSection(True)
-            self.batchTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
-        except Exception:
-            pass
-        batch_layout.addWidget(self.batchTable)
-
-        self.batchMappingGroup = qt.QGroupBox("Workflow")
-        batch_mapping_form = qt.QFormLayout(self.batchMappingGroup)
-        batch_layout.addWidget(self.batchMappingGroup)
-        self.batchWorkflowBox = qt.QComboBox()
-        self.batchWorkflowBox.setEditable(True)
-        self.batchWorkflowBox.addItems(_default_profiles())
-        if PREFERRED_WORKFLOW in _default_profiles():
-            self.batchWorkflowBox.setCurrentText(PREFERRED_WORKFLOW)
-        self.batchImageRoleBox = qt.QComboBox()
-        self.batchMaskRoleBox = qt.QComboBox()
-        self.batchDryRunCheckBox = qt.QCheckBox("Dry run")
-        self.batchDryRunCheckBox.checked = False
-        batch_mapping_form.addRow("Workflow", self.batchWorkflowBox)
-        batch_mapping_form.addRow("Image source", self.batchImageRoleBox)
-        batch_mapping_form.addRow("Mask source", self.batchMaskRoleBox)
-        batch_mapping_form.addRow("", self.batchDryRunCheckBox)
-
-        self.batchStatusLabel = qt.QLabel("Discover a dataset to prepare FEA batch cases.")
-        self.batchStatusLabel.wordWrap = True
-        batch_layout.addWidget(self.batchStatusLabel)
-        batch_buttons = qt.QHBoxLayout()
-        self.batchRunButton = qt.QPushButton("Run Batch")
-        self.batchStopButton = qt.QPushButton("Stop")
-        self.batchStopButton.enabled = False
-        batch_buttons.addWidget(self.batchRunButton)
-        batch_buttons.addWidget(self.batchStopButton)
-        batch_buttons.addStretch(1)
-        batch_layout.addLayout(batch_buttons)
-        self._feaBatchCases = []
-        self._feaBatchCommands = []
-        self._feaBatchCommandIndex = 0
-
         self.consoleCollapsible = ctk.ctkCollapsibleButton()
         self.consoleCollapsible.text = "Console / Logs"
         self.consoleCollapsible.collapsed = True
@@ -4202,12 +4187,6 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
 
         self._install_tooltips()
 
-        self.batchDiscoverButton.clicked.connect(self.discover_fea_batch)
-        self.batchWorkflowBox.currentTextChanged.connect(self._on_fea_batch_workflow_changed)
-        self.batchImageRoleBox.currentTextChanged.connect(self._refresh_fea_batch_readiness)
-        self.batchMaskRoleBox.currentTextChanged.connect(self._refresh_fea_batch_readiness)
-        self.batchRunButton.clicked.connect(self.run_fea_batch)
-        self.batchStopButton.clicked.connect(self.stop_fea_batch)
         self.createTopDiskButton.clicked.connect(lambda: self._create_disk_plane("top"))
         self.createBottomDiskButton.clicked.connect(lambda: self._create_disk_plane("bottom"))
         self.imageSelector.currentNodeChanged.connect(self._on_input_node_changed)
@@ -4272,7 +4251,6 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         self.planeTable.itemChanged.connect(lambda _item: self._mark_workflow_replay_editor_dirty())
         self.loadTable.itemChanged.connect(lambda _item: self._mark_workflow_replay_loads_dirty())
         self.checkRuntimeButton.clicked.connect(self.check_runtime)
-        self.installPypiButton.clicked.connect(self.install_runtime_from_pypi)
         self.browseMpiLauncherButton.clicked.connect(self.browse_mpi_launcher)
         self.preprocessButton.clicked.connect(self.preprocess_inputs)
         self.preprocessNextButton.clicked.connect(self.preprocess_inputs_and_next)
@@ -4316,7 +4294,6 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
     def _install_tooltips(self):
         tooltips = {
             self.checkRuntimeButton: "Check that Slicer's Python can import parosol-py and find the native solver/runtime.",
-            self.installPypiButton: "Install or upgrade parosol-py inside Slicer's embedded Python.",
             self.imageSelector: "Select the image that will be converted to the FE material model.",
             self.maskSelector: "Optional mask, labelmap, or segmentation that defines the active anatomy or material labels.",
             self.maskSegmentBox: "Choose all labels or a subset from the selected mask/segmentation.",
@@ -4939,7 +4916,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         selected = qt.QFileDialog.getOpenFileName(
             slicer.util.mainWindow(),
             "Select ParOSol Workflow",
-            str(Path.home()),
+            str(USER_WORKFLOW_ROOT),
             "ParOSol workflows (*.parosol-workflow);;YAML workflows (*.yaml *.yml);;All files (*)",
         )
         path = selected[0] if isinstance(selected, tuple) else selected
@@ -10343,7 +10320,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             else:
                 dialog_text = (
                     "Runtime check failed\n\n"
-                    "Install from PyPI, then run the check again.\n\n"
+                    "Use the Setup module to install ParOSol-py, then run the check again.\n\n"
                     + report
                 )
             self._show_text_dialog(
@@ -11334,7 +11311,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         description = self._prompt_workflow_description()
         if description is None:
             return
-        default_dir = Path.home() / "SlicerParOSolTemplates"
+        default_dir = USER_WORKFLOW_ROOT
         default_dir.mkdir(parents=True, exist_ok=True)
         selected = qt.QFileDialog.getSaveFileName(
             slicer.util.mainWindow(),
@@ -11360,6 +11337,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             workflow_path = staging_dir / "workflow.yaml"
             self._write_workflow_template(config_path, workflow_path, description=description)
             self._write_workflow_bundle(staging_dir, workflow_bundle)
+            self._register_user_workflow_profile(workflow_bundle, description=description)
             success = True
             self._append_log(f"Saved workflow: {workflow_bundle}\n")
             self._show_text_dialog(
@@ -11379,6 +11357,20 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             self.outputDirectory.directory = old_output
             if success:
                 shutil.rmtree(staging_dir, ignore_errors=True)
+
+    def _register_user_workflow_profile(self, workflow_bundle, description=""):
+        try:
+            from bone_imaging_derivatives import register_profile_asset
+
+            register_profile_asset(
+                "parosol-fea",
+                Path(workflow_bundle).stem.replace("_", " ").replace("-", " ").title(),
+                workflow_bundle,
+                kind="parosol-workflow",
+                metadata={"description": str(description or "").strip()},
+            )
+        except Exception as exc:
+            self._append_log(f"Saved workflow, but could not update shared profile registry: {exc}\n")
 
     def _write_workflow_bundle(self, template_dir, workflow_bundle):
         template_dir = Path(template_dir)
@@ -11915,16 +11907,14 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         table = self.batchTable
         table.setRowCount(len(self._feaBatchCases))
         for row, case in enumerate(self._feaBatchCases):
-            run_item = qt.QTableWidgetItem("")
-            run_item.setFlags(run_item.flags() | qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
-            run_item.setCheckState(qt.Qt.Checked)
-            table.setItem(row, 0, run_item)
+            self._set_fea_batch_action(row, "Run")
+            model = self._fea_batch_model_artifact(case)
             values = [
                 case.subject_id,
                 case.site,
                 case.session_id or "",
-                ", ".join(sorted({artifact.role for artifact in case.artifacts if artifact.role in {"calibrated_image", "density_image", "material_labelmap", "labelmap", "segmentation", "image", "raw_image"}})),
-                ", ".join(sorted({artifact.role for artifact in case.artifacts if artifact.role in {"vertebra_mask", "mask_full", "mask", "common_region_mask", "mask_cort", "mask_trab"}})),
+                Path(model.path).name if model is not None else "",
+                "",
             ]
             for column, value in enumerate(values, start=1):
                 item = qt.QTableWidgetItem(str(value))
@@ -11934,6 +11924,60 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             table.resizeColumnsToContents()
         except Exception:
             pass
+
+    def _set_fea_batch_action(self, row, label):
+        button = qt.QPushButton(str(label))
+        button.enabled = str(label) not in {"Queued", "Running", "Not implemented", "Missing input"}
+        if str(label) == "Load":
+            button.clicked.connect(lambda _checked=False, index=row: self._load_fea_batch_row_outputs(index))
+        elif str(label) == "Run":
+            button.clicked.connect(lambda _checked=False, index=row: self._queue_fea_batch_row(index))
+        self.batchTable.setCellWidget(int(row), 0, button)
+
+    def _set_fea_batch_status(self, row, status):
+        row = int(row)
+        row_count_value = getattr(self.batchTable, "rowCount", 0)
+        row_count = int(row_count_value() if callable(row_count_value) else row_count_value)
+        if 0 <= row < row_count:
+            item = self.batchTable.item(row, 5)
+            if item is None:
+                item = qt.QTableWidgetItem("")
+                item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
+                self.batchTable.setItem(row, 5, item)
+            item.setText(str(status))
+
+    def _fea_batch_model_artifact(self, case):
+        selected = self._selected_fea_batch_roles()
+        workflow = str(self.batchWorkflowBox.currentText or "").strip()
+        roles = (selected.get("image"),) if selected.get("image") else role_options_for_workflow([case], workflow, "image")
+        if not roles:
+            roles = ("material_labelmap", "hom_ls_model", "model_labelmap", "labelmap")
+        return case.first_artifact(role for role in roles if role)
+
+    def _fea_batch_command_for_row(self, row):
+        row = int(row)
+        if row < 0 or row >= len(self._feaBatchCases):
+            return None
+        root = str(getattr(self.batchDatasetRootSelector, "currentPath", "") or "").strip()
+        if not root:
+            return None
+        workflow = str(self.batchWorkflowBox.currentText or "").strip()
+        commands = self.logic.build_fea_batch_commands(
+            root,
+            [self._feaBatchCases[row]],
+            workflow=workflow,
+            selected_roles=self._selected_fea_batch_roles(),
+            dry_run=bool(self.batchDryRunCheckBox.checked),
+        )
+        return commands[0] if commands else None
+
+    def _fea_batch_output_dir_for_row(self, row):
+        command = self._fea_batch_command_for_row(row)
+        if not command:
+            return None
+        context = parosol_command_derivative_context(command)
+        output_dir = context.get("output_dir") if context else ""
+        return Path(output_dir) if output_dir else None
 
     def _populate_fea_batch_role_selectors(self):
         signal_states = []
@@ -11982,15 +12026,34 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             self.batchStatusLabel.text = "Discover a dataset to prepare FEA batch cases."
             return
         workflow = str(self.batchWorkflowBox.currentText or "").strip()
+        supported, support_message = batch_profile_support_status(workflow)
         selected_roles = self._selected_fea_batch_roles()
         ready = 0
         missing_counts = {}
-        for case in cases:
+        for row, case in enumerate(cases):
+            if not supported:
+                self._set_fea_batch_action(row, "Not implemented")
+                self._set_fea_batch_status(row, "Not implemented")
+                continue
             ok, missing = case_readiness(case, workflow, selected_roles)
+            output_dir = self._fea_batch_output_dir_for_row(row)
+            has_results = bool(output_dir and (output_dir / "result.json").exists())
             if ok:
                 ready += 1
+                if has_results:
+                    self._set_fea_batch_action(row, "Load")
+                    self._set_fea_batch_status(row, "Done")
+                else:
+                    self._set_fea_batch_action(row, "Run")
+                    self._set_fea_batch_status(row, "Ready")
+            else:
+                self._set_fea_batch_action(row, "Missing input")
+                self._set_fea_batch_status(row, "Missing model labelmap" if "image" in missing else "Missing input")
             for group in missing:
                 missing_counts[group] = missing_counts.get(group, 0) + 1
+        if not supported:
+            self.batchStatusLabel.text = support_message
+            return
         if missing_counts:
             missing_text = ", ".join(f"{name}: {count}" for name, count in sorted(missing_counts.items()))
             self.batchStatusLabel.text = (
@@ -12000,50 +12063,75 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             self.batchStatusLabel.text = f"{ready}/{len(cases)} case(s) ready for {workflow or 'selected workflow'}."
 
     def run_fea_batch(self):
-        root = str(getattr(self.batchDatasetRootSelector, "currentPath", "") or "").strip()
-        if not root:
-            slicer.util.errorDisplay("Select a dataset root before running a batch.")
-            return
-        cases = self._selected_fea_batch_cases()
-        if not cases:
-            slicer.util.errorDisplay("Select at least one discovered FEA case.")
+        if getattr(self.logic, "_proc", None) is not None:
+            slicer.util.errorDisplay("FEA batch is already running.")
             return
         workflow = str(self.batchWorkflowBox.currentText or "").strip()
-        try:
-            commands = self.logic.build_fea_batch_commands(
-                root,
-                cases,
-                workflow=workflow,
-                selected_roles=self._selected_fea_batch_roles(),
-                dry_run=bool(self.batchDryRunCheckBox.checked),
-            )
-        except Exception as exc:
-            slicer.util.errorDisplay(str(exc))
+        supported, support_message = batch_profile_support_status(workflow)
+        if not supported:
+            slicer.util.errorDisplay(support_message)
             return
-        if not commands:
-            slicer.util.errorDisplay("No selected FEA cases have the artifacts required by this workflow.")
+        rows = []
+        for row, case in enumerate(getattr(self, "_feaBatchCases", []) or []):
+            ok, _missing = case_readiness(case, workflow, self._selected_fea_batch_roles())
+            if ok:
+                rows.append(row)
+        if not rows:
+            slicer.util.errorDisplay("No discovered FEA cases have the material labelmap required by this workflow.")
             return
-        self._feaBatchCommands = commands
-        self._feaBatchCommandIndex = 0
+        self._feaBatchQueue = list(rows)
+        for row in self._feaBatchQueue:
+            self._set_fea_batch_action(row, "Queued")
+            self._set_fea_batch_status(row, "Queued")
         self.batchRunButton.enabled = False
         self.batchStopButton.enabled = True
-        self.batchStatusLabel.text = f"Running 0/{len(commands)} FEA batch case(s)..."
-        self._append_log(f"[fea batch] starting {len(commands)} case(s)\n")
-        self._run_next_fea_batch_case()
+        self._append_log(f"[fea batch] queued {len(self._feaBatchQueue)} case(s)\n")
+        self._start_next_fea_batch_job()
 
-    def _run_next_fea_batch_case(self):
-        if self._feaBatchCommandIndex >= len(self._feaBatchCommands):
+    def _queue_fea_batch_row(self, row):
+        row = int(row)
+        if row < 0 or row >= len(getattr(self, "_feaBatchCases", []) or []):
+            return
+        if row in getattr(self, "_feaBatchQueue", []):
+            return
+        case = self._feaBatchCases[row]
+        ok, _missing = case_readiness(case, str(self.batchWorkflowBox.currentText or "").strip(), self._selected_fea_batch_roles())
+        if not ok:
+            slicer.util.errorDisplay("This FEA row is missing a model labelmap.")
+            self._refresh_fea_batch_readiness()
+            return
+        self._feaBatchQueue.append(row)
+        self._set_fea_batch_action(row, "Queued")
+        self._set_fea_batch_status(row, "Queued")
+        self.batchRunButton.enabled = False
+        self.batchStopButton.enabled = True
+        self._start_next_fea_batch_job()
+
+    def _start_next_fea_batch_job(self):
+        if getattr(self.logic, "_proc", None) is not None:
+            return
+        if not self._feaBatchQueue:
+            self._feaBatchCurrent = None
             self.batchRunButton.enabled = True
             self.batchStopButton.enabled = False
-            total = len(self._feaBatchCommands)
-            self.batchStatusLabel.text = f"Finished {total}/{total} FEA batch case(s)."
-            self._append_log("[fea batch] finished\n")
+            self.batchStatusLabel.text = "FEA batch idle."
+            self._append_log("[fea batch] queue finished\n")
             return
-        command = self._feaBatchCommands[self._feaBatchCommandIndex]
-        case_number = self._feaBatchCommandIndex + 1
-        total = len(self._feaBatchCommands)
-        self.batchStatusLabel.text = f"Running {case_number}/{total}: {Path(command[0]).name}"
-        self._append_log(f"[fea batch] running {case_number}/{total}: {' '.join(command)}\n")
+        row = int(self._feaBatchQueue.pop(0))
+        command = self._fea_batch_command_for_row(row)
+        if not command:
+            self._set_fea_batch_action(row, "Missing input")
+            self._set_fea_batch_status(row, "Missing model labelmap")
+            self._start_next_fea_batch_job()
+            return
+        self._feaBatchCurrent = {"row": row, "command": command}
+        self._set_fea_batch_action(row, "Running")
+        self._set_fea_batch_status(row, "Running")
+        self.batchStatusLabel.text = f"Running FEA batch row {row + 1}/{len(self._feaBatchCases)}: {Path(command[0]).name}"
+        self._append_log(f"[fea batch] running row {row + 1}: {' '.join(command)}\n")
+        output_dir = parosol_command_derivative_context(command).get("output_dir")
+        if output_dir:
+            _remove_stale_result_fields(Path(output_dir))
         self.logic.run_parosol(
             command,
             on_output=self._append_log,
@@ -12052,24 +12140,55 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         )
 
     def _on_fea_batch_case_finished(self, exit_code, interrupted):
+        current = self._feaBatchCurrent or {}
+        row = current.get("row")
+        command = current.get("command")
+        self._feaBatchCurrent = None
         if interrupted:
+            if row is not None:
+                self._set_fea_batch_action(row, "Run")
+                self._set_fea_batch_status(row, "Canceled")
             self.batchRunButton.enabled = True
             self.batchStopButton.enabled = False
+            self._feaBatchQueue = []
             self.batchStatusLabel.text = "FEA batch stopped."
             self._append_log("[fea batch] stopped\n")
             return
         if int(exit_code) != 0:
+            if row is not None:
+                self._set_fea_batch_action(row, "Run")
+                self._set_fea_batch_status(row, f"Failed ({exit_code})")
             self.batchRunButton.enabled = True
             self.batchStopButton.enabled = False
-            self.batchStatusLabel.text = f"FEA batch failed at case {self._feaBatchCommandIndex + 1}."
+            self._feaBatchQueue = []
+            self.batchStatusLabel.text = f"FEA batch failed at row {int(row) + 1 if row is not None else '?'}."
             self._append_log(f"[fea batch] failed with exit code {exit_code}\n")
             return
-        self._write_completed_fea_batch_manifest(self._feaBatchCommands[self._feaBatchCommandIndex])
-        self._feaBatchCommandIndex += 1
-        self._run_next_fea_batch_case()
+        if command:
+            self._write_completed_fea_batch_manifest(command)
+            context = parosol_command_derivative_context(command)
+            if row is not None and context.get("output_dir"):
+                self._feaBatchRowOutputs[int(row)] = context["output_dir"]
+        if row is not None:
+            self._set_fea_batch_action(row, "Load")
+            self._set_fea_batch_status(row, "Done")
+        self._start_next_fea_batch_job()
 
     def stop_fea_batch(self):
+        self._feaBatchQueue = []
         self.logic.interrupt()
+
+    def _load_fea_batch_row_outputs(self, row):
+        output_dir = self._feaBatchRowOutputs.get(int(row))
+        if not output_dir:
+            resolved = self._fea_batch_output_dir_for_row(row)
+            output_dir = str(resolved) if resolved is not None else ""
+        if not output_dir or not Path(output_dir).exists():
+            slicer.util.errorDisplay("No result available for this FEA batch row.")
+            return
+        self.outputDirectory.directory = str(output_dir)
+        self.load_results()
+        self.batchStatusLabel.text = f"Loaded FEA results: {Path(output_dir).name}"
 
     def _write_completed_fea_batch_manifest(self, command):
         context = parosol_command_derivative_context(command)
