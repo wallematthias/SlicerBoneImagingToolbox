@@ -632,6 +632,71 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             except (RuntimeError, ValueError, AttributeError):
                 return
 
+    def _set_widget_value_safe(self, widget, value):
+        if not self._qt_object_alive(widget):
+            return False
+        previous = None
+        try:
+            previous = widget.blockSignals(True)
+        except Exception:
+            previous = None
+        try:
+            try:
+                widget.value = value
+            except (RuntimeError, ValueError, AttributeError):
+                widget.setValue(value)
+            return True
+        except (RuntimeError, ValueError, AttributeError):
+            return False
+        finally:
+            if previous is not None:
+                try:
+                    widget.blockSignals(previous)
+                except Exception:
+                    pass
+
+    def _set_checkbox_checked_safe(self, checkbox, checked):
+        if not self._qt_object_alive(checkbox):
+            return False
+        previous = None
+        try:
+            previous = checkbox.blockSignals(True)
+        except Exception:
+            previous = None
+        try:
+            checkbox.checked = bool(checked)
+            return True
+        except (RuntimeError, ValueError, AttributeError):
+            try:
+                checkbox.setChecked(bool(checked))
+                return True
+            except (RuntimeError, ValueError, AttributeError):
+                return False
+        finally:
+            if previous is not None:
+                try:
+                    checkbox.blockSignals(previous)
+                except Exception:
+                    pass
+
+    def _set_combo_current_data_safe(self, combo, data):
+        if not self._qt_object_alive(combo):
+            return False
+        try:
+            index = combo.findData(data)
+            if index < 0:
+                index = combo.findText(str(data))
+            if index < 0:
+                return False
+            previous = combo.blockSignals(True)
+            try:
+                combo.setCurrentIndex(index)
+            finally:
+                combo.blockSignals(previous)
+            return True
+        except (RuntimeError, ValueError, AttributeError):
+            return False
+
     def _build_ui(self):
         def _cap_width(widget, width=320):
             try:
@@ -3797,11 +3862,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.msInitTy.value = float(init_vox[1])
             self.msInitTz.value = float(init_vox[2])
 
-        analysis_cfg = cfg.get("analysis") or {}
+        self._apply_analysis_config_to_controls(cfg.get("analysis") or {})
+        self._on_mask_method_changed(self.maskMethod.currentText)
+        self._on_periosteal_contour_method_changed()
+        self._sync_scene_profile_from_batch_profile()
+        if source_label and hasattr(self, "userMessageLabel"):
+            self._set_user_message("info", "Profile applied", source_label)
+
+    def _apply_analysis_config_to_controls(self, analysis_cfg):
+        analysis_cfg = dict(analysis_cfg or {})
         self._analysis_method = self._analysis_method_from_config(analysis_cfg)
-        idx = self.analysisMethodCombo.findData(self._analysis_method)
-        if idx >= 0:
-            self.analysisMethodCombo.setCurrentIndex(idx)
+        self._set_combo_current_data_safe(self.analysisMethodCombo, self._analysis_method)
         change_region_cfg = analysis_cfg.get("change_region") or {}
         binary_cfg = analysis_cfg.get("binary_reclassification") or {}
         if str(analysis_cfg.get("method", "") or "") == "auto" or change_region_cfg or binary_cfg:
@@ -3813,47 +3884,49 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         else:
             restrict_bone = self._analysis_method == "grayscale_marrow_mask"
             binary_enabled = self._analysis_method == "grayscale_and_binary"
-        self.analysisRestrictBoneSupportCheck.checked = bool(restrict_bone)
-        self.analysisBinaryReclassificationCheck.checked = bool(binary_enabled)
-        pair_idx = self.analysisPairModeCombo.findData(str(analysis_cfg.get("pair_mode", "adjacent")))
-        if pair_idx >= 0:
-            self.analysisPairModeCombo.setCurrentIndex(pair_idx)
+        self._set_checkbox_checked_safe(self.analysisRestrictBoneSupportCheck, restrict_bone)
+        self._set_checkbox_checked_safe(self.analysisBinaryReclassificationCheck, binary_enabled)
+        self._set_combo_current_data_safe(self.analysisPairModeCombo, str(analysis_cfg.get("pair_mode", "adjacent")))
         thresholds = analysis_cfg.get("thresholds") or [float(self.analysisThreshold.value)]
         clusters = analysis_cfg.get("cluster_sizes") or [int(self.analysisCluster.value)]
         if thresholds:
-            self._set_analysis_threshold_value(float(thresholds[0]), queue_update=False)
+            self._set_analysis_threshold_value(float(thresholds[0]), queue_update=False, force=True)
         if clusters:
-            self._set_analysis_cluster_value(int(clusters[0]), queue_update=False)
-        self.analysisGaussianFilterCheck.checked = bool(
-            analysis_cfg.get("gaussian_filter", bool(self.analysisGaussianFilterCheck.checked))
+            self._set_analysis_cluster_value(int(clusters[0]), queue_update=False, force=True)
+        self._set_checkbox_checked_safe(
+            self.analysisGaussianFilterCheck,
+            analysis_cfg.get("gaussian_filter", bool(self.analysisGaussianFilterCheck.checked)),
         )
-        self.analysisGaussianSigma.value = float(
-            analysis_cfg.get("gaussian_sigma", float(self.analysisGaussianSigma.value))
+        self._set_widget_value_safe(
+            self.analysisGaussianSigma,
+            float(analysis_cfg.get("gaussian_sigma", float(self.analysisGaussianSigma.value))),
         )
-        self.analysisFullMaskDilation.value = int(
-            analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))
+        self._set_widget_value_safe(
+            self.analysisFullMaskDilation,
+            int(analysis_cfg.get("full_mask_dilation_voxels", int(self.analysisFullMaskDilation.value))),
         )
-        self.analysisMarrowMaskDilation.value = int(
-            change_region_cfg.get(
-                "dilation_voxels",
-                analysis_cfg.get("marrow_mask_dilation_voxels", int(self.analysisMarrowMaskDilation.value)),
-            )
+        self._set_widget_value_safe(
+            self.analysisMarrowMaskDilation,
+            int(
+                change_region_cfg.get(
+                    "dilation_voxels",
+                    analysis_cfg.get("marrow_mask_dilation_voxels", int(self.analysisMarrowMaskDilation.value)),
+                )
+            ),
         )
-        self.analysisMarrowMaskErosion.value = int(
-            change_region_cfg.get(
-                "erosion_voxels",
-                analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value)),
-            )
+        self._set_widget_value_safe(
+            self.analysisMarrowMaskErosion,
+            int(
+                change_region_cfg.get(
+                    "erosion_voxels",
+                    analysis_cfg.get("marrow_mask_erosion_voxels", int(self.analysisMarrowMaskErosion.value)),
+                )
+            ),
         )
         self._analysis_erosion_voxels = int(
             ((analysis_cfg.get("valid_region") or {}).get("erosion_voxels", self._analysis_erosion_voxels))
         )
-        self._on_mask_method_changed(self.maskMethod.currentText)
-        self._on_periosteal_contour_method_changed()
-        self._on_analysis_method_changed()
-        self._sync_scene_profile_from_batch_profile()
-        if source_label and hasattr(self, "userMessageLabel"):
-            self._set_user_message("info", "Profile applied", source_label)
+        self._on_analysis_option_changed()
 
     def _on_apply_study_profile(self, *_args, profile=None):
         selected_profile = str(profile if profile is not None else self._selected_config_profile())
@@ -4092,31 +4165,31 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_label_text_safe(label, "Settings changed - click Apply settings")
         self._set_widget_style_safe(label, "color: #996600;")
 
-    def _set_analysis_threshold_value(self, value, *, from_slider=False, queue_update=False):
+    def _set_analysis_threshold_value(self, value, *, from_slider=False, queue_update=False, force=False):
         clamped = max(0, min(1000, int(round(float(value) / 5.0) * 5)))
-        if self._updating_analysis_controls:
+        if self._updating_analysis_controls and not force:
             return
         self._updating_analysis_controls = True
         try:
             if int(self.analysisThresholdSlider.value) != clamped:
-                self.analysisThresholdSlider.value = clamped
+                self._set_widget_value_safe(self.analysisThresholdSlider, clamped)
             if float(self.analysisThreshold.value) != float(clamped):
-                self.analysisThreshold.value = float(clamped)
+                self._set_widget_value_safe(self.analysisThreshold, float(clamped))
         finally:
             self._updating_analysis_controls = False
         if queue_update:
             self._queue_interactive_preview_update()
 
-    def _set_analysis_cluster_value(self, value, *, from_slider=False, queue_update=False):
+    def _set_analysis_cluster_value(self, value, *, from_slider=False, queue_update=False, force=False):
         clamped = max(0, min(30, int(round(float(value)))))
-        if self._updating_analysis_controls:
+        if self._updating_analysis_controls and not force:
             return
         self._updating_analysis_controls = True
         try:
             if int(self.analysisClusterSlider.value) != clamped:
-                self.analysisClusterSlider.value = clamped
+                self._set_widget_value_safe(self.analysisClusterSlider, clamped)
             if int(self.analysisCluster.value) != clamped:
-                self.analysisCluster.value = clamped
+                self._set_widget_value_safe(self.analysisCluster, clamped)
         finally:
             self._updating_analysis_controls = False
         if queue_update:

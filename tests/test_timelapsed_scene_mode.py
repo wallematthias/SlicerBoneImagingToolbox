@@ -317,6 +317,12 @@ def test_timelapsed_batch_custom_profile_exposes_analysis_options_without_cli_pr
     settings_override = source.split("    def _settings_override", 1)[1].split("\n    def ", 1)[0]
     assert "if self._selected_profile_is_custom() or bool(force_analysis_controls):" in settings_override
     assert 'settings["analysis"] = self._analysis_config_from_controls(pair_mode)' in settings_override
+    assert "def _apply_analysis_config_to_controls" in source
+    apply_analysis = source.split("    def _apply_analysis_config_to_controls", 1)[1].split("\n    def ", 1)[0]
+    assert "self._set_combo_current_data_safe(self.analysisMethodCombo, self._analysis_method)" in apply_analysis
+    assert "self._set_checkbox_checked_safe(self.analysisBinaryReclassificationCheck, binary_enabled)" in apply_analysis
+    assert "self._set_analysis_cluster_value(int(clusters[0]), queue_update=False, force=True)" in apply_analysis
+    assert "self._on_analysis_method_changed()" not in apply_analysis
     mode_changed = source.split("    def _on_timelapsed_mode_changed", 1)[1].split("\n    def ", 1)[0]
     assert "self._update_batch_analysis_options_visibility()" in mode_changed
     visibility = source.split("    def _update_batch_analysis_options_visibility", 1)[1].split("\n    def ", 1)[0]
