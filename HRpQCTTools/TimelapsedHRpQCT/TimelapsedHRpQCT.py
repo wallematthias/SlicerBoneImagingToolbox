@@ -3270,16 +3270,22 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         )
 
     def _dataset_root(self):
-        p = self.inputPath.currentPath.strip()
+        p = self._path_text(getattr(self, "inputPath", None))
         root = Path(p) if p else None
         self._set_stage_status("dataset", "done" if root is not None else "pending")
         return root
 
     def _imported_dataset_root(self):
         root = self._dataset_root()
+        plan = getattr(self, "_last_scene_results_plan", None) or getattr(self, "_last_scene_plan", None)
+        if root is None and plan is not None:
+            output_root = Path(plan.output_root)
+            if output_root.name == "Timelapse":
+                return output_root
+            return output_root / "derivatives" / "Timelapse"
         if root is None:
             return None
-        override = self.resultsRootPath.currentPath.strip() if hasattr(self, "resultsRootPath") else ""
+        override = self._path_text(getattr(self, "resultsRootPath", None))
         selected = Path(override).expanduser() if override else root
         if selected.name == "Timelapse":
             return selected
@@ -7760,7 +7766,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.sceneStatusLabel.text = "No scene comparison rows available to export."
             self._show("[scene] no scene comparison rows available to export.")
             return
-        default_dir = Path(str(self.sceneResultsRootPath.currentPath or "")).expanduser()
+        default_dir = Path(self._path_text(getattr(self, "sceneResultsRootPath", None)) or ".").expanduser()
         if not default_dir.exists():
             default_dir = Path.home()
         default_path = default_dir / default_export_filename("timelapsed_scene_comparisons")

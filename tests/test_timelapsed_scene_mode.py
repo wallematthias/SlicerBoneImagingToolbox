@@ -137,6 +137,9 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "_set_path_without_immediate_reset" in source
     assert "if not self._qt_object_alive(widget):" in source
     assert "return False" in source.split("    def _set_path_without_immediate_reset", 1)[1].split("\n    def ", 1)[0]
+    assert "inputPath.currentPath" not in source
+    assert "resultsRootPath.currentPath" not in source
+    assert "sceneResultsRootPath.currentPath" not in source
     assert "current dataset set to scene run" in source
     assert "remodelling image" in source
     assert "_last_scene_plan" in source
