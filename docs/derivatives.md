@@ -1,6 +1,6 @@
 # Derivative Workflow Contract
 
-SlicerBoneImagingToolbox modules share reusable derivative products through manifest files. A module should read existing derivatives before recomputing them, and long-running tools should generate missing prerequisites when inputs are available and dependency generation is enabled.
+SlicerBoneImagingToolbox modules share reusable derivative products through manifest files. A module should read existing derivatives before recomputing them and should report missing prerequisites clearly in scene and batch modes.
 
 ## Modes
 
@@ -12,14 +12,15 @@ Both modes should call the same backend services. The mode only changes input an
 
 ## Derivatives
 
+- `ImportedContours`: Scanco/IPL masks imported with a dataset, such as full, trabecular, cortical, and registration masks. These are preferred over generated masks when both are available.
+- `BoneContours`: toolbox-generated bone segmentations, periosteal/endosteal masks, trabecular/cortical masks, generic ROI masks, and FEA material label maps.
 - `Registration`: pairwise and composed transforms for longitudinal scans.
 - `CommonRegion`: scan/FOV common-region masks derived from registered scan support.
-- `Segmentation`: bone, full/periosteal, trabecular, cortical, and future mask roles.
-- `Microarchitecture`: measurement tables and scalar map outputs.
-- `PlateRodMorphometry`: plate/rod labels, element maps, and summaries.
-- `Timelapsed`: remodelling and longitudinal change outputs.
-- `FEA`: meshes, material maps, boundary conditions, solver outputs, and mechanical fields.
-- `Mechanoregulation`: combined biological change and mechanical-field outputs.
+- `Microarchitecture`: native maps, native measurements, and common-region-restricted measurements.
+- `PlateRodMorphometry`: native plate/rod maps and native or common-region-restricted summaries.
+- `Timelapse`: remodelling maps, longitudinal change tables, and remodelling review outputs.
+- `FEA`: material maps, solver outputs, SED fields, load-history outputs, and mechanical summaries.
+- `Mechanoregulation`: combined remodelling and mechanical-field outputs.
 - `VoidSpace`: future void-space masks, maps, and measurements.
 
 ## Common Region
@@ -51,11 +52,11 @@ Each derivative writes `manifest.json` with records describing the produced file
       "derivative": "CommonRegion",
       "role": "scan_region_native_common",
       "subject_id": "SAMPLE001",
-      "site": "tibia",
+      "site": "tibialeft",
       "session_id": "1",
-      "stack_index": 1,
+      "stack_index": null,
       "space": "native",
-      "path": "sub-SAMPLE001/site-tibia/stack-01/native_space/ses-1/masks/mask.nii.gz",
+      "path": "sub-SAMPLE001/ses-001/xct/sub-SAMPLE001_ses-001_voi-tibialeft_desc-scan-region-native-common_mask.nii.gz",
       "source": "generated",
       "metadata": {
         "reference_session_id": "1"
@@ -65,4 +66,4 @@ Each derivative writes `manifest.json` with records describing the produced file
 }
 ```
 
-Consumers should prefer manifest records over filename inference. Filename discovery remains a compatibility fallback for older outputs.
+Consumers should prefer manifest records over filename inference. Batch tools should operate on normalized dataset names and portable relative paths so copied dataset roots remain usable.
