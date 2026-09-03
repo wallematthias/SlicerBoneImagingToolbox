@@ -523,7 +523,8 @@ def test_timelapsed_scene_mask_group_selection_populates_matching_roles() -> Non
     assert "timepoint_index = self._scene_timepoint_index_for_mask_source_selector(selector)" in changed
     assert "self._apply_scene_detected_roles_for_timepoint(timepoint_index, source_node)" in changed
     assert 'for role in ("registration_roi", "segmentation", "roi1", "roi2", "roi3"):' in assign
-    assert "segment_id = self._scene_segment_id_for_node_role(source_node_id, role)" in assign
+    assert 'lookup_role = "full" if self._normalize_scene_role_name(role) == "registration_roi" else role' in assign
+    assert "segment_id = self._scene_segment_id_for_node_role(source_node_id, lookup_role)" in assign
     assert "self._set_scene_mask_row_node(role_row, column, source_node_id, self.sceneRoiTable, role=role, segment_id=segment_id)" in assign
     assert 'self._set_scene_mask_row_policy(role_row, column, "node", self.sceneRoiTable)' in assign
 
@@ -546,6 +547,22 @@ def test_timelapsed_scene_auto_detect_roles_reapplies_existing_rows() -> None:
     assert "if nodes_by_session and (role not in existing_roles or reapply_existing):" in populate
     assert "role_row = self._scene_role_row_index(role)" in populate
     assert "self._set_scene_mask_row_node(role_row, column, node_id, self.sceneRoiTable, role=role, segment_id=segment_id)" in populate
+
+
+def test_timelapsed_scene_discovery_runs_segmentation_role_detection() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    discover = source.split("    def _on_discover_scene_timepoints", 1)[1].split("\n    def ", 1)[0]
+
+    assert "self._populate_scene_roi_rows_from_timepoints(discovery.timepoints)" in discover
+    assert "for timepoint_index in range(self.sceneRegistrationTable.rowCount):" in discover
+    assert "source_node = self._scene_selected_table_node(timepoint_index, 2, self.sceneRegistrationTable)" in discover
+    assert "self._apply_scene_detected_roles_for_timepoint(timepoint_index, source_node)" in discover
 
 
 def test_timelapsed_scene_role_status_updates_when_roi_selector_changes() -> None:
@@ -1597,6 +1614,7 @@ def test_timelapsed_reload_callbacks_guard_destroyed_qt_combos() -> None:
         "_selected_processing_site",
         "_refresh_processing_subjects",
         "_refresh_processing_sites",
+        "_selected_config_profile",
     ):
         block = source.split(f"    def {function_name}", 1)[1].split("\n    def ", 1)[0]
         assert "self._qt_object_alive" in block

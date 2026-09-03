@@ -2766,6 +2766,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         for timepoint in discovery.timepoints:
             self._add_scene_timepoint(timepoint)
         self._populate_scene_roi_rows_from_timepoints(discovery.timepoints)
+        for timepoint_index in range(self.sceneRegistrationTable.rowCount):
+            source_node = self._scene_selected_table_node(timepoint_index, 2, self.sceneRegistrationTable)
+            self._apply_scene_detected_roles_for_timepoint(timepoint_index, source_node)
         self._select_scene_initial_transforms_for_registration_reuse()
         self._resize_scene_timepoint_table()
         if discovery.subject_id:
@@ -3577,10 +3580,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._reset_progress_for_dataset_root()
 
     def _selected_config_profile(self):
-        if not hasattr(self, "studyProfileCombo"):
+        combo = getattr(self, "studyProfileCombo", None)
+        if not self._qt_object_alive(combo):
             return "standard"
-        data = self.studyProfileCombo.currentData
-        return str(data or "standard")
+        try:
+            data = combo.currentData
+            return str(data or "standard")
+        except (RuntimeError, ValueError):
+            return "standard"
 
     def _selected_profile_is_custom(self):
         return self._selected_config_profile() == "__custom__"
@@ -3598,6 +3605,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _populate_study_profiles(self, combo=None):
         combo = combo or self.studyProfileCombo
+        if not self._qt_object_alive(combo):
+            return
         combo.clear()
         for profile in self._available_config_profiles():
             combo.addItem(profile, profile)
