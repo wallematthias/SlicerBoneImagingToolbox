@@ -66,6 +66,8 @@ The Slicer modules are wrappers around core Python packages where possible:
 
 Each tool guide contains its own focused workflow instructions and attribution/citation notes. Shared outputs follow the [derivative workflow contract](docs/derivatives.md).
 
+For maintainers and coding agents adding new tools, see [AGENTS.md](AGENTS.md). It defines ownership boundaries between Slicer modules, core logic packages, derivative artifacts, scene mode, batch mode, setup dependencies, and release checks.
+
 ## Runtime Dependencies
 
 Some tools need Slicer-side dependencies in addition to this toolbox:
