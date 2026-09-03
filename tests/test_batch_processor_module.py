@@ -626,6 +626,66 @@ def test_batch_processor_mechanoregulation_completed_rows_are_loadable(tmp_path:
     assert rows[0]["output_paths"] == [str(csv_path), str(curves), str(schulte), str(summary)]
 
 
+def test_batch_processor_mechanoregulation_partial_outputs_remain_runnable(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    remodelling = (
+        tmp_path
+        / "derivatives"
+        / "Timelapse"
+        / "sub-001"
+        / "xct"
+        / "analysis"
+        / "visualize"
+        / "sub-001_voi-radiusleft_desc-roi_union_t0-001_t1-002_thr-225p0_cluster-5_remodelling.nii.gz"
+    )
+    baseline = (
+        tmp_path
+        / "derivatives"
+        / "Timelapse"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "transformed"
+        / "sub-001_ses-001_voi-radiusleft_image-fused.nii.gz"
+    )
+    sed = (
+        tmp_path
+        / "derivatives"
+        / "FEA"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "maps"
+        / "sub-001_ses-001_voi-radiusleft_desc-XtremeCTII_map-sed.nii.gz"
+    )
+    for path in (remodelling, baseline, sed):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"image")
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="mechanoregulation",
+        profile="XtremeCTII",
+        registered=False,
+    )
+    case_id = rows[0]["mechanoregulation_case_id"]
+    out_dir = tmp_path / "derivatives" / "Mechanoregulation" / "sub-001" / "xct" / "runs" / case_id
+    csv_path = out_dir / f"{case_id}_roi-full_mechanoregulation_summary.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.write_bytes(b"partial")
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="mechanoregulation",
+        profile="XtremeCTII",
+        registered=False,
+    )
+
+    assert rows[0]["action"] == "Run"
+    assert rows[0]["status"] == "Ready"
+    assert "output_paths" not in rows[0]
+
+
 def test_batch_processor_compacts_mechanoregulation_summary_for_table_view(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     summary = tmp_path / "sub-001_voi-radiusleft_desc-roi_union_t0-001_t1-002_roi-full_mechanoregulation_summary.csv"

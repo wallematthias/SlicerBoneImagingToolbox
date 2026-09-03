@@ -266,7 +266,7 @@ def test_timelapsed_batch_cohort_summary_is_not_in_analysis_options() -> None:
     assert 'if selected.name == "derivatives":' in source
     assert 'return selected / "Timelapse"' in source
     assert "timelapsedhrpqct.cli import main" in source
-    assert 'MIN_PIPELINE_VERSION = "2.0.43"' in source
+    assert 'MIN_PIPELINE_VERSION = "2.0.44"' in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source

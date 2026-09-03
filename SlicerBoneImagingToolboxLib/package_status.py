@@ -53,7 +53,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Timelapsed HR-pQCT",
         package_name="timelapsed-hrpqct",
         import_name="timelapsedhrpqct",
-        minimum_version="2.0.43",
+        minimum_version="2.0.44",
         constraints=("hrpqct-geodesic-contour>=0.1.1",),
         notes="Longitudinal HR-pQCT runtime package: timelapsed-hrpqct.",
     ),
@@ -121,7 +121,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Mechanoregulation",
         package_name="bone-mechanoregulation",
         import_name="bonemechreg",
-        minimum_version="0.1.4",
+        minimum_version="0.1.5",
         notes="Bone mechanoregulation analysis package using Timelapsed, FEA, and remodelling derivatives.",
     ),
 )

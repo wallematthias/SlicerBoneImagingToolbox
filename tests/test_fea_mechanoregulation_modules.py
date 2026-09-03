@@ -77,6 +77,31 @@ def test_parosol_module_contains_derivative_output_helpers() -> None:
     assert "_write_parosol_run_derivative_manifest(output_dir, **context)" in load_results_body
 
 
+def test_parosol_scene_field_loader_restores_tight_crops_to_reference_grid() -> None:
+    source = PAROSOL_MODULE.read_text(encoding="utf-8")
+    helper_body = source.split("def _restore_cropped_field_to_reference_grid", 1)[1].split("\ndef ", 1)[0]
+    load_body = source.split("    def _load_selected_result_fields", 1)[1].split("\n    def ", 1)[0]
+
+    assert "active = np.argwhere(reference_array != 0)" in helper_body
+    assert "bbox_shape" in helper_body
+    assert "restored[z0:z1, y0:y1, x0:x1] = field_array" in helper_body
+    assert 'out_dir = Path(field_path).parent / "reference_grid"' in helper_body
+    assert "path_to_load = _restore_cropped_field_to_reference_grid(path, reference_node)" in load_body
+    assert "Loaded {display_name} field on reference grid" in load_body
+
+
+def test_mechanoregulation_scene_stages_inputs_on_selected_sed_grid() -> None:
+    source = MECHREG_MODULE.read_text(encoding="utf-8")
+    assert "import SimpleITK as sitk" in source
+    helper_body = source.split("def _resample_saved_scene_image_to_reference_node", 1)[1].split("\n    def ", 1)[0]
+    stage_body = source.split("    def _stage_scene_case", 1)[1].split("\n    def ", 1)[0]
+
+    assert "sitk.Resample(" in helper_body
+    assert "sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear" in helper_body
+    assert "saved_path = self._resample_saved_scene_image_to_reference_node(" in source
+    assert "reference_node=sed_node" in stage_body
+
+
 def test_parosol_fea_manifest_writer_merges_existing_records() -> None:
     source = PAROSOL_MODULE.read_text(encoding="utf-8")
     helper_body = source.split("def _write_fea_derivative_manifest", 1)[1].split("\ndef ", 1)[0]
@@ -139,28 +164,37 @@ def test_mechanoregulation_module_contains_derivative_discovery_helpers() -> Non
     assert "discover_mechanoregulation_manifests(root)" in discover_body
 
 
-def test_mechanoregulation_ui_uses_scene_and_review_tabs_only() -> None:
+def test_mechanoregulation_ui_uses_scene_only() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
     setup_start = source.index("    def setup(self):", source.index("class MechanoregulationHRpQCTWidget"))
     setup_end = source.index("\n    def ", setup_start + len("    def setup(self):"))
     setup_source = source[setup_start:setup_end]
 
-    assert "self.modeTabs = qt.QTabWidget()" in setup_source
-    assert 'self.modeTabs.addTab(scene_tab, "Scene")' in setup_source
+    assert "self.modeTabs = qt.QTabWidget()" not in setup_source
+    assert 'self.modeTabs.addTab(scene_tab, "Scene")' not in setup_source
     assert 'self.modeTabs.addTab(batch_tab, "Batch")' not in setup_source
-    assert 'self.modeTabs.addTab(review_tab, "Review")' in setup_source
+    assert 'self.modeTabs.addTab(review_tab, "Review")' not in setup_source
     assert 'box.text = "Batch"' not in setup_source
     assert 'box.text = "Scene"' in source
-    assert 'box.text = "Review"' in source
-    assert 'self.runButton = qt.QPushButton("Run")' in source
+    assert 'box.text = "Review"' not in source
+    assert 'self.runButton = qt.QPushButton("Run")' not in source
     assert 'self.batchDiscoveryGroup = qt.QGroupBox("Discovery")' not in setup_source
     assert 'self.batchWorkflowGroup = qt.QGroupBox("Workflow")' not in setup_source
-    assert 'self.sceneDiscoveryGroup = qt.QGroupBox("Discovery")' in source
+    assert 'self.sceneInputsGroup = qt.QGroupBox("Inputs")' in source
     assert 'self.sceneWorkflowGroup = qt.QGroupBox("Workflow")' in source
+    assert 'self.sceneDiscoveryGroup = qt.QGroupBox("Discovery")' not in source
+    assert 'self.sceneProfileCombo' not in source
+    assert 'self.sceneOverwriteCheckBox' not in source
+    assert 'roi_row.addRow("ROI", self.roiCombo)' not in source
+    assert 'self.metricsTable = qt.QTableWidget()' not in source
+    assert 'self.loadSedButton = qt.QPushButton("Load SED")' not in source
+    assert 'self.loadMaterialButton = qt.QPushButton("Load Material")' not in source
+    assert 'self.loadRemodellingButton = qt.QPushButton("Load Remodelling")' not in source
     assert "self.sceneProgressBar = qt.QProgressBar()" in source
     assert "self.sceneCurrentStepLabel = qt.QLabel(\"Current step: idle\")" in source
+    assert "self.logText = qt.QPlainTextEdit()" in source
     scene_body = source.split("    def _build_scene_section", 1)[1].split("\n    def ", 1)[0]
-    assert scene_body.index("self.sceneDiscoveryGroup") < scene_body.index("self.sceneRemodellingSelector")
+    assert scene_body.index("self.sceneInputsGroup") < scene_body.index("self.sceneRemodellingSelector")
     assert scene_body.index("self.sceneRemodellingSelector") < scene_body.index("self.sceneWorkflowGroup")
     assert scene_body.index("self.sceneWorkflowGroup") < scene_body.index("self.sceneStatusLabel")
     assert scene_body.index("self.sceneStatusLabel") < scene_body.index("self.sceneRunButton")
@@ -169,50 +203,107 @@ def test_mechanoregulation_ui_uses_scene_and_review_tabs_only() -> None:
 def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
 
-    assert "self.sceneDiscoverButton = qt.QPushButton(\"Discover\")" in source
+    assert "self.sceneDiscoverButton = qt.QPushButton(\"Discover\")" not in source
     assert "self.sceneRunButton = qt.QPushButton(\"Run\")" in source
+    assert "self.sceneLoadButton = qt.QPushButton(\"Load\")" in source
     assert "self.sceneStopButton = qt.QPushButton(\"Stop\")" in source
     assert "self.sceneRemodellingSelector = slicer.qMRMLNodeComboBox()" in source
+    assert '"vtkMRMLSegmentationNode"' in source
     assert "self.sceneSedSelector = slicer.qMRMLNodeComboBox()" in source
     assert "self.sceneAnalysisMaskSelector = slicer.qMRMLNodeComboBox()" in source
+    assert "self.sceneAnalysisMaskSegmentCombo = qt.QComboBox()" in source
+    assert "self.sceneAnalysisMaskSelector.currentNodeChanged.connect" in source
+    assert "self.sceneRemodellingSelector.currentNodeChanged.connect" in source
     assert "self.sceneProgressBar.visible = True" in source
     assert "self.sceneProgressBar.setRange" in source
     assert "self.sceneCurrentStepLabel.text = self._status_text(message)" in source
     assert "if text.startswith(\"[scene]\")" in source
     assert "\"Remodelling map\"" in source
     assert "\"ParOSol / FEA SED\"" in source
+    assert "self.sceneResorptionLabel = qt.QLabel(\"Resorption\")" in source
+    assert "self.sceneQuiescenceLabel = qt.QLabel(\"Quiescence\")" in source
+    assert "self.sceneFormationLabel = qt.QLabel(\"Formation\")" in source
+    assert "self.sceneRemodellingResorptionSegmentCombo" in source
+    assert "self.sceneRemodellingQuiescenceSegmentCombo" in source
+    assert "self.sceneRemodellingFormationSegmentCombo" in source
+    assert "self.sceneNumericRemodellingRows" in source
+    assert "self.sceneSegmentRemodellingRows" in source
+    assert "widget.visible = not is_segmentation" in source
+    assert "widget.visible = is_segmentation" in source
     scene_body = source.split("    def _build_scene_section", 1)[1].split("\n    def ", 1)[0]
     assert "\"Baseline Seg\"" not in scene_body
     assert "\"Trab\"" not in scene_body
     assert "\"Cort\"" not in scene_body
     assert "\"Full\"" not in scene_body
-    assert "def discover_scene_cases(self):" in source
+    assert "def discover_scene_cases(self):" not in source
     assert "def _scene_volume_nodes" in source
     assert "def _scene_remodelling_candidates" in source
     assert "def _scene_sed_candidates" in source
     assert "def _scene_parosol_output_candidates" in source
+    assert "def _refresh_scene_analysis_mask_segment_combo" in source
+    assert "def _selected_scene_analysis_mask_segment_id" in source
+    assert "def _save_scene_analysis_mask" in source
+    assert "def _refresh_scene_remodelling_role_controls" in source
+    assert "def _save_scene_remodelling_map" in source
+    assert "def _save_scene_remodelling_segmentation" in source
+    assert "def _canonicalize_scene_remodelling_labels" in source
     assert "def _stage_scene_case(self, row):" in source
     assert "slicer.util.saveNode" in source
+    assert "ExportSegmentsToLabelmapNode" in source
     assert "TimelapseCase(" in source
     assert "run_post_timelapse_case(" in source
     assert "baseline_sed_path" in source
-    assert "outputs[\"sed\"].write_bytes" in source
+    assert "shutil.copyfile(str(baseline_sed_path), str(outputs['sed']))" in source
+    assert "reanalyze=True" in source
+    run_scene_body = source.split("    def run_scene(self):", 1)[1].split("\n    def ", 1)[0]
+    assert "self._start_scene_process(" in run_scene_body
+    assert "threading.Thread(" not in run_scene_body
+    assert "def _run_scene_worker" not in source
+    assert "def _scene_process_script" in source
+    assert "def _start_scene_process" in source
+    assert "def _scene_process_finished" in source
+    assert "qt.QProcess()" in source
+    assert "mechanoregulation_scene_cases.json" in source
+    assert "BONE_MECHREG_SCENE_SUMMARY" in source
     assert "self._load_scene_mechanoregulation_outputs" in source
+    assert "self.sceneLoadButton.clicked.connect(self._load_scene_mechanoregulation_outputs)" in source
+    assert "self._style_selected_scene_sed()" in source
+    assert "def _style_selected_scene_sed" in source
+    assert "self._style_fe_scalar_volume(sed_node)" in source
+    assert "self._load_event_segmentation" in source
+    assert "def _write_scene_mechanoregulation_summary_table_csv" in source
+    assert "def _mechanoregulation_compact_rows" in source
+    assert "Low conf" in source
+    assert "Median" in source
+    assert "High conf" in source
+    assert "slicer.util.loadTable(str(path))" in source
+    assert 'slicer.util.loadTable(str(path), {"name": name})' not in source
+    assert "MRMLIDImageIO" in source
+    assert "ImageIO factory did not return an ImageIOBase" in source
+    assert "mask_path=staged.get(\"full_mask_path\")" in source
+    assert "def _event_display_mask_array" in source
+    assert "events[~mask_array] = 0" in source
+    assert "profile = \"standard\"" in source
 
 
 def test_mechanoregulation_scene_mode_consumes_loaded_parosol_outputs_without_fea_generation() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
     scene_body = source.split("    def _build_scene_section", 1)[1].split("\n    def ", 1)[0]
-    discover_body = source.split("    def discover_scene_cases(self):", 1)[1].split("\n    def ", 1)[0]
     stage_body = source.split("    def _stage_scene_case(self, row):", 1)[1].split("\n    def ", 1)[0]
 
     assert 'scene_inputs.addRow("Remodelling map", self.sceneRemodellingSelector)' in scene_body
     assert 'scene_inputs.addRow("ParOSol / FEA SED", self.sceneSedSelector)' in scene_body
     assert 'scene_inputs.addRow("Analysis mask", self.sceneAnalysisMaskSelector)' in scene_body
-    assert "self._scene_parosol_output_candidates()" in discover_body
-    assert "baseline_sed_path = self._save_scene_node(self._scene_node_from_combo(row, 2)" in stage_body
-    assert "analysis_mask_path = self._save_scene_node(" in stage_body
+    assert 'scene_inputs.addRow("Mask segment", self.sceneAnalysisMaskSegmentCombo)' in scene_body
+    assert 'controls.addRow("Bootstraps", self.sceneBootstrapSpinBox)' in scene_body
+    assert 'controls.addRow("Profile", self.sceneProfileCombo)' not in scene_body
+    assert "baseline_sed_path = self._save_scene_node(sed_node" in stage_body
+    assert "analysis_mask_path = self._save_scene_analysis_mask(" in stage_body
+    assert "no analysis mask selected; using whole remodelling image" in stage_body
+    assert "using analysis mask:" in stage_body
     assert '"generate"' not in stage_body
     assert "Generate baseline SED requires" not in source
-    assert "self.sceneRemodellingSelector.setCurrentNode(remodelling_nodes[0])" in source
-    assert "self.sceneSedSelector.setCurrentNode(sed_nodes[0])" in source
+    assert "self.sceneRemodellingSelector.setCurrentNode(remodelling_nodes[0])" not in source
+    assert "self.sceneSedSelector.setCurrentNode(sed_nodes[0])" not in source
+    run_scene_body = source.split("    def run_scene(self):", 1)[1].split("\n    def ", 1)[0]
+    assert "self.discover_scene_cases()" not in run_scene_body

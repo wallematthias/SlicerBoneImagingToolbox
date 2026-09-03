@@ -12447,14 +12447,16 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             if not path.exists():
                 self._append_log(f"Selected output field not found: {path}\n")
                 continue
+            reference_node = self._volume()
+            path_to_load = _restore_cropped_field_to_reference_grid(path, reference_node)
             display_name = _result_field_display_name(field)
             node = _load_volume_node(
-                str(path),
+                str(path_to_load),
                 {"name": _result_field_node_name(field)},
             )
             if node is None:
                 continue
-            _copy_geometry_if_compatible(node, self._volume())
+            _copy_geometry_if_compatible(node, reference_node)
             _apply_result_scalar_display(node)
             if field in {"sed", "load_history_estimated_sed", "load_history_final_sed"}:
                 finite_positive = _positive_finite_volume_values(node)
@@ -12482,7 +12484,10 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
                     preferred_load_history_node = node
             elif field == "mechanical_work_density":
                 preferred_nonlinear_node = node
-            self._append_log(f"Loaded {display_name} field: {path}\n")
+            if Path(path_to_load) != path:
+                self._append_log(f"Loaded {display_name} field on reference grid: {path_to_load}\n")
+            else:
+                self._append_log(f"Loaded {display_name} field: {path}\n")
         if preferred_nonlinear_node is not None:
             _activate_parosol_result_volume(preferred_nonlinear_node)
         elif preferred_load_history_node is not None:
@@ -13429,6 +13434,68 @@ def _copy_geometry_if_compatible(node, reference_node):
         node.SetIJKToRASMatrix(matrix)
     node.Modified()
     return True
+
+
+def _reference_grid_image(reference_node):
+    if reference_node is None:
+        return None
+    path_text = ""
+    try:
+        fd, path_text = tempfile.mkstemp(suffix=".nii.gz", prefix="parosol_reference_grid_")
+        os.close(fd)
+        path = Path(path_text)
+        if not slicer.util.saveNode(reference_node, str(path)):
+            return None
+        return sitk.ReadImage(str(path))
+    except Exception:
+        return None
+    finally:
+        try:
+            if path_text:
+                Path(path_text).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _restore_cropped_field_to_reference_grid(field_path, reference_node):
+    """Return a full-grid copy when a ParOSol field was exported as a tight crop."""
+    if reference_node is None:
+        return Path(field_path)
+    try:
+        reference_array = np.asarray(slicer.util.arrayFromVolume(reference_node))
+        field_image = sitk.ReadImage(str(field_path))
+        field_array = sitk.GetArrayFromImage(field_image)
+    except Exception:
+        return Path(field_path)
+    if tuple(field_array.shape) == tuple(reference_array.shape):
+        return Path(field_path)
+    active = np.argwhere(reference_array != 0)
+    if active.size == 0:
+        return Path(field_path)
+    lower = active.min(axis=0)
+    upper = active.max(axis=0) + 1
+    bbox_shape = tuple(int(v) for v in (upper - lower))
+    if tuple(field_array.shape) != bbox_shape:
+        return Path(field_path)
+
+    restored = np.zeros(reference_array.shape, dtype=field_array.dtype)
+    z0, y0, x0 = (int(v) for v in lower)
+    z1, y1, x1 = (int(v) for v in upper)
+    restored[z0:z1, y0:y1, x0:x1] = field_array
+    restored_image = sitk.GetImageFromArray(restored)
+    reference_image = _reference_grid_image(reference_node)
+    if reference_image is not None and tuple(reference_image.GetSize()) == tuple(reversed(reference_array.shape)):
+        restored_image.CopyInformation(reference_image)
+    else:
+        restored_image.SetSpacing(field_image.GetSpacing())
+        restored_image.SetOrigin(field_image.GetOrigin())
+        restored_image.SetDirection(field_image.GetDirection())
+
+    out_dir = Path(field_path).parent / "reference_grid"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / Path(field_path).name
+    sitk.WriteImage(restored_image, str(out_path))
+    return out_path
 
 
 def _decode_process_output(raw):

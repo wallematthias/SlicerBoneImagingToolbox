@@ -406,14 +406,14 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
 
     @staticmethod
     def _mechanoregulation_output_paths_for_case(case, case_outputs, available_case_rois) -> list[Path]:
-        paths: list[Path] = []
+        expected_paths: list[Path] = []
         for roi in available_case_rois(case):
             outputs = case_outputs(case, roi=roi)
             for key in ("csv", "curves", "schulte_curves", "summary"):
-                path = Path(outputs[key])
-                if path.exists():
-                    paths.append(path)
-        return paths
+                expected_paths.append(Path(outputs[key]))
+        if not expected_paths or not all(path.exists() for path in expected_paths):
+            return []
+        return expected_paths
 
     @staticmethod
     def _mechanoregulation_command_for_row(dataset_root, profile: str, row: dict, force: bool = False) -> list[str]:
@@ -968,15 +968,18 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if not case_id or not subject:
             return []
         base = record_output_path(root, "Mechanoregulation", subject, str(row.get("voi_value", row.get("voi")) or ""), "runs", case_id)
-        paths = []
+        expected = []
         for pattern in (
             "*_mechanoregulation_summary.csv",
             "*_conditional_curves.png",
             "*_schulte_binned_curves.png",
             "*_mechanoregulation_summary.json",
         ):
-            paths.extend(sorted(base.glob(pattern)))
-        return paths
+            matches = sorted(base.glob(pattern))
+            if not matches:
+                return []
+            expected.extend(matches)
+        return expected
 
     @staticmethod
     def _fea_output_paths_for_case(root: Path, case, profile: str) -> list[Path]:
