@@ -8397,27 +8397,41 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return applied
 
     def _set_path_without_immediate_reset(self, widget, path):
-        previous = widget.blockSignals(True)
+        if not self._qt_object_alive(widget):
+            return False
         try:
-            widget.setCurrentPath(str(path))
-        finally:
-            widget.blockSignals(previous)
+            previous = widget.blockSignals(True)
+            try:
+                widget.setCurrentPath(str(path))
+            finally:
+                widget.blockSignals(previous)
+            return True
+        except (RuntimeError, ValueError, AttributeError):
+            return False
 
     def _adopt_scene_run_as_current_dataset(self, plan):
-        self._set_path_without_immediate_reset(self.inputPath, plan.input_root)
-        if hasattr(self, "resultsRootPath"):
-            self._set_path_without_immediate_reset(self.resultsRootPath, plan.output_root)
-        self._reset_progress_for_dataset_root()
+        self._set_path_without_immediate_reset(getattr(self, "inputPath", None), plan.input_root)
+        self._set_path_without_immediate_reset(getattr(self, "resultsRootPath", None), plan.output_root)
+        try:
+            self._reset_progress_for_dataset_root()
+        except (RuntimeError, ValueError, AttributeError):
+            pass
         subject_id, site = self._scene_processed_subject_site(plan)
-        if hasattr(self, "patientCombo"):
+        if self._qt_object_alive(getattr(self, "patientCombo", None)):
             label = f"sub-{subject_id} | site-{site}"
-            index = self.patientCombo.findText(label)
-            if index >= 0:
-                self.patientCombo.setCurrentIndex(index)
-        if hasattr(self, "loadTypeCombo"):
-            idx = self.loadTypeCombo.findText("remodelling image")
-            if idx >= 0:
-                self.loadTypeCombo.setCurrentIndex(idx)
+            try:
+                index = self.patientCombo.findText(label)
+                if index >= 0:
+                    self.patientCombo.setCurrentIndex(index)
+            except (RuntimeError, ValueError):
+                pass
+        if self._qt_object_alive(getattr(self, "loadTypeCombo", None)):
+            try:
+                idx = self.loadTypeCombo.findText("remodelling image")
+                if idx >= 0:
+                    self.loadTypeCombo.setCurrentIndex(idx)
+            except (RuntimeError, ValueError):
+                pass
         self._show(
             "[scene] current dataset set to scene run "
             f"input={plan.input_root} output={plan.output_root}"

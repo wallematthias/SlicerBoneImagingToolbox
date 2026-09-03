@@ -135,6 +135,8 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "Only native/imported masks are loaded back for scene rediscovery." in source
     assert "_adopt_scene_run_as_current_dataset" in source
     assert "_set_path_without_immediate_reset" in source
+    assert "if not self._qt_object_alive(widget):" in source
+    assert "return False" in source.split("    def _set_path_without_immediate_reset", 1)[1].split("\n    def ", 1)[0]
     assert "current dataset set to scene run" in source
     assert "remodelling image" in source
     assert "_last_scene_plan" in source
