@@ -580,6 +580,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._set_3d_background_black()
         self._ensure_slice_scale_bars()
 
+    def _qt_object_alive(self, widget):
+        if widget is None:
+            return False
+        try:
+            widget.objectName
+        except (RuntimeError, ValueError):
+            return False
+        except Exception:
+            pass
+        return True
+
     def _build_ui(self):
         def _cap_width(widget, width=320):
             try:
@@ -5542,6 +5553,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self.dependencyBox.collapsed = False
 
     def _refresh_patient_list(self):
+        if not self._qt_object_alive(getattr(self, "patientCombo", None)):
+            return
         self.patientCombo.clear()
         self._patient_keys = []
 
@@ -5577,7 +5590,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_remodelling_comparison_list()
 
     def _refresh_remodelling_comparison_list(self):
-        if not hasattr(self, "remodellingComparisonCombo"):
+        if not self._qt_object_alive(getattr(self, "remodellingComparisonCombo", None)):
             return
         self.remodellingComparisonCombo.clear()
         self._remodelling_comparison_items = []
@@ -5673,6 +5686,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return ordered_ids
 
     def _current_patient_key(self):
+        if not self._qt_object_alive(getattr(self, "patientCombo", None)):
+            return None
         idx = int(self.patientCombo.currentIndex)
         if idx < 0 or idx >= len(self._patient_keys):
             return None

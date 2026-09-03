@@ -137,6 +137,7 @@ def test_default_runtime_packages_include_public_tool_cores() -> None:
     package_names = {spec.package_name for spec in DEFAULT_RUNTIME_PACKAGES}
 
     assert "timelapsed-hrpqct" in package_names
+    assert "hrpqct-geodesic-contour" in package_names
     assert "motionscorehrpqct" in package_names
     assert "aimio-py" in package_names
     assert "bone-contouring" in package_names
@@ -153,6 +154,8 @@ def test_timelapsed_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["timelapsed-hrpqct"].display_name == "Timelapsed HR-pQCT"
     assert "timelapsed-hrpqct" in specs["timelapsed-hrpqct"].notes
+    assert specs["hrpqct-geodesic-contour"].display_name == "Geodesic Contour"
+    assert specs["hrpqct-geodesic-contour"].import_name == "hrpqct_geodesic_contour"
 
 
 def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:

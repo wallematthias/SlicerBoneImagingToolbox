@@ -58,6 +58,13 @@ DEFAULT_RUNTIME_PACKAGES = (
         notes="Longitudinal HR-pQCT runtime package: timelapsed-hrpqct.",
     ),
     PackageSpec(
+        display_name="Geodesic Contour",
+        package_name="hrpqct-geodesic-contour",
+        import_name="hrpqct_geodesic_contour",
+        minimum_version="0.1.3",
+        notes="Geodesic active-contour runtime used by fracture and contouring workflows.",
+    ),
+    PackageSpec(
         display_name="MotionScore HR-pQCT",
         package_name="motionscorehrpqct",
         import_name="motionscore",
