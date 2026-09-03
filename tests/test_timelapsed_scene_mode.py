@@ -313,6 +313,7 @@ def test_timelapsed_batch_custom_profile_exposes_analysis_options_without_cli_pr
     apply_profile = source.split("    def _on_apply_study_profile", 1)[1].split("\n    def ", 1)[0]
     assert 'if selected_profile == "__custom__":' in apply_profile
     assert "self._update_batch_analysis_options_visibility()" in apply_profile
+    assert "if not self.logic.is_pipeline_available():" not in apply_profile
     settings_override = source.split("    def _settings_override", 1)[1].split("\n    def ", 1)[0]
     assert "if self._selected_profile_is_custom() or bool(force_analysis_controls):" in settings_override
     assert 'settings["analysis"] = self._analysis_config_from_controls(pair_mode)' in settings_override

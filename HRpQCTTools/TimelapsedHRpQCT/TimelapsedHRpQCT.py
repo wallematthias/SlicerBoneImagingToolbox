@@ -599,6 +599,39 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         except (RuntimeError, ValueError, AttributeError):
             return
 
+    def _set_label_text_safe(self, label, text):
+        if not self._qt_object_alive(label):
+            return
+        try:
+            label.text = str(text)
+        except (RuntimeError, ValueError, AttributeError):
+            try:
+                label.setText(str(text))
+            except (RuntimeError, ValueError, AttributeError):
+                return
+
+    def _set_widget_style_safe(self, widget, style):
+        if not self._qt_object_alive(widget):
+            return
+        try:
+            widget.setStyleSheet(str(style))
+        except (RuntimeError, ValueError, AttributeError):
+            try:
+                widget.styleSheet = str(style)
+            except (RuntimeError, ValueError, AttributeError):
+                return
+
+    def _set_widget_visible_safe(self, widget, visible):
+        if not self._qt_object_alive(widget):
+            return
+        try:
+            widget.show() if visible else widget.hide()
+        except (RuntimeError, ValueError, AttributeError):
+            try:
+                widget.visible = bool(visible)
+            except (RuntimeError, ValueError, AttributeError):
+                return
+
     def _build_ui(self):
         def _cap_width(widget, width=320):
             try:
@@ -3349,8 +3382,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _set_scene_stage_message(self, text):
         if not getattr(self, "_last_scene_plan", None):
             return
-        if hasattr(self, "sceneStatusLabel") and self.sceneStatusLabel is not None:
-            self.sceneStatusLabel.text = str(text)
+        self._set_label_text_safe(getattr(self, "sceneStatusLabel", None), text)
 
     def _set_user_message(self, level, title, body):
         palette = {
@@ -3360,15 +3392,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "success": ("#eaf8ea", "#8aca8a"),
         }
         bg, border = palette.get(level, palette["info"])
-        self.userMessageLabel.setStyleSheet(
+        label = getattr(self, "userMessageLabel", None)
+        self._set_widget_style_safe(
+            label,
             f"QLabel {{ background:{bg}; border:1px solid {border}; padding:8px; border-radius:4px; }}"
         )
-        self.userMessageLabel.setText(f"<b>{title}</b><br>{body}")
-        self.userMessageLabel.show()
+        self._set_label_text_safe(label, f"<b>{title}</b><br>{body}")
+        self._set_widget_visible_safe(label, True)
 
     def _clear_user_message(self):
-        self.userMessageLabel.hide()
-        self.userMessageLabel.setText("")
+        label = getattr(self, "userMessageLabel", None)
+        self._set_widget_visible_safe(label, False)
+        self._set_label_text_safe(label, "")
 
     def _set_stage_status(self, stage_key, status):
         if stage_key not in self.stageLabels:
@@ -3830,10 +3865,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "Batch runs will use the analysis options shown below instead of a bundled profile preset.",
             )
             return
-        if not self.logic.is_pipeline_available():
-            _ok, detail = self.logic.pipeline_status()
-            self._set_user_message("warn", "Pipeline needs update", detail)
-            return
         applied = False
         try:
             from dataclasses import asdict
@@ -4057,10 +4088,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._interactivePreviewTimer.start()
 
     def _mark_analysis_settings_dirty(self):
-        if not hasattr(self, "analysisStatusLabel") or self.analysisStatusLabel is None:
-            return
-        self.analysisStatusLabel.text = "Settings changed - click Apply settings"
-        self.analysisStatusLabel.styleSheet = "color: #996600;"
+        label = getattr(self, "analysisStatusLabel", None)
+        self._set_label_text_safe(label, "Settings changed - click Apply settings")
+        self._set_widget_style_safe(label, "color: #996600;")
 
     def _set_analysis_threshold_value(self, value, *, from_slider=False, queue_update=False):
         clamped = max(0, min(1000, int(round(float(value) / 5.0) * 5)))
@@ -4306,11 +4336,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_widget_enabled_safe(widget, not busy)
         if message is None:
             message = "Updating..." if busy else "Ready"
-        if hasattr(self, "analysisStatusLabel") and self.analysisStatusLabel is not None:
-            self.analysisStatusLabel.text = str(message)
-            self.analysisStatusLabel.styleSheet = (
-                "color: #996600;" if busy else "color: #666666;"
-            )
+        label = getattr(self, "analysisStatusLabel", None)
+        self._set_label_text_safe(label, message)
+        self._set_widget_style_safe(label, "color: #996600;" if busy else "color: #666666;")
         try:
             if busy:
                 slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
