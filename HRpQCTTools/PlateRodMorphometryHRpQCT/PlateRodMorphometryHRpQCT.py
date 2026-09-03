@@ -294,7 +294,7 @@ class PlateRodMorphometryHRpQCTLogic(ScriptedLoadableModuleLogic):
         _remove_local_core_repo_from_sys_path()
         slicer_pip_install(
             "--upgrade --force-reinstall --prefer-binary "
-            "--only-binary :all: --no-deps plate-rod-thinning>=0.1.6"
+            "--only-binary :all: --no-deps plate-rod-thinning>=0.1.7"
         )
         importlib.invalidate_caches()
         _remove_local_core_repo_from_sys_path()

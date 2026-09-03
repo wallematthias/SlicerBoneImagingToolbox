@@ -190,7 +190,7 @@ def test_plate_rod_runtime_package_requires_compiled_backend_and_binary_reinstal
     assert spec.required_imports == ("plate_rod_thinning._c_backend",)
     assert install_command(spec, installed=True) == (
         "--upgrade --force-reinstall --prefer-binary --only-binary :all: --no-deps "
-        "plate-rod-thinning>=0.1.6"
+        "plate-rod-thinning>=0.1.7"
     )
 
 

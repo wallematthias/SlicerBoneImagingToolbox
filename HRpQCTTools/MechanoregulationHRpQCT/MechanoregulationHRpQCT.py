@@ -28,7 +28,7 @@ from slicer.ScriptedLoadableModule import (
 
 MODULE_VERSION = "0.1.0"
 CORE_REQUIREMENT = "bone-mechanoregulation"
-MIN_CORE_VERSION = "0.1.2"
+MIN_CORE_VERSION = "0.1.4"
 TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 
 

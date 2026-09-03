@@ -293,7 +293,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         if MICROARCHITECTURE_LOCAL_REPO.exists():
             slicer_pip_install(f"--no-deps -e {MICROARCHITECTURE_LOCAL_REPO}")
         else:
-            slicer_pip_install("--upgrade --prefer-binary bone-microarchitecture>=0.1.0")
+            slicer_pip_install("--upgrade --prefer-binary bone-microarchitecture>=0.2.3")
         importlib.invalidate_caches()
         for name in list(sys.modules):
             if name == "bone_microarchitecture" or name.startswith("bone_microarchitecture."):
