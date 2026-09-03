@@ -1900,9 +1900,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             selected = scene_combo.currentData
             index = study_combo.findData(selected)
             if index >= 0 and study_combo.currentIndex != index:
-                study_combo.setCurrentIndex(index)
-            else:
-                self._on_apply_study_profile()
+                previous = study_combo.blockSignals(True)
+                try:
+                    study_combo.setCurrentIndex(index)
+                finally:
+                    study_combo.blockSignals(previous)
+            self._on_apply_study_profile()
         except (RuntimeError, ValueError):
             return
 

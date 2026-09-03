@@ -571,6 +571,22 @@ def test_timelapsed_scene_discovery_runs_segmentation_role_detection() -> None:
     assert "self._apply_scene_detected_roles_for_timepoint(timepoint_index, source_node)" in discover
 
 
+def test_timelapsed_scene_profile_change_applies_profile_controls_directly() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    changed = source.split("    def _on_scene_profile_changed", 1)[1].split("\n    def ", 1)[0]
+
+    assert "previous = study_combo.blockSignals(True)" in changed
+    assert "study_combo.setCurrentIndex(index)" in changed
+    assert "study_combo.blockSignals(previous)" in changed
+    assert "self._on_apply_study_profile()" in changed
+
+
 def test_timelapsed_scene_role_status_updates_when_roi_selector_changes() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
