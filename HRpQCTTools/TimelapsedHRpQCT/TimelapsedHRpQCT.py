@@ -738,18 +738,9 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             widget.toolTip = str(help_text)
             return widget
 
-        self.timelapsedModeTabs = qt.QTabWidget()
-        self.timelapsedModeTabs.setMaximumHeight(16777215)
-        self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)
-        self.timelapsedModeTabs.currentChanged.connect(self._on_timelapsed_mode_changed)
         scenePage = qt.QWidget()
-        batchPage = qt.QWidget()
-        self.timelapsedModeTabs.addTab(scenePage, "Scene")
-        self.layout.addWidget(self.timelapsedModeTabs)
+        self.layout.addWidget(scenePage)
         self._build_scene_ui(scenePage)
-        self.batchLayout = qt.QVBoxLayout(batchPage)
-        self.batchLayout.setContentsMargins(0, 0, 0, 0)
-        self.batchLayout.setSpacing(4)
 
         depBox = ctk.ctkCollapsibleButton()
         depBox.text = "Dependency"
@@ -769,7 +760,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         row.addWidget(self.checkBtn)
         depForm.addRow(_label("Status", "Installed timelapsed-hrpqct package status inside Slicer Python."), self.pipelineStatusLabel)
         depForm.addRow(rowWidget)
-        self.batchLayout.addWidget(depBox)
 
         form = qt.QFormLayout()
         form.setLabelAlignment(qt.Qt.AlignRight | qt.Qt.AlignVCenter)
@@ -844,27 +834,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         parseLayout.setContentsMargins(6, 6, 6, 4)
         parseLayout.setSpacing(4)
         parseLayout.addWidget(self.parseTable)
-
-        quickBox = qt.QGroupBox("Study Profile")
-        quickForm = qt.QFormLayout(quickBox)
-        quickForm.setContentsMargins(6, 8, 6, 6)
-        quickForm.setVerticalSpacing(4)
-        self.studyProfileCombo = qt.QComboBox()
-        self._populate_study_profiles()
-        _cap_width(self.studyProfileCombo, 220)
-        self.applyProfileBtn = qt.QPushButton("Apply profile")
-        _cap_width(self.applyProfileBtn, 105)
-        self.applyProfileBtn.clicked.connect(self._on_apply_study_profile)
-        self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)
-        _tip(self.studyProfileCombo, "Select bundled study defaults for mask generation, registration, and analysis.")
-        _tip(self.applyProfileBtn, "Apply the selected profile to visible settings and refresh the loaded preview when possible.")
-        profileRow = qt.QWidget()
-        profileLayout = qt.QHBoxLayout(profileRow)
-        profileLayout.setContentsMargins(0, 0, 0, 0)
-        profileLayout.setSpacing(6)
-        profileLayout.addWidget(self.studyProfileCombo, 1)
-        profileLayout.addWidget(self.applyProfileBtn)
-        quickForm.addRow(_label("Profile", "Preset study settings for segmentation and remodelling analysis."), profileRow)
 
         analysisSectionBox = ctk.ctkCollapsibleButton()
         analysisSectionBox.text = "Analysis Options"
@@ -1591,15 +1560,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.logText.setMinimumHeight(140)
         self.logText.setMaximumHeight(200)
 
-        self.batchLayout.addLayout(form)
-        self.batchLayout.addWidget(quickBox)
-        self.batchLayout.addWidget(analysisSectionBox)
-        self.batchLayout.addWidget(parseBox)
-        self.batchLayout.addWidget(discoveryBox)
-        self.batchLayout.addWidget(actionBox)
-        self.batchLayout.addWidget(loadBox)
-        self.batchLayout.addWidget(metricsBox)
-        self.batchLayout.addStretch(1)
         self.layout.addWidget(statusBox)
         self.layout.addWidget(settingsBox)
         self.layout.addWidget(self.logText)
@@ -1959,21 +1919,17 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return max(2, min(row_count, 8))
 
     def _on_timelapsed_mode_changed(self, *_args):
-        self._resize_timelapsed_mode_tabs()
-        if not hasattr(self, "timelapsedModeTabs"):
-            return
         self._place_analysis_options_for_mode()
-        scene_mode = self._timelapsed_scene_mode_selected()
         if hasattr(self, "runAnalysisBtn"):
-            self.runAnalysisBtn.visible = not scene_mode
+            self.runAnalysisBtn.visible = False
         if hasattr(self, "statusBox"):
-            self.statusBox.visible = not scene_mode
+            self.statusBox.visible = False
         if hasattr(self, "sceneStatusBox"):
-            self.sceneStatusBox.visible = scene_mode
+            self.sceneStatusBox.visible = True
         if hasattr(self, "doNotGenerateMasksCheck"):
-            self.doNotGenerateMasksCheck.visible = not scene_mode
+            self.doNotGenerateMasksCheck.visible = False
         if hasattr(self, "doNotGenerateMasksLabel"):
-            self.doNotGenerateMasksLabel.visible = not scene_mode
+            self.doNotGenerateMasksLabel.visible = False
         self._update_batch_analysis_options_visibility()
 
     def _place_analysis_options_for_mode(self):
@@ -1981,83 +1937,42 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         if hasattr(self, "sceneLayout"):
             self.sceneLayout.removeWidget(self.analysisSectionBox)
-        if hasattr(self, "batchLayout"):
-            self.batchLayout.removeWidget(self.analysisSectionBox)
-        if self._timelapsed_scene_mode_selected() and hasattr(self, "sceneLayout"):
+        if hasattr(self, "sceneLayout"):
             self.sceneLayout.insertWidget(2, self.analysisSectionBox)
-        elif hasattr(self, "batchLayout"):
-            self.batchLayout.insertWidget(2, self.analysisSectionBox)
 
     def _timelapsed_scene_mode_selected(self):
-        if not hasattr(self, "timelapsedModeTabs"):
-            return False
-        current_index = self.timelapsedModeTabs.currentIndex
-        if callable(current_index):
-            current_index = current_index()
-        return int(current_index) == 0
+        return True
 
     def _update_batch_analysis_options_visibility(self):
         if not hasattr(self, "analysisSectionBox"):
             return
-        scene_mode = self._timelapsed_scene_mode_selected()
         custom = self._selected_profile_is_custom()
-        self.analysisSectionBox.visible = scene_mode or custom
-        if custom:
+        self.analysisSectionBox.visible = True
+        if custom or self._timelapsed_scene_mode_selected():
             self.analysisSectionBox.collapsed = False
 
     def _resize_timelapsed_mode_tabs(self):
-        if not hasattr(self, "timelapsedModeTabs"):
-            return
-        current_index = self.timelapsedModeTabs.currentIndex
-        if callable(current_index):
-            current_index = current_index()
-        self.timelapsedModeTabs.setMaximumHeight(16777215)
-        try:
-            self.timelapsedModeTabs.updateGeometry()
-            if self.timelapsedModeTabs.parent() is not None and self.timelapsedModeTabs.parent().layout() is not None:
-                self.timelapsedModeTabs.parent().layout().activate()
-        except Exception:
-            pass
+        return
 
     def _default_scene_results_root(self):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"
 
     def _on_scene_profile_changed(self, *_args):
         scene_combo = getattr(self, "sceneProfileCombo", None)
-        study_combo = getattr(self, "studyProfileCombo", None)
-        if not self._qt_object_alive(scene_combo) or not self._qt_object_alive(study_combo):
+        if not self._qt_object_alive(scene_combo):
             return
         try:
             selected = self._combo_current_data_safe(scene_combo)
-            index = study_combo.findData(selected)
-            if index >= 0 and study_combo.currentIndex != index:
-                previous = study_combo.blockSignals(True)
-                try:
-                    study_combo.setCurrentIndex(index)
-                finally:
-                    study_combo.blockSignals(previous)
             self._apply_profile_analysis_controls(selected)
+        except (RuntimeError, ValueError, AttributeError):
+            return
+        try:
             self._on_apply_study_profile(profile=selected)
-        except (RuntimeError, ValueError):
+        except (RuntimeError, ValueError, AttributeError):
             return
 
     def _sync_scene_profile_from_batch_profile(self):
-        scene_combo = getattr(self, "sceneProfileCombo", None)
-        study_combo = getattr(self, "studyProfileCombo", None)
-        if not self._qt_object_alive(scene_combo) or not self._qt_object_alive(study_combo):
-            return
-        try:
-            selected = study_combo.currentData
-            index = scene_combo.findData(selected)
-            if index < 0 or scene_combo.currentIndex == index:
-                return
-            previous = scene_combo.blockSignals(True)
-            try:
-                scene_combo.setCurrentIndex(index)
-            finally:
-                scene_combo.blockSignals(previous)
-        except (RuntimeError, ValueError):
-            return
+        return
 
     def _scene_node_selector(self, node_types):
         selector = slicer.qMRMLNodeComboBox()
@@ -3731,14 +3646,14 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._reset_progress_for_dataset_root()
 
     def _selected_config_profile(self):
-        combo = getattr(self, "studyProfileCombo", None)
-        if not self._qt_object_alive(combo):
-            return "standard"
-        try:
-            data = self._combo_current_data_safe(combo)
-            return str(data or "standard")
-        except (RuntimeError, ValueError):
-            return "standard"
+        scene_combo = getattr(self, "sceneProfileCombo", None)
+        if self._timelapsed_scene_mode_selected() and self._qt_object_alive(scene_combo):
+            try:
+                data = self._combo_current_data_safe(scene_combo)
+                return str(data or "standard")
+            except (RuntimeError, ValueError, AttributeError):
+                return "standard"
+        return "standard"
 
     def _selected_profile_is_custom(self):
         return self._selected_config_profile() == "__custom__"
@@ -3755,7 +3670,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return known + extra
 
     def _populate_study_profiles(self, combo=None):
-        combo = combo or self.studyProfileCombo
+        if combo is None:
+            return
         if not self._qt_object_alive(combo):
             return
         combo.clear()
@@ -3914,9 +3830,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._apply_analysis_config_to_controls(cfg.get("analysis") or {})
         self._on_mask_method_changed(self.maskMethod.currentText)
         self._on_periosteal_contour_method_changed()
-        self._sync_scene_profile_from_batch_profile()
-        if source_label and hasattr(self, "userMessageLabel"):
-            self._set_user_message("info", "Profile applied", source_label)
 
     def _apply_analysis_config_to_controls(self, analysis_cfg):
         analysis_cfg = dict(analysis_cfg or {})
@@ -3981,11 +3894,6 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         selected_profile = str(profile if profile is not None else self._selected_config_profile())
         if selected_profile == "__custom__":
             self._update_batch_analysis_options_visibility()
-            self._set_user_message(
-                "info",
-                "Custom analysis settings",
-                "Batch runs will use the analysis options shown below instead of a bundled profile preset.",
-            )
             return
         applied = False
         try:
@@ -4011,7 +3919,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
             applied = True
         except Exception as exc:
-            slicer.util.warningDisplay(f"Could not apply profile:\n{exc}")
+            self._show(f"[settings] could not apply profile {selected_profile}: {exc}")
         finally:
             self._suppress_interactive_preview_updates = False
             self._update_batch_analysis_options_visibility()
@@ -4027,7 +3935,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             with open(self.logic.default_config_path(), "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-            self._apply_config_dict_to_controls(cfg, source_label="Loaded defaults from timelapsed-hrpqct.")
+            self._apply_config_dict_to_controls(cfg)
         except Exception as exc:
             self._show(f"[settings] could not load defaults from pipeline config: {exc}")
 

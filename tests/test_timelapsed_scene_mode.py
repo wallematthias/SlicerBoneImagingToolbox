@@ -29,7 +29,7 @@ def _timelapsed_widget_method(method_name: str):
     return namespace[method_name]
 
 
-def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
+def test_timelapsed_module_exposes_scene_only_ui() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
         / "HRpQCTTools"
@@ -38,9 +38,12 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     )
     source = module_path.read_text(encoding="utf-8")
 
-    assert "self.timelapsedModeTabs" in source
     assert "Scene" in source
-    assert "Batch" in source
+    assert "batchPage" not in source
+    assert "self.batchLayout" not in source
+    assert "self.timelapsedModeTabs" not in source
+    assert "self.studyProfileCombo" not in source
+    assert "self.applyProfileBtn" not in source
     assert "def _on_run_scene_pipeline" in source
     assert "build_timelapsed_scene_plan" in source
     assert "Discover Loaded Timepoints" in source
@@ -100,12 +103,11 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "SetActiveTableID" in source
     assert "PropagateTableSelection" in source
     assert "GetLayoutWithTable" in source
-    assert "currentChanged.connect(self._on_timelapsed_mode_changed)" in source
     assert "def _on_timelapsed_mode_changed" in source
-    assert "self.runAnalysisBtn.visible = not scene_mode" in source
+    assert "self.runAnalysisBtn.visible = False" in source
     assert "self.statusBox = statusBox" in source
-    assert "self.statusBox.visible = not scene_mode" in source
-    assert "self.sceneStatusBox.visible = scene_mode" in source
+    assert "self.statusBox.visible = False" in source
+    assert "self.sceneStatusBox.visible = True" in source
     assert "_clear_loaded_review_nodes()" in source
     assert "def _on_clear_loaded_timelapsed_results" in source
     assert "gc.collect()" in source
@@ -190,9 +192,7 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert '"Update remodelling image"' not in source
     assert "analysisSectionBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "settingsBox.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
-    assert "self.batchLayout.addWidget(analysisSectionBox)" in source
     assert "self.sceneLayout.insertWidget(2, self.analysisSectionBox)" in source
-    assert "self.batchLayout.insertWidget(2, self.analysisSectionBox)" in source
     assert "self.layout.addWidget(analysisSectionBox)" not in source
     assert "self.layout.addWidget(settingsBox)" in source
     assert "self.layout.addWidget(statusBox)" in source
@@ -223,10 +223,11 @@ def test_timelapsed_module_exposes_scene_and_batch_ui() -> None:
     assert "setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
     assert "viewport().update()" in source
     assert "layout().activate()" in source
-    assert "self.timelapsedModeTabs.setMaximumHeight(16777215)" in source
+    assert "def _timelapsed_scene_mode_selected" in source
+    assert "return True" in source.split("    def _timelapsed_scene_mode_selected", 1)[1].split("\n    def ", 1)[0]
 
 
-def test_timelapsed_batch_tab_uses_uncapped_height() -> None:
+def test_timelapsed_scene_ui_does_not_use_a_hidden_batch_tab() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
         / "HRpQCTTools"
@@ -236,12 +237,10 @@ def test_timelapsed_batch_tab_uses_uncapped_height() -> None:
     source = module_path.read_text(encoding="utf-8")
 
     resize_body = source.split("    def _resize_timelapsed_mode_tabs", 1)[1].split("\n    def ", 1)[0]
-    assert "self.timelapsedModeTabs.setMaximumHeight(16777215)" in resize_body
-    assert "self.timelapsedModeTabs.setMaximumHeight(520)" not in resize_body
-    assert "self.timelapsedModeTabs.setMaximumHeight(520)" not in source
-    assert "max(440, min(760" not in resize_body
-    assert "self.timelapsedModeTabs.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Maximum)" in source
-    assert "setMaximumHeight(max(520" not in source
+    assert resize_body.strip() == "(self):\n        return"
+    assert "self.timelapsedModeTabs" not in source
+    assert "batchPage" not in source
+    assert "self.batchLayout" not in source
     assert "scene_results_table_path" in source
     assert "layout.setContentsMargins(0, 0, 0, 0)" in source
 
@@ -326,9 +325,8 @@ def test_timelapsed_batch_custom_profile_exposes_analysis_options_without_cli_pr
     mode_changed = source.split("    def _on_timelapsed_mode_changed", 1)[1].split("\n    def ", 1)[0]
     assert "self._update_batch_analysis_options_visibility()" in mode_changed
     visibility = source.split("    def _update_batch_analysis_options_visibility", 1)[1].split("\n    def ", 1)[0]
-    assert "scene_mode = self._timelapsed_scene_mode_selected()" in visibility
     assert "custom = self._selected_profile_is_custom()" in visibility
-    assert "self.analysisSectionBox.visible = scene_mode or custom" in visibility
+    assert "self.analysisSectionBox.visible = True" in visibility
 
 
 def test_timelapsed_profile_display_order_matches_public_profiles() -> None:
@@ -437,7 +435,6 @@ def test_timelapsed_analysis_options_are_positioned_below_active_profile() -> No
     assert "self.sceneProfileBox = sceneProfileBox" in source
     assert "def _place_analysis_options_for_mode" in source
     assert "self.sceneLayout.insertWidget(2, self.analysisSectionBox)" in source
-    assert "self.batchLayout.insertWidget(2, self.analysisSectionBox)" in source
     assert "self._place_analysis_options_for_mode()" in source.split(
         "    def _on_timelapsed_mode_changed", 1
     )[1].split("\n    def ", 1)[0]
@@ -481,10 +478,7 @@ def test_timelapsed_ui_uses_compact_vertical_spacing() -> None:
 
     build_ui = source.split("    def _build_ui", 1)[1].split("\n    def ", 1)[0]
     scene_ui = source.split("    def _build_scene_ui", 1)[1].split("\n    def ", 1)[0]
-    assert "self.batchLayout.setContentsMargins(0, 0, 0, 0)" in build_ui
-    assert "self.batchLayout.setSpacing(4)" in build_ui
     assert "form.setVerticalSpacing(4)" in build_ui
-    assert "quickForm.setContentsMargins(6, 8, 6, 6)" in build_ui
     assert "analysisSectionLayout.setContentsMargins(6, 6, 6, 4)" in build_ui
     assert "settingsLayout.setContentsMargins(6, 6, 6, 4)" in build_ui
     assert "settingsLayout.setSpacing(6)" in build_ui
@@ -590,10 +584,10 @@ def test_timelapsed_scene_profile_change_applies_profile_controls_directly() -> 
 
     assert "self.sceneProfileCombo.activated.connect(self._on_scene_profile_changed)" in source
     assert "self.sceneProfileCombo.currentTextChanged.connect(self._on_scene_profile_changed)" in source
+    assert 'if not self._qt_object_alive(scene_combo):' in changed
+    assert 'or not self._qt_object_alive(study_combo)' not in changed
     assert "selected = self._combo_current_data_safe(scene_combo)" in changed
-    assert "previous = study_combo.blockSignals(True)" in changed
-    assert "study_combo.setCurrentIndex(index)" in changed
-    assert "study_combo.blockSignals(previous)" in changed
+    assert "study_combo" not in changed
     assert "self._apply_profile_analysis_controls(selected)" in changed
     assert "self._on_apply_study_profile(profile=selected)" in changed
 
@@ -605,6 +599,10 @@ def test_timelapsed_scene_profile_change_applies_profile_controls_directly() -> 
     apply_analysis_profile = source.split("    def _apply_profile_analysis_controls", 1)[1].split("\n    def ", 1)[0]
     assert "load_config(None, profile=selected_profile)" in apply_analysis_profile
     assert "self._apply_analysis_config_to_controls(cfg.get(\"analysis\") or {})" in apply_analysis_profile
+    selected_config = source.split("    def _selected_config_profile", 1)[1].split("\n    def ", 1)[0]
+    assert "if self._timelapsed_scene_mode_selected() and self._qt_object_alive(scene_combo):" in selected_config
+    assert "data = self._combo_current_data_safe(scene_combo)" in selected_config
+    assert "studyProfileCombo" not in selected_config
 
 
 def test_timelapsed_scene_role_status_updates_when_roi_selector_changes() -> None:
@@ -694,7 +692,7 @@ def test_timelapsed_keeps_contour_generation_out_of_visible_workflow() -> None:
     override_body = source.split("    def _settings_override", 1)[1].split("\n    def ", 1)[0]
 
     assert 'discoveryBox.text = "Discovery / Import"' in build_ui
-    assert "self.batchLayout.addWidget(discoveryBox)" in build_ui
+    assert "self.batchLayout" not in build_ui
     assert "discoveryLayout.addRow(_label(\"Copy raw inputs\"" in build_ui
     assert "discoveryLayout.addRow(_label(\"Restructure raw inputs\"" in build_ui
     assert "discoveryLayout.addRow(_label(\"Parse mode\"" in build_ui
@@ -1106,7 +1104,7 @@ def test_analysis_options_are_expanded_for_custom_batch_or_scene_mode() -> None:
     assert "analysisSectionBox.collapsed = True" in analysis_setup
     assert "self.analysisSectionBox = analysisSectionBox" in analysis_setup
     visibility = source.split("    def _update_batch_analysis_options_visibility", 1)[1].split("\n    def ", 1)[0]
-    assert "self.analysisSectionBox.visible = scene_mode or custom" in visibility
+    assert "self.analysisSectionBox.visible = True" in visibility
     assert "self.analysisSectionBox.collapsed = False" in visibility
 
 
@@ -1651,7 +1649,6 @@ def test_timelapsed_reload_callbacks_guard_destroyed_qt_combos() -> None:
 
     for function_name in (
         "_on_scene_profile_changed",
-        "_sync_scene_profile_from_batch_profile",
         "_selected_processing_subject",
         "_selected_processing_site",
         "_refresh_processing_subjects",
