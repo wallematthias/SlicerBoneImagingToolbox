@@ -1884,26 +1884,37 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "TimelapsedScene"
 
     def _on_scene_profile_changed(self, *_args):
-        if hasattr(self, "studyProfileCombo"):
-            selected = self.sceneProfileCombo.currentData
-            index = self.studyProfileCombo.findData(selected)
-            if index >= 0 and self.studyProfileCombo.currentIndex != index:
-                self.studyProfileCombo.setCurrentIndex(index)
+        scene_combo = getattr(self, "sceneProfileCombo", None)
+        study_combo = getattr(self, "studyProfileCombo", None)
+        if not self._qt_object_alive(scene_combo) or not self._qt_object_alive(study_combo):
+            return
+        try:
+            selected = scene_combo.currentData
+            index = study_combo.findData(selected)
+            if index >= 0 and study_combo.currentIndex != index:
+                study_combo.setCurrentIndex(index)
             else:
                 self._on_apply_study_profile()
+        except (RuntimeError, ValueError):
+            return
 
     def _sync_scene_profile_from_batch_profile(self):
-        if not hasattr(self, "sceneProfileCombo") or not hasattr(self, "studyProfileCombo"):
+        scene_combo = getattr(self, "sceneProfileCombo", None)
+        study_combo = getattr(self, "studyProfileCombo", None)
+        if not self._qt_object_alive(scene_combo) or not self._qt_object_alive(study_combo):
             return
-        selected = self.studyProfileCombo.currentData
-        index = self.sceneProfileCombo.findData(selected)
-        if index < 0 or self.sceneProfileCombo.currentIndex == index:
-            return
-        previous = self.sceneProfileCombo.blockSignals(True)
         try:
-            self.sceneProfileCombo.setCurrentIndex(index)
-        finally:
-            self.sceneProfileCombo.blockSignals(previous)
+            selected = study_combo.currentData
+            index = scene_combo.findData(selected)
+            if index < 0 or scene_combo.currentIndex == index:
+                return
+            previous = scene_combo.blockSignals(True)
+            try:
+                scene_combo.setCurrentIndex(index)
+            finally:
+                scene_combo.blockSignals(previous)
+        except (RuntimeError, ValueError):
+            return
 
     def _scene_node_selector(self, node_types):
         selector = slicer.qMRMLNodeComboBox()
@@ -2036,7 +2047,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 role_row = self._scene_role_row_index(role)
             if role_row < 0:
                 continue
-            segment_id = self._scene_segment_id_for_node_role(source_node_id, role)
+            lookup_role = "full" if self._normalize_scene_role_name(role) == "registration_roi" else role
+            segment_id = self._scene_segment_id_for_node_role(source_node_id, lookup_role)
+            if not segment_id and lookup_role != role:
+                segment_id = self._scene_segment_id_for_node_role(source_node_id, role)
             if not segment_id:
                 continue
             self._set_scene_mask_row_node(role_row, column, source_node_id, self.sceneRoiTable, role=role, segment_id=segment_id)
@@ -4627,14 +4641,25 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._refresh_processing_subjects()
 
     def _selected_processing_subject(self):
-        text = str(getattr(self.processingSubjectCombo, "currentText", "")).strip()
+        combo = getattr(self, "processingSubjectCombo", None)
+        if not self._qt_object_alive(combo):
+            return None
+        try:
+            text = str(getattr(combo, "currentText", "")).strip()
+        except (RuntimeError, ValueError):
+            return None
         if not text or text == "All subjects":
             return None
         return text
 
     def _selected_processing_site(self):
         combo = getattr(self, "processingSiteCombo", None)
-        text = str(getattr(combo, "currentText", "")).strip()
+        if not self._qt_object_alive(combo):
+            return None
+        try:
+            text = str(getattr(combo, "currentText", "")).strip()
+        except (RuntimeError, ValueError):
+            return None
         if not text or text == "All sites":
             return None
         return text
@@ -4660,28 +4685,32 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return scoped, subject, site
 
     def _refresh_processing_subjects(self):
+        combo = getattr(self, "processingSubjectCombo", None)
+        if not self._qt_object_alive(combo):
+            return
         prev = self._selected_processing_subject()
-        self.processingSubjectCombo.clear()
-        self.processingSubjectCombo.addItem("All subjects")
+        combo.clear()
+        combo.addItem("All subjects")
         seen = set()
         for s in (self._last_parsed_sessions or []):
             subject = str(getattr(s, "subject_id", "")).strip()
             if subject and subject not in seen:
                 seen.add(subject)
-                self.processingSubjectCombo.addItem(subject)
+                combo.addItem(subject)
         if prev and prev in seen:
-            idx = self.processingSubjectCombo.findText(prev)
+            idx = combo.findText(prev)
             if idx >= 0:
-                self.processingSubjectCombo.setCurrentIndex(idx)
+                combo.setCurrentIndex(idx)
         self._refresh_processing_sites()
 
     def _refresh_processing_sites(self, *_args):
-        if not hasattr(self, "processingSiteCombo"):
+        combo = getattr(self, "processingSiteCombo", None)
+        if not self._qt_object_alive(combo):
             return
         prev = self._selected_processing_site()
         subject = self._selected_processing_subject()
-        self.processingSiteCombo.clear()
-        self.processingSiteCombo.addItem("All sites")
+        combo.clear()
+        combo.addItem("All sites")
         seen = set()
         for s in (self._last_parsed_sessions or []):
             if subject is not None and str(getattr(s, "subject_id", "")).strip() != subject:
@@ -4689,11 +4718,11 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             site = str(getattr(s, "site", "")).strip().lower()
             if site and site not in seen:
                 seen.add(site)
-                self.processingSiteCombo.addItem(site)
+                combo.addItem(site)
         if prev and prev in seen:
-            idx = self.processingSiteCombo.findText(prev)
+            idx = combo.findText(prev)
             if idx >= 0:
-                self.processingSiteCombo.setCurrentIndex(idx)
+                combo.setCurrentIndex(idx)
 
     def _sanitize_name_token(self, text):
         token = re.sub(r"[^A-Za-z0-9]+", "_", str(text or "").strip())

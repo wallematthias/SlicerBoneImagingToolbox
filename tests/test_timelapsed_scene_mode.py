@@ -261,7 +261,7 @@ def test_timelapsed_batch_cohort_summary_is_not_in_analysis_options() -> None:
     assert 'if selected.name == "derivatives":' in source
     assert 'return selected / "Timelapse"' in source
     assert "timelapsedhrpqct.cli import main" in source
-    assert 'MIN_PIPELINE_VERSION = "2.0.39"' in source
+    assert 'MIN_PIPELINE_VERSION = "2.0.43"' in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source
@@ -1563,6 +1563,44 @@ def test_scene_segment_role_matching_accepts_readable_segment_names() -> None:
     assert scene_segment_matches_role("Full mask", "", "registration_roi")
     assert scene_segment_matches_role("Anything", "trab", "trab")
     assert not scene_segment_matches_role("Full mask", "", "seg")
+
+
+def test_timelapsed_scene_auto_role_mapping_uses_full_segment_for_registration_roi() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    auto_role_block = source.split("    def _apply_scene_detected_roles_for_timepoint", 1)[1].split("\n    def ", 1)[0]
+
+    assert '"registration_roi", "segmentation", "roi1", "roi2", "roi3"' in auto_role_block
+    assert 'lookup_role = "full" if self._normalize_scene_role_name(role) == "registration_roi" else role' in auto_role_block
+    assert "self._scene_segment_id_for_node_role(source_node_id, lookup_role)" in auto_role_block
+    assert "if not segment_id and lookup_role != role:" in auto_role_block
+
+
+def test_timelapsed_reload_callbacks_guard_destroyed_qt_combos() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    for function_name in (
+        "_on_scene_profile_changed",
+        "_sync_scene_profile_from_batch_profile",
+        "_selected_processing_subject",
+        "_selected_processing_site",
+        "_refresh_processing_subjects",
+        "_refresh_processing_sites",
+    ):
+        block = source.split(f"    def {function_name}", 1)[1].split("\n    def ", 1)[0]
+        assert "self._qt_object_alive" in block
+        assert "RuntimeError, ValueError" in block or function_name.startswith("_refresh_processing")
 
 
 def test_timelapsed_scene_mask_selector_sets_item_tooltips() -> None:
