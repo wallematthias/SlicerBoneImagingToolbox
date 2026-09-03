@@ -35,10 +35,12 @@ Bone Imaging
 ## Where To Start
 
 - Install the extension and runtime packages from [Installation](installation.md).
+- Follow the recommended processing order in [Workflow Overview](workflow-overview.md).
 - Normalize cohort data with the [Dataset Naming Helper](tools/dataset-naming-helper.md).
 - Run cohort workflows through the [Batch Processor](tools/batch-processor.md).
 - Use scene workflows when working with loaded Slicer nodes interactively.
 - Use the [Derivative Workflow Contract](derivatives.md) when connecting outputs across tools.
+- Check [Troubleshooting](troubleshooting.md) when modules, masks, batch rows, or docs builds behave unexpectedly.
 
 ## Citation
 

@@ -1,119 +1,110 @@
-# Timelapsed HR-pQCT
+# Timelapsed Remodelling
 
-`Timelapsed HR-pQCT` is the Slicer front end for longitudinal HR-pQCT workflows. It organizes scans into subject/site/session structure, runs timelapsed processing, and loads remodelling outputs for review.
+Timelapsed Remodelling is the Slicer front end for longitudinal HR-pQCT registration, common-region generation, and remodelling analysis. The Slicer module supports interactive scene review; cohort runs are launched from the Batch Processor.
 
-## When To Use
-
-Use this tool when you have longitudinal Scanco HR-pQCT AIM datasets and want to:
-
-- parse raw AIM files into a cohort layout,
-- generate masks when needed,
-- register longitudinal scans,
-- run remodelling analysis,
-- review raw, transformed, and remodelling-image outputs in Slicer,
-- export cohort-level remodelling summary tables.
-
-## Setup
-
-1. Open `Bone Imaging > HR-pQCT > Timelapsed HR-pQCT`.
-2. Click `Install / Update timelapsed-hrpqct`.
-3. Restart Slicer if the install process asks for it.
-
-The Slicer module is the GUI layer. Core processing lives in the `timelapsed-hrpqct` Python package and repository:
+Core processing lives in the `timelapsed-hrpqct` Python package:
 
 https://github.com/wallematthias/TimelapsedHRpQCT
 
-## Basic Workflow
+## When To Use
 
-The module has two modes:
+Use this workflow when you have two or more longitudinal scans from the same subject and VOI and want to:
 
-- `Scene` uses volumes and masks already loaded in Slicer for a small explicit longitudinal series.
-- `Batch` discovers scans from a dataset folder and writes reproducible cohort outputs.
+- register timepoints,
+- reuse or create common scan regions,
+- classify formation, resorption, quiescent bone, and background,
+- review remodelling maps interactively in Slicer,
+- export pairwise remodelling metrics.
+
+Prepare registration ROIs, bone segmentations, and analysis ROIs before running Timelapsed Remodelling. Generated contours belong to Contouring; imported scanner/IPL contours belong to `ImportedContours`.
+
+## Required Inputs
+
+| Input | Meaning |
+| --- | --- |
+| XCT image per session | source scan for each longitudinal timepoint |
+| Registration ROI | mask used for image registration; commonly full bone contour |
+| Bone segmentation | binary bone support used for remodelling classification |
+| Analysis ROI masks | one or more ROIs used for reporting, commonly full, trabecular, and cortical |
+| Initial transforms | optional user-provided transforms |
 
 ## Scene Mode
 
-Use `Scene` when the timepoints are already loaded in Slicer. Add one row per session, select the image node and any available masks, choose a results folder, then run the scene pipeline. The module exports those selected nodes into a scoped scene-run folder and launches the same Timelapsed workflow in the background.
+Use scene mode when the scans are already loaded in Slicer.
+
+1. Discover or add loaded timepoints.
+2. Select image nodes for each session.
+3. Map the registration ROI, bone segmentation, and analysis ROIs.
+4. Select a profile.
+5. Adjust analysis options if needed.
+6. Run.
+7. Review the loaded remodelling map and current comparison table.
+8. Use `Apply settings` to update loaded remodelling outputs interactively.
+
+Scene mode keeps selected source scans native in the scene and loads remodelling results for review.
 
 ## Batch Mode
 
-1. Select the AIM dataset root.
-2. Click `Parse input`.
-3. Review the parse table and correct site/session values if needed.
-4. Set `Results folder` if you do not want the default `<dataset_root>/TimelapsedHRpQCT`.
-5. Select a study `Profile`.
-6. Click `Apply profile`.
-7. Leave mask generation enabled unless you already have valid masks/contours.
-8. Click `Run pipeline`.
-9. Use `Load Processed Data` to load `raw`, `transformed`, or `remodelling image` outputs.
-10. Inspect loaded volumes in 2D/3D.
+Use `Bone Imaging > I/O > Batch Processor` for cohort processing.
 
-Most controls include hover tooltips. These are the first-line reference for profile effects, threshold units, and review-state behavior.
+1. Select a normalized dataset root.
+2. Select `Timelapsed Remodelling`.
+3. Select the desired profile.
+4. Review the discovered grouped rows.
+5. Run one row or `Run all`.
+6. Load completed rows to bring remodelling maps and compact result tables into Slicer.
 
-## Interactive Remodelling Review
+Profiles include `standard`, `eth-uofc`, `ucsf`, `ped-fx`, `multistack`, `xct1-standard`, and `shriners`.
 
-After loading a saved remodelling image, the module exposes the key review parameters used by the pipeline:
+## Outputs
 
-- threshold,
-- cluster size,
-- analysis method,
-- pair mode,
-- full-mask dilation,
-- marrow-mask erosion,
-- Gaussian filtering,
-- Gaussian sigma.
-
-By default, loaded remodelling images update only when `Update remodelling image` or `Apply profile` is clicked. When auto update is enabled, changing these controls recomputes the loaded preview from the transformed image pair already on disk. This allows exploratory threshold/filter changes without rerunning the full command-line analysis.
-
-Use `Rerun cohort analysis` when you want to recompute saved outputs for the whole processed cohort.
-
-## Results Layout
-
-Pipeline outputs are saved in a structured folder layout under the results root.
-
-- Default results root: `<dataset_root>/TimelapsedHRpQCT`
-- Optional override: `Results folder`
-- Typical organization: subject/site/session folders with derivative outputs grouped by processing stage
-
-This layout is intended to make results easy to browse, reload in Slicer, and reuse in downstream analysis.
-
-## Input Filename Format
-
-The parser expects AIM filenames that include:
-
-- subject identifier,
-- site token such as `DR`, `DT`, or `KN`,
-- session token such as `T1`, `T2`, `C1`, `BL`, `FL`, or `FL1`,
-- optional stack token for multistack data, such as `STACK01`, `STACK_01`, or `STACK-01`,
-- optional mask roles such as `TRAB_MASK`, `CORT_MASK`, `FULL_MASK`, `REGMASK`, `ROI1`, or `ROI2`.
-
-Examples:
+Timelapsed outputs are written under `derivatives/`:
 
 ```text
-SUBJ001_DR_T1.AIM
-SUBJ001_DR_T1_TRAB_MASK.AIM
-SUBJ001_DR_T2.AIM
-
-SUBJ010_DT_STACK01_T1.AIM
-SUBJ010_DT_STACK02_T1_CORT_MASK.AIM
-
-SAMPLE355_KN_BL.AIM
-SAMPLE355_KN_FL1_REGMASK.AIM
+derivatives/
+  Registration/
+  CommonRegion/
+  Timelapse/
 ```
 
-If filename parsing is incomplete or ambiguous, the parser can fall back to AIM header metadata when available.
+The remodelling table loaded in Slicer focuses on the main review metrics: comparison pair, ROI, `FV/BV`, `RV/BV`, `AV/BV`, `NV/BV`, and profile.
 
-## Attribution
+## Input Naming
 
-For the main `eth-uofc` timelapsed HR-pQCT method, cite:
+Normalized datasets should use the toolbox layout:
 
-Walle M, Whittier DE, Schenk D, Atkins PR, Blauth M, Zysset P, Lippuner K, Müller R, Collins CJ. Precision of bone mechanoregulation assessment in humans using longitudinal high-resolution peripheral quantitative computed tomography in vivo. *Bone*. 2023;172:116780. doi: 10.1016/j.bone.2023.116780.
+```text
+sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_xct.AIM
+sub-001/ses-002/xct/sub-001_ses-002_voi-radiusleft_xct.AIM
+```
+
+Older lab-style filenames can be normalized with Dataset Naming Helper. Generic examples:
+
+```text
+sample001_DR_T1.AIM
+sample001_DR_T1_TRAB_MASK.AIM
+sample001_DR_T2.AIM
+
+sample010_DT_STACK01_T1.AIM
+sample010_DT_STACK02_T1_CORT_MASK.AIM
+
+sample020_KN_BL.AIM
+sample020_KN_FL1_REGMASK.AIM
+```
+
+## Screenshot To Add
+
+Add two generic screenshots:
+
+- scene role mapping with three timepoints,
+- loaded remodelling map plus current comparison table.
+
+## Citation
+
+For Timelapsed remodelling, cite:
+
+Walle M, Whittier DE, Schenk D, Atkins PR, Blauth M, Zysset P, Lippuner K, Müller R, Collins CJ. Precision of bone mechanoregulation assessment in humans using longitudinal high-resolution peripheral quantitative computed tomography in vivo. *Bone*. 2023;172:116780. doi: [10.1016/j.bone.2023.116780](https://doi.org/10.1016/j.bone.2023.116780).
 
 For multistack registration, cite:
 
-Whittier DE, Walle M, Schenk D, Atkins PR, Collins CJ, Zysset P, Lippuner K, Müller R. A multi-stack registration technique to improve measurement accuracy and precision across longitudinal HR-pQCT scans. *Bone*. 2023;176:116893. doi: 10.1016/j.bone.2023.116893.
-
-Related applications using the method include:
-
-- Walle M, Duseja A, Whittier DE, Vilaca T, Paggiosi M, Eastell R, Müller R, Collins CJ. Bone remodeling and responsiveness to mechanical stimuli in individuals with type 1 diabetes mellitus. *Journal of Bone and Mineral Research*. 2024;39(2):85-94.
-- Walle M, Gabel L, Whittier DE, Liphardt AM, Hulme PA, Heer M, Zwart SR, Smith SM, Sibonga JD, Boyd SK. Tracking of spaceflight-induced bone remodeling reveals a limited time frame for recovery of resorption sites in humans.
-- Matheson BE, Walle M, Bugbird AR, Rosenberg M, Mateus J, Boyd SK. Early skeletal deteriorations following short-duration spaceflight.
+Whittier DE, Walle M, Schenk D, Atkins PR, Collins CJ, Zysset P, Lippuner K, Müller R. A multi-stack registration technique to improve measurement accuracy and precision across longitudinal HR-pQCT scans. *Bone*. 2023;176:116893. doi: [10.1016/j.bone.2023.116893](https://doi.org/10.1016/j.bone.2023.116893).

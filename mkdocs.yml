@@ -4,6 +4,8 @@ site_url: https://slicerboneimagingtoolbox.readthedocs.io/
 repo_url: https://github.com/wallematthias/SlicerBoneImagingToolbox
 repo_name: wallematthias/SlicerBoneImagingToolbox
 edit_uri: edit/main/docs/
+exclude_docs: |
+  superpowers/**
 
 theme:
   name: material
@@ -28,9 +30,11 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Installation: installation.md
+  - Workflow Overview: workflow-overview.md
   - Dataset Format: dataset-format.md
   - Derivatives: derivatives.md
   - Scene Workflows: scene-workflows.md
+  - Troubleshooting: troubleshooting.md
   - Batch Processor: tools/batch-processor.md
   - Tools:
       - Scanco I/O: tools/scanco-io.md
@@ -48,4 +52,5 @@ nav:
       - Adding A Tool: development/adding-a-tool.md
       - Derivatives Contract: development/derivatives-contract.md
       - Profiles: development/profiles.md
+      - Screenshots: development/screenshots.md
       - Release Checklist: development/release-checklist.md

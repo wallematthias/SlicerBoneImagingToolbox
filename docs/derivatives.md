@@ -51,12 +51,12 @@ Each derivative writes `manifest.json` with records describing the produced file
     {
       "derivative": "CommonRegion",
       "role": "scan_region_native_common",
-      "subject_id": "SAMPLE001",
+      "subject_id": "001",
       "site": "tibialeft",
       "session_id": "1",
       "stack_index": null,
       "space": "native",
-      "path": "sub-SAMPLE001/ses-001/xct/sub-SAMPLE001_ses-001_voi-tibialeft_desc-scan-region-native-common_mask.nii.gz",
+      "path": "sub-001/ses-001/xct/sub-001_ses-001_voi-tibialeft_desc-scan-region-native-common_mask.nii.gz",
       "source": "generated",
       "metadata": {
         "reference_session_id": "1"

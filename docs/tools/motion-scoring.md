@@ -18,8 +18,9 @@ Motion Scoring requires PyTorch for model inference.
 
 1. Install the `PyTorch` extension from Slicer's Extension Manager.
 2. Restart Slicer.
-3. Open `Bone Imaging > HR-pQCT > Motion Scoring`.
-4. Use the module's install/update controls to install the MotionScore runtime if needed.
+3. Open `Bone Imaging > Setup > Toolbox Setup`.
+4. Install or update the MotionScore runtime if needed.
+5. Open `Bone Imaging > Microstructural Analysis > Motion Scoring`.
 
 The Slicer module is the GUI layer. Core model and inference logic lives in:
 
@@ -61,18 +62,20 @@ The `base-v1` subfolder layout is preferred because it keeps model versions sepa
 
 ## Basic Workflow
 
-The module has two modes:
+The module focuses on prediction and review:
 
-- `Scene` scores or initializes review for one scalar volume already loaded in Slicer.
-- `Batch` discovers AIM scans from a dataset folder, runs/resumes prediction, and manages cohort review.
+- loaded scan review for a single image,
+- batch prediction from a dataset folder,
+- manual correction of predicted grades,
+- export of reviewed results.
 
 ## Scene Mode
 
-Use `Scene` when a scan is already loaded in Slicer. Select the scalar volume, enter scan/subject/site/session labels, choose a model profile or manual-review mode, and run. The module exports the volume to a scoped scene-run handoff file and runs MotionScore in a background process.
+Use loaded scan review when a scan is already open in Slicer. Select the scalar volume, run the model, and review the generated motion-grading image and grade.
 
 ## Batch Mode
 
-1. Select the folder or table of scans to score.
+1. Select the dataset root or scan table.
 2. Select the model profile.
 3. Run prediction.
 4. Review predicted scores in the review table.
@@ -90,3 +93,7 @@ https://github.com/wallematthias/MotionScoreHRpQCT/releases/latest/download/mode
 For Motion Scoring, cite:
 
 Walle M, Eggemann D, Atkins PR, Kendall JJ, Stock K, Müller R, Collins CJ. Motion grading of high-resolution quantitative computed tomography supported by deep convolutional neural networks. *Bone*. 2023;166:116607. doi: 10.1016/j.bone.2022.116607.
+
+## Screenshot To Add
+
+Add one generic screenshot showing the review table and one motion-grading preview image without identifying overlays.

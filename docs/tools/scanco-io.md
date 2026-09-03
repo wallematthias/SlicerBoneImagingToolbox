@@ -16,10 +16,11 @@ Use this tool when you want to:
 
 ## Setup
 
-1. Open `Bone Imaging > I/O > Scanco I/O`.
-2. Click `Install / Update Scanco I/O`.
+1. Open `Bone Imaging > Setup > Toolbox Setup`.
+2. Install or update the Scanco I/O runtime if needed.
+3. Open `Bone Imaging > I/O > Scanco I/O`.
 
-This installs only the lightweight Scanco image dependency stack, including `aimio-py` / `py_aimio`; it does not install the full `timelapsed-hrpqct` pipeline.
+This installs the lightweight Scanco image dependency stack, including `aimio-py` / `py_aimio`, without requiring the full Timelapsed pipeline.
 
 ## Import Workflow
 
