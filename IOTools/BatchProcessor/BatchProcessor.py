@@ -68,6 +68,9 @@ TOOL_PROFILES = {
         ("XtremeCT II - Geodesic", "XtremeCTII-Geodesic", False),
         ("XtremeCT II - LH", "XtremeCTII-LH", False),
     ),
+    "mask_label_algebra": (
+        ("Standard", "standard", False),
+    ),
     "microarchitecture": (
         ("XtremeCT II", "xtremectii", False),
         ("XtremeCT II - registered", "xtremectii-registered", True),
@@ -94,11 +97,13 @@ TOOL_PROFILES = {
         ("Load history 6", "load_history_6", False),
     ),
 }
+_REGISTRATION_FAMILY_PRIORITY = {"ImportedRegistration": 0, "Registration": 1}
 _SEGMENT_COLORS = {
     "full": (0.2, 0.8, 0.25),
     "trab": (0.0, 0.75, 1.0),
     "cort": (1.0, 0.55, 0.1),
     "seg": (1.0, 0.95, 0.3),
+    "fea-materials": (0.92, 0.62, 0.15),
     "common_region": (0.72, 0.42, 1.0),
     "resorption": (1.0, 0.05, 0.70),
     "formation": (1.0, 0.48, 0.0),
@@ -150,6 +155,7 @@ class BatchProcessor(ScriptedLoadableModule):
 class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     _CLI_COMMANDS = {
         "bone_contouring": ("bone_contouring.cli", "run-batch"),
+        "mask_label_algebra": ("bone_contouring.cli", "mask-label-algebra"),
         "microarchitecture": ("bone_microarchitecture.cli", "run-batch"),
         "plate_rod": ("plate_rod_thinning.cli", "run-batch"),
         "timelapse": ("timelapsedhrpqct.cli", "run"),
@@ -203,8 +209,11 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         ok, message = self.normalized_dataset_status(root)
         if not ok:
             return [], message
+        if tool == "mask_label_algebra":
+            return self._mask_label_algebra_table_rows(root)
         images = discover_raw_xct_images(root)
         contour_artifacts = (
+            *discover_derivative_artifacts(root, "IPLContours"),
             *discover_derivative_artifacts(root, "ImportedContours"),
             *discover_derivative_artifacts(root, "BoneContours"),
         )
@@ -244,6 +253,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     def _output_family_for_tool(tool: str) -> str:
         return {
             "bone_contouring": "BoneContours",
+            "mask_label_algebra": "BoneContours",
             "microarchitecture": "Microarchitecture",
             "timelapse": "Timelapse",
             "plate_rod": "PlateRodMorphometry",
@@ -254,7 +264,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     @staticmethod
     def _required_roles_for_tool(tool: str, profile: str) -> tuple[str, ...]:
         del profile
-        if tool == "bone_contouring":
+        if tool in {"bone_contouring", "mask_label_algebra"}:
             return ()
         if tool == "timelapse":
             return ("segmentation", "full", "trab", "cort")
@@ -733,7 +743,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 continue
             key = BatchProcessorLogic._registration_key(record)
             grouped.setdefault(key, []).append(record)
-        return grouped
+        return {key: BatchProcessorLogic._preferred_registration_records(records) for key, records in grouped.items()}
 
     @staticmethod
     def _registered_images_by_key(registration_records):
@@ -761,30 +771,55 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
 
     @staticmethod
     def _discover_registration_records(root):
-        records_by_path = {
-            Path(record.path).resolve(): record
-            for manifest in discover_manifests(root)
-            if manifest.derivative_family == "Registration"
-            for record in manifest.records
-        }
-        for path in sorted((Path(root) / "derivatives" / "Registration").glob("sub-*/ses-*/xct/*/*.tfm")):
-            match = _REGISTRATION_TRANSFORM_NAME.match(path.name)
-            if match is None:
-                continue
-            stack = match.group("stack")
-            role = "transform_pairwise" if path.parent.name == "pairwise" else "transform_to_reference"
-            records_by_path.setdefault(
-                path.resolve(),
-                SimpleNamespace(
-                    role=role,
-                    subject_id=match.group("subject"),
-                    session_id=match.group("session"),
-                    site=match.group("voi").lower(),
-                    stack_index=int(stack) if stack else None,
-                    path=path,
+        records_by_path = {}
+        for family in ("ImportedRegistration", "Registration"):
+            for artifact in discover_derivative_artifacts(root, family):
+                if artifact.role not in {"transform_pairwise", "transform_to_reference"}:
+                    continue
+                records_by_path.setdefault(
+                    artifact.path.resolve(),
+                    SimpleNamespace(
+                        role=artifact.role,
+                        subject_id=artifact.key.subject_id,
+                        session_id=artifact.key.session_id,
+                        site=artifact.key.voi,
+                        stack_index=artifact.key.stack_index,
+                        path=artifact.path,
+                        derivative=family,
+                    ),
                 )
-            )
+            for path in sorted((Path(root) / "derivatives" / family).glob("sub-*/ses-*/xct/*/*.tfm")):
+                match = _REGISTRATION_TRANSFORM_NAME.match(path.name)
+                if match is None:
+                    continue
+                stack = match.group("stack")
+                role = "transform_pairwise" if path.parent.name == "pairwise" else "transform_to_reference"
+                records_by_path.setdefault(
+                    path.resolve(),
+                    SimpleNamespace(
+                        role=role,
+                        subject_id=match.group("subject"),
+                        session_id=match.group("session"),
+                        site=match.group("voi").lower(),
+                        stack_index=int(stack) if stack else None,
+                        path=path,
+                        derivative=family,
+                    )
+                )
         return tuple(records_by_path.values())
+
+    @staticmethod
+    def _preferred_registration_records(records):
+        by_role = {}
+        for record in sorted(
+            records,
+            key=lambda record: (
+                _REGISTRATION_FAMILY_PRIORITY.get(getattr(record, "derivative", ""), 2),
+                str(getattr(record, "path", "")),
+            ),
+        ):
+            by_role.setdefault(record.role, record)
+        return list(by_role.values())
 
     @staticmethod
     def _discover_common_region_records(root):
@@ -926,6 +961,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         root = self._dataset_root(dataset_root)
         if tool == "timelapse":
             return self._timelapse_output_paths_for_row(root, row)
+        if tool == "mask_label_algebra":
+            return [str(path) for path in self._imported_contour_paths_for_row(root, row)]
         if tool == "fea":
             return [str(path) for path in self._fea_output_paths_for_row(root, row)]
         if tool == "mechanoregulation":
@@ -936,6 +973,23 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         outputs = self._discover_existing_outputs(root, self._output_family_for_tool(tool))
         outputs = self._existing_outputs_for_profile(tool, bool(row.get("registered")), outputs)
         return [str(artifact.path) for artifact in outputs if artifact.key == key]
+
+    @staticmethod
+    def _imported_contour_paths_for_row(root: Path, row: dict) -> list[Path]:
+        key = BatchProcessorLogic._row_case_key(row)
+        if key is None:
+            return []
+        lookup_key = BatchProcessorLogic._case_lookup_key(key)
+        records = []
+        for artifact in discover_derivative_artifacts(root, "ImportedContours"):
+            if BatchProcessorLogic._case_lookup_key(artifact.key) != lookup_key:
+                continue
+            if str(getattr(artifact, "content_type", "") or "").lower() not in {"", "mask", "label"}:
+                continue
+            if not Path(artifact.path).exists():
+                continue
+            records.append(artifact)
+        return sorted({Path(artifact.path) for artifact in records}, key=lambda path: path.name)
 
     def common_region_paths_for_row(self, dataset_root, row: dict) -> list[str]:
         """Return native common-region masks matching one registered row."""
@@ -1046,7 +1100,6 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         return grouped
 
     @staticmethod
-    @staticmethod
     def _input_text(
         image,
         contours,
@@ -1078,6 +1131,63 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 parts.append(f"registration={registration.path.name}")
         return "\n".join(parts)
 
+    @staticmethod
+    def _mask_label_algebra_core():
+        local_src = TOOLBOX_ROOT.parent / "bone-contouring" / "src"
+        if local_src.exists() and str(local_src) not in sys.path:
+            sys.path.insert(0, str(local_src))
+        from bone_contouring.algebra import discover_mask_label_algebra_batch
+
+        return discover_mask_label_algebra_batch
+
+    @staticmethod
+    def _mask_label_algebra_table_rows(root: Path):
+        discover_mask_label_algebra_batch = BatchProcessorLogic._mask_label_algebra_core()
+        rows = []
+        for algebra_row in discover_mask_label_algebra_batch(root):
+            key = algebra_row.image.key
+            status = {
+                "ready": "Ready",
+                "loadable": "Done",
+                "missing": "Missing contour inputs",
+            }.get(algebra_row.status, str(algebra_row.status).title())
+            action = {
+                "ready": "Run",
+                "loadable": "Load",
+                "missing": "Missing",
+            }.get(algebra_row.status, "Run")
+            inputs = [algebra_row.image.path.name]
+            for role, artifact in sorted(algebra_row.contours.items()):
+                label = "seg" if role == "segmentation" else role
+                inputs.append(f"{label}={artifact.path.name}")
+            if algebra_row.derivable_roles:
+                inputs.append(f"derive={', '.join(algebra_row.derivable_roles)}")
+            output_paths = [str(path) for path in BatchProcessorLogic._imported_contour_paths_for_row(
+                root,
+                {
+                    "subject": key.subject_id,
+                    "session_value": key.session_id,
+                    "voi_value": key.voi,
+                    "stack_index": key.stack_index,
+                },
+            )]
+            row = {
+                "action": action,
+                "subject": key.subject_id,
+                "session": key.session_id,
+                "session_value": key.session_id,
+                "voi": BatchProcessorLogic._voi_text(key),
+                "voi_value": key.voi,
+                "registered": False,
+                "image_path": str(algebra_row.image.path),
+                "input": "\n".join(inputs),
+                "status": status,
+            }
+            if output_paths:
+                row["output_paths"] = output_paths
+            rows.append(row)
+        return rows, f"Discovered {len(rows)} Mask And Label Algebra row(s)."
+
     def command_for_row(self, dataset_root, *, tool: str, profile: str, row: dict, force: bool = False) -> list[str]:
         """Return a core-package CLI command for one batch row."""
         tool_key = str(tool)
@@ -1098,7 +1208,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             args.extend(["--session", str(session_value)])
         voi_value = row.get("voi_value", row.get("voi"))
         if voi_value:
-            if tool == "bone_contouring":
+            if tool in {"bone_contouring", "mask_label_algebra"}:
                 args.extend(["--voi", str(voi_value)])
             else:
                 args.extend(["--site", str(voi_value)])
@@ -1331,6 +1441,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.toolCombo = qt.QComboBox()
         for label, value in (
             ("Bone Contouring", "bone_contouring"),
+            ("Mask And Label Algebra", "mask_label_algebra"),
             ("Microarchitecture", "microarchitecture"),
             ("Timelapsed Remodelling", "timelapse"),
             ("Plate/Rod Morphometry", "plate_rod"),
@@ -1927,7 +2038,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                 f"Click Analyze again or load from the detailed {self.toolCombo.currentText} module."
             )
             return
-        if self._selected_tool_key() == "bone_contouring":
+        if self._selected_tool_key() in {"bone_contouring", "mask_label_algebra"}:
             self._load_bone_contour_outputs_as_segmentation(row, output_paths)
             return
         if self._selected_tool_key() == "timelapse":
@@ -2800,9 +2911,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             pass
 
     def _load_bone_contour_outputs_as_segmentation(self, row, output_paths):
-        mask_paths = [Path(path) for path in output_paths if self._is_mask_output(Path(path))]
+        mask_paths = [Path(path) for path in output_paths if self._is_bone_contour_segmentation_output(Path(path))]
         if not mask_paths:
-            self._append_log("[batch] No BoneContours mask outputs were discovered for this row.")
+            self._append_log("[batch] No BoneContours mask/label outputs were discovered for this row.")
             return
         source_name = Path(str(row.get("image_path") or mask_paths[0])).stem
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
@@ -2856,8 +2967,17 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         return "_mask" in name and name.endswith((".aim", ".nii", ".nii.gz", ".nrrd", ".nhdr", ".mha", ".mhd"))
 
     @staticmethod
+    def _is_label_output(path: Path) -> bool:
+        name = path.name.lower()
+        return "_label" in name and name.endswith((".aim", ".nii", ".nii.gz", ".nrrd", ".nhdr", ".mha", ".mhd"))
+
+    @staticmethod
+    def _is_bone_contour_segmentation_output(path: Path) -> bool:
+        return BatchProcessorWidget._is_mask_output(path) or BatchProcessorWidget._is_label_output(path)
+
+    @staticmethod
     def _mask_role_from_path(path: Path) -> str:
-        match = re.search(r"_desc-([^_]+)_mask", path.name, re.IGNORECASE)
+        match = re.search(r"_desc-([^_]+)_(?:mask|label)", path.name, re.IGNORECASE)
         return match.group(1).lower() if match else "mask"
 
     @staticmethod
@@ -2879,7 +2999,10 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         with tempfile.TemporaryDirectory(prefix="hrpqct_batch_mask_") as temp_dir:
             temp_path = Path(temp_dir) / f"{path.stem}_{role}.nrrd"
             mask_image = self._read_mask_image(path)
-            sitk.WriteImage(sitk.Cast(mask_image > 0, sitk.sitkUInt8), str(temp_path))
+            if self._is_label_output(path):
+                sitk.WriteImage(sitk.Cast(mask_image, sitk.sitkUInt8), str(temp_path))
+            else:
+                sitk.WriteImage(sitk.Cast(mask_image > 0, sitk.sitkUInt8), str(temp_path))
             loaded = slicer.util.loadLabelVolume(str(temp_path), {"name": f"{path.stem}_{role}_label"})
         if isinstance(loaded, tuple):
             success, label_node = loaded

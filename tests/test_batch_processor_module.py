@@ -115,6 +115,7 @@ def test_batch_processor_module_uses_shared_discovery_and_batch_contract() -> No
     assert '"plate_rod": ("plate_rod_thinning.cli", "run-batch")' in source
     assert '"timelapse": ("timelapsedhrpqct.cli", "run")' in source
     assert "discover_raw_xct_images(root)" in source
+    assert 'discover_derivative_artifacts(root, "IPLContours")' in source
     assert 'discover_derivative_artifacts(root, "ImportedContours")' in source
     assert 'discover_derivative_artifacts(root, "BoneContours")' in source
 
@@ -124,6 +125,37 @@ def test_batch_processor_module_reports_unsupported_one_row_commands() -> None:
 
     assert "does not expose a one-row batch processor command yet" in source
     assert "if tool_key not in self._CLI_COMMANDS:" in source
+
+
+def test_batch_processor_exposes_mask_and_label_algebra_tool() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert '("Mask And Label Algebra", "mask_label_algebra")' in source
+    assert '"mask_label_algebra": ("bone_contouring.cli", "mask-label-algebra")' in source
+    assert '"mask_label_algebra": "BoneContours"' in source
+
+
+def test_mask_label_algebra_table_ignores_bone_contours_as_inputs(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
+    xct_dir.mkdir(parents=True)
+    (xct_dir / "sub-001_ses-001_voi-radiusleft_xct.AIM").write_bytes(b"")
+    contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / "ses-001" / "xct"
+    contour_dir.mkdir(parents=True)
+    for role in ("full", "cort", "seg"):
+        (contour_dir / f"sub-001_ses-001_voi-radiusleft_desc-{role}_mask.AIM").write_bytes(b"")
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="mask_label_algebra",
+        profile="standard",
+        registered=False,
+    )
+
+    assert rows[0]["action"] == "Missing"
+    assert "full=" not in rows[0]["input"]
+    assert "cort=" not in rows[0]["input"]
+    assert "seg=" not in rows[0]["input"]
 
 
 def test_batch_processor_passes_named_bone_contouring_profiles_and_colors_segments() -> None:
@@ -1789,6 +1821,94 @@ def test_unregistered_rows_do_not_list_registration_inputs(tmp_path: Path, monke
     assert all("registration=" not in row["input"] for row in rows)
 
 
+def test_registration_inputs_prefer_imported_registration(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    contour_records = []
+    for session in ("001", "002"):
+        xct_dir = tmp_path / "sub-001" / f"ses-{session}" / "xct"
+        xct_dir.mkdir(parents=True)
+        (xct_dir / f"sub-001_ses-{session}_voi-radiusleft_xct.AIM").write_bytes(b"")
+        contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / f"ses-{session}" / "xct"
+        contour_dir.mkdir(parents=True)
+        for role, filename_role in (
+            ("bone_segmentation", "seg"),
+            ("periosteal_mask", "full"),
+            ("trabecular_mask", "trab"),
+            ("cortical_mask", "cort"),
+        ):
+            mask = contour_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-{filename_role}_mask.AIM"
+            mask.write_bytes(b"")
+            contour_records.append(
+                DerivativeRecord(
+                    "BoneContours",
+                    role,
+                    "001",
+                    "radiusleft",
+                    session,
+                    None,
+                    "native",
+                    mask,
+                    "generated",
+                    content_type="mask",
+                )
+            )
+    generated = tmp_path / "derivatives" / "Registration" / "sub-001" / "ses-002" / "xct" / "pairwise" / "generated_pairwise.tfm"
+    imported = (
+        tmp_path
+        / "derivatives"
+        / "ImportedRegistration"
+        / "sub-001"
+        / "ses-002"
+        / "xct"
+        / "pairwise"
+        / "imported_pairwise.tfm"
+    )
+    registration_records = []
+    imported_records = []
+    for family, path, records in (
+        ("Registration", generated, registration_records),
+        ("ImportedRegistration", imported, imported_records),
+    ):
+        path.parent.mkdir(parents=True)
+        path.write_text("# transform\n", encoding="utf-8")
+        records.append(
+            DerivativeRecord(
+                family,
+                "transform_pairwise",
+                "001",
+                "radiusleft",
+                "002",
+                None,
+                "fixed",
+                path,
+                "generated" if family == "Registration" else "provided",
+            )
+        )
+    write_manifest(
+        DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=contour_records),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create("Registration", tmp_path, {"name": "test", "version": "1"}, records=registration_records),
+        tmp_path / "derivatives" / "Registration" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create("ImportedRegistration", tmp_path, {"name": "test", "version": "1"}, records=imported_records),
+        tmp_path / "derivatives" / "ImportedRegistration" / "manifest.json",
+    )
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="timelapse",
+        profile="standard",
+        registered=True,
+    )
+
+    moving_row = next(row for row in rows if row["session"] == "002")
+    assert "registration=imported_pairwise.tfm" in moving_row["input"]
+    assert "generated_pairwise.tfm" not in moving_row["input"]
+
+
 def test_timelapse_discovered_profiles_group_timepoints(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     contour_records = []
@@ -2219,6 +2339,87 @@ def test_bone_contour_outputs_load_as_segmentation_nodes() -> None:
     assert '"image_path": str(record.path)' in source
     assert "def _ensure_loaded_source_volume(self, image_path):" in source
     assert 'ScancoIOLogic().import_image(image_path, scaling="density"' in source
+
+
+def test_bone_contour_loader_accepts_material_label_outputs(monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    widget = module.BatchProcessorWidget
+
+    label_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-fea-materials_label.AIM")
+    mask_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-full_mask.AIM")
+
+    assert widget._is_bone_contour_segmentation_output(label_path)
+    assert widget._is_bone_contour_segmentation_output(mask_path)
+    assert widget._mask_role_from_path(label_path) == "fea-materials"
+    assert "fea-materials" in module._SEGMENT_COLORS
+
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    assert "No BoneContours mask/label outputs were discovered for this row." in source
+    assert "if self._is_label_output(path):" in source
+
+
+def test_mask_label_algebra_loads_imported_contours_not_generated_label(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    imported_dir = tmp_path / "derivatives" / "ImportedContours" / "sub-SAMPLE341" / "ses-001" / "xct"
+    generated_dir = tmp_path / "derivatives" / "BoneContours" / "sub-SAMPLE341" / "ses-001" / "xct"
+    imported_dir.mkdir(parents=True)
+    generated_dir.mkdir(parents=True)
+    imported_full = imported_dir / "sub-SAMPLE341_ses-001_voi-tibia_desc-full_mask.AIM"
+    imported_trab = imported_dir / "sub-SAMPLE341_ses-001_voi-tibia_desc-trab_mask.AIM"
+    generated_label = generated_dir / "sub-SAMPLE341_ses-001_voi-tibia_desc-fea-materials_label.AIM"
+    for path in (imported_full, imported_trab, generated_label):
+        path.write_bytes(b"")
+
+    imported_records = [
+        DerivativeRecord(
+            "ImportedContours",
+            role,
+            "SAMPLE341",
+            "tibia",
+            "001",
+            None,
+            "native",
+            path,
+            "provided",
+            content_type="mask",
+        )
+        for role, path in (
+            ("periosteal_mask", imported_full),
+            ("trabecular_mask", imported_trab),
+        )
+    ]
+    generated_records = [
+        DerivativeRecord(
+            "BoneContours",
+            "material_labelmap",
+            "SAMPLE341",
+            "tibia",
+            "001",
+            None,
+            "native",
+            generated_label,
+            "derived",
+            metadata={"short_role": "fea-materials", "workflow": "mask_label_algebra"},
+            content_type="label",
+        )
+    ]
+    write_manifest(
+        DerivativeManifest.create("ImportedContours", tmp_path, {"name": "test", "version": "1"}, records=imported_records),
+        tmp_path / "derivatives" / "ImportedContours" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=generated_records),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+
+    paths = module.BatchProcessorLogic().rediscover_row_output_paths(
+        tmp_path,
+        "mask_label_algebra",
+        {"subject": "SAMPLE341", "session_value": "001", "voi_value": "tibia"},
+    )
+
+    assert paths == sorted([str(imported_full), str(imported_trab)])
+    assert str(generated_label) not in paths
 
 
 def test_batch_processor_module_does_not_expose_legacy_layout_terms() -> None:
