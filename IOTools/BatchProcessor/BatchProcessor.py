@@ -2973,7 +2973,15 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
 
     @staticmethod
     def _is_bone_contour_segmentation_output(path: Path) -> bool:
+        role = BatchProcessorWidget._mask_role_from_path(path)
+        if BatchProcessorWidget._is_fea_material_role(role):
+            return False
         return BatchProcessorWidget._is_mask_output(path) or BatchProcessorWidget._is_label_output(path)
+
+    @staticmethod
+    def _is_fea_material_role(role: str) -> bool:
+        role_text = str(role or "").lower().replace("-", "_")
+        return any(token in role_text for token in ("fea_material", "material", "hom_ls", "model_label"))
 
     @staticmethod
     def _mask_role_from_path(path: Path) -> str:

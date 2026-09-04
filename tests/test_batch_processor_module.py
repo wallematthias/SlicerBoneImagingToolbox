@@ -2341,21 +2341,23 @@ def test_bone_contour_outputs_load_as_segmentation_nodes() -> None:
     assert 'ScancoIOLogic().import_image(image_path, scaling="density"' in source
 
 
-def test_bone_contour_loader_accepts_material_label_outputs(monkeypatch) -> None:
+def test_bone_contour_loader_skips_material_label_outputs(monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     widget = module.BatchProcessorWidget
 
     label_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-fea-materials_label.AIM")
     mask_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-full_mask.AIM")
+    hom_ls_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-hom-ls-model_label.AIM")
 
-    assert widget._is_bone_contour_segmentation_output(label_path)
+    assert not widget._is_bone_contour_segmentation_output(label_path)
+    assert not widget._is_bone_contour_segmentation_output(hom_ls_path)
     assert widget._is_bone_contour_segmentation_output(mask_path)
     assert widget._mask_role_from_path(label_path) == "fea-materials"
-    assert "fea-materials" in module._SEGMENT_COLORS
 
     source = MODULE_PATH.read_text(encoding="utf-8")
     assert "No BoneContours mask/label outputs were discovered for this row." in source
     assert "if self._is_label_output(path):" in source
+    assert "def _is_fea_material_role(role: str) -> bool:" in source
 
 
 def test_mask_label_algebra_loads_imported_contours_not_generated_label(tmp_path: Path, monkeypatch) -> None:
