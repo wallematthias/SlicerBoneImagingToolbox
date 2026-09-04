@@ -90,6 +90,12 @@ def test_batch_processor_module_uses_shared_discovery_and_batch_contract() -> No
     assert "Local" in source
     assert "Server" in source
     assert "Server backends are configured in private adapters" in source
+    assert "from SlicerBoneImagingToolboxLib.remote_batch import" in source
+    assert "SLICER_BONE_BATCH_REMOTE_CONFIG" in source
+    assert "def _selected_backend_key(self):" in source
+    assert "def _discover_remote_rows(self, root, tool, profile, registered):" in source
+    assert "backend.submit_argv(" in source
+    assert "backend.sync_output_argv(" in source
     assert 'self.skipExistingCheck.checked = True' in source
     assert 'self.table.setHorizontalHeaderLabels(headers)' in source
     assert 'headers = ["Action", "Subject", "Session", "VOI", "Status", "Input"]' in source
@@ -106,10 +112,11 @@ def test_batch_processor_module_uses_shared_discovery_and_batch_contract() -> No
     assert "def _table_rows_for_tool(" in source
     assert "def command_for_row(" in source
     assert "def _subprocess_args(self, args):" in source
-    assert '"timelapsedhrpqct.cli": TOOLBOX_ROOT.parent / ("Timelapsed" + "HRpQCT") / "src"' in source
+    assert '"timelapsedhrpqct.cli": _local_repo_path("Timelapsed" + "HRpQCT", "src")' in source
     assert "from {module} import main" in source
     assert 'process_args = self._subprocess_args(args)' in source
-    assert "process.start(self._python_slicer_executable(), process_args)" in source
+    assert "process_program = self._python_slicer_executable()" in source
+    assert "process.start(process_program, process_args)" in source
     assert '"bone_contouring": ("bone_contouring.cli", "run-batch")' in source
     assert '"microarchitecture": ("bone_microarchitecture.cli", "run-batch")' in source
     assert '"plate_rod": ("plate_rod_thinning.cli", "run-batch")' in source
@@ -183,7 +190,7 @@ def test_batch_processor_fea_profiles_are_labelmap_shortcuts() -> None:
     assert '("Load history 6", "load_history_6", False)' in source
     assert "discover_fea_batch_cases" in source
     assert "build_parosol_case_commands" in source
-    assert '"parosol_py.cli": TOOLBOX_ROOT.parent / "parosol-py" / "src"' in source
+    assert '"parosol_py.cli": _local_repo_path("parosol-py", "src")' in source
 
 
 def test_batch_processor_fea_and_mechanoregulation_use_low_blue_high_red_sed_colormap() -> None:

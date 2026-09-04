@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -21,7 +22,17 @@ TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
-DERIVATIVES_LOCAL_SRC = TOOLBOX_ROOT.parent / "bone-imaging-derivatives" / "src"
+def _local_repo_path(*parts):
+    """Resolve sibling core repositories from normal checkouts or worktrees."""
+    relative = Path(*parts)
+    for base in (TOOLBOX_ROOT.parent, TOOLBOX_ROOT.parent.parent):
+        candidate = base / relative
+        if candidate.exists():
+            return candidate
+    return TOOLBOX_ROOT.parent / relative
+
+
+DERIVATIVES_LOCAL_SRC = _local_repo_path("bone-imaging-derivatives", "src")
 if DERIVATIVES_LOCAL_SRC.exists() and str(DERIVATIVES_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(DERIVATIVES_LOCAL_SRC))
 
@@ -51,6 +62,12 @@ from SlicerBoneImagingToolboxLib.fea_batch import (  # noqa: E402
     discover_fea_batch_cases,
     parosol_command_derivative_context,
     workflow_role_requirements,
+)
+from SlicerBoneImagingToolboxLib.remote_batch import (  # noqa: E402
+    BACKEND_ENV_VAR as SLICER_BONE_BATCH_BACKEND,
+    CONFIG_ENV_VAR as SLICER_BONE_BATCH_REMOTE_CONFIG,
+    SshSlurmBatchBackend,
+    load_remote_batch_config,
 )
 from slicer.ScriptedLoadableModule import (  # noqa: E402
     ScriptedLoadableModule,
@@ -337,7 +354,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
 
     @staticmethod
     def _mechanoregulation_core():
-        local_src = TOOLBOX_ROOT.parent / "BoneMechanoregulation"
+        local_src = _local_repo_path("BoneMechanoregulation")
         if local_src.exists() and str(local_src) not in sys.path:
             sys.path.insert(0, str(local_src))
         from bonemechreg.timelapse import available_case_rois, case_outputs, discover_timelapse_cases
@@ -1133,7 +1150,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
 
     @staticmethod
     def _mask_label_algebra_core():
-        local_src = TOOLBOX_ROOT.parent / "bone-contouring" / "src"
+        local_src = _local_repo_path("bone-contouring", "src")
         if local_src.exists() and str(local_src) not in sys.path:
             sys.path.insert(0, str(local_src))
         from bone_contouring.algebra import discover_mask_label_algebra_batch
@@ -1470,6 +1487,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.backendCombo.addItem("Local", "local")
         self.backendCombo.addItem("Server", "server")
         self.backendCombo.setItemData(1, "Server backends are configured in private adapters.", qt.Qt.ToolTipRole)
+        if os.environ.get(SLICER_BONE_BATCH_BACKEND, "").strip().lower() in {"server", "ssh", "slurm", "arc"}:
+            self.backendCombo.setCurrentIndex(1)
         workflow_form.addRow("Execution backend", self.backendCombo)
 
         self.statusLabel = qt.QLabel("Select a normalized dataset root.")
@@ -1612,6 +1631,16 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _selected_tool_key(self):
         return str(getattr(self.toolCombo, "currentData", "") or "")
 
+    def _selected_backend_key(self):
+        return str(getattr(self.backendCombo, "currentData", "") or "local")
+
+    def _remote_backend(self):
+        try:
+            return SshSlurmBatchBackend(load_remote_batch_config())
+        except Exception as exc:
+            self._append_log(f"[batch] remote backend unavailable: {exc}")
+            return None
+
     def _registered_table_mode(self):
         return self.logic.profile_requests_registration(
             self._selected_tool_key(),
@@ -1620,6 +1649,16 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
 
     def _analyze_dataset(self):
         root = str(self.datasetRootEdit.text or "").strip()
+        if self._selected_backend_key() == "server":
+            rows, message = self._discover_remote_rows(
+                root,
+                self._selected_tool_key(),
+                str(self.profileCombo.currentData),
+                self._registered_table_mode(),
+            )
+            self.statusLabel.text = message
+            self._populate_rows(rows)
+            return
         if self._selected_tool_key() == "mechanoregulation":
             ok, message = Path(root).expanduser().exists(), "Select an existing dataset root."
         else:
@@ -1636,6 +1675,99 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         )
         self.statusLabel.text = message
         self._populate_rows(rows)
+
+    def _discover_remote_rows(self, root, tool, profile, registered):
+        backend = self._remote_backend()
+        if backend is None:
+            return [], f"Set {SLICER_BONE_BATCH_REMOTE_CONFIG} to a private ARC/SLURM backend config."
+        if str(tool or "") in {"fea", "mechanoregulation"}:
+            local_root = backend.config.local_dataset_root()
+            if local_root is None:
+                return [], "Remote FEA/mechanoregulation discovery currently needs local_root in the backend config."
+            return self.logic.discover_rows(local_root, tool=tool, profile=profile, registered=registered)
+        try:
+            result = subprocess.run(
+                backend.discover_argv(
+                    families=(
+                        "IPLContours",
+                        "ImportedContours",
+                        "BoneContours",
+                        "ImportedRegistration",
+                        "Registration",
+                        "CommonRegion",
+                        self.logic._output_family_for_tool(tool),
+                    )
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            payload = json.loads(result.stdout)
+        except Exception as exc:
+            return [], f"Remote discovery failed: {exc}"
+        if not bool(payload.get("normalized", {}).get("ok")):
+            return [], str(payload.get("normalized", {}).get("message") or "Remote dataset is not normalized.")
+        image_records = [self._artifact_from_remote_payload(item) for item in payload.get("raw_images", [])]
+        derivative_records = [self._artifact_from_remote_payload(item) for item in payload.get("derivatives", [])]
+        contour_artifacts = [artifact for artifact in derivative_records if artifact.derivative in {"IPLContours", "ImportedContours", "BoneContours"}]
+        registration_records = [
+            SimpleNamespace(
+                role=artifact.role,
+                subject_id=artifact.key.subject_id,
+                session_id=artifact.key.session_id,
+                site=artifact.key.voi,
+                stack_index=artifact.key.stack_index,
+                path=artifact.path,
+                derivative=artifact.derivative,
+            )
+            for artifact in derivative_records
+            if artifact.derivative in {"ImportedRegistration", "Registration"}
+        ]
+        common_region_records = [
+            SimpleNamespace(
+                role=artifact.role,
+                subject_id=artifact.key.subject_id,
+                session_id=artifact.key.session_id,
+                site=artifact.key.voi,
+                stack_index=artifact.key.stack_index,
+                path=artifact.path,
+                derivative=artifact.derivative,
+            )
+            for artifact in derivative_records
+            if artifact.derivative == "CommonRegion"
+        ]
+        existing_outputs = [artifact for artifact in derivative_records if artifact.derivative == self.logic._output_family_for_tool(tool)]
+        rows = self.logic._table_rows_for_tool(
+            image_records,
+            contour_artifacts,
+            registration_records,
+            common_region_records,
+            self.logic._existing_outputs_for_profile(tool, registered, existing_outputs),
+            tool=tool,
+            profile=profile,
+            registered=registered,
+        )
+        for row in rows:
+            row["remote_backend"] = backend.config.name
+        return rows, f"Remote {backend.config.name}: discovered {len(rows)} row(s)."
+
+    @staticmethod
+    def _artifact_from_remote_payload(item):
+        key = item.get("key", {})
+        return BatchArtifact(
+            Path(str(item.get("path") or "")),
+            CaseKey(
+                str(key.get("subject_id") or ""),
+                str(key.get("session_id") or ""),
+                str(key.get("voi") or ""),
+                key.get("stack_index"),
+            ),
+            str(item.get("role") or ""),
+            str(item.get("family") or "") or None,
+            str(item.get("source") or "remote"),
+            item.get("metadata") or {},
+        )
 
     def _populate_rows(self, rows):
         self._batchRows = list(rows)
@@ -1744,7 +1876,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             "parosol-py/src",
             "BoneMechanoregulation",
         ):
-            candidate = TOOLBOX_ROOT.parent / repo_name
+            candidate = _local_repo_path(*Path(repo_name).parts)
             if candidate.exists():
                 python_paths.append(str(candidate))
         existing = str(environment.value("PYTHONPATH") or "")
@@ -1762,12 +1894,12 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             return args
         module = str(args[1])
         local_sources = {
-            "bone_contouring.cli": TOOLBOX_ROOT.parent / "bone-contouring" / "src",
-            "bone_microarchitecture.cli": TOOLBOX_ROOT.parent / "bone-microarchitecture" / "src",
-            "timelapsedhrpqct.cli": TOOLBOX_ROOT.parent / ("Timelapsed" + "HRpQCT") / "src",
-            "plate_rod_thinning.cli": TOOLBOX_ROOT.parent / "bone-plate-rod-thinning",
-            "parosol_py.cli": TOOLBOX_ROOT.parent / "parosol-py" / "src",
-            "bonemechreg.cli": TOOLBOX_ROOT.parent / "BoneMechanoregulation",
+            "bone_contouring.cli": _local_repo_path("bone-contouring", "src"),
+            "bone_microarchitecture.cli": _local_repo_path("bone-microarchitecture", "src"),
+            "timelapsedhrpqct.cli": _local_repo_path("Timelapsed" + "HRpQCT", "src"),
+            "plate_rod_thinning.cli": _local_repo_path("bone-plate-rod-thinning"),
+            "parosol_py.cli": _local_repo_path("parosol-py", "src"),
+            "bonemechreg.cli": _local_repo_path("BoneMechanoregulation"),
         }
         local_src = local_sources.get(module)
         if local_src is None or not local_src.exists():
@@ -1838,6 +1970,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             "tool": self._selected_tool_key(),
             "profile": str(self.profileCombo.currentData or ""),
             "force": not bool(self.skipExistingCheck.checked),
+            "backend": self._selected_backend_key(),
             "row": dict(self._batchRows[row_index]),
         }
 
@@ -1897,11 +2030,25 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._batchCancelled = False
         self._set_row_status(row_index, "Running")
         self._set_row_action(row_index, "Running")
-        process_args = self._subprocess_args(args)
-        self._append_log(f"[batch] launching: {self._python_slicer_executable()} {' '.join(process_args)}")
+        backend_key = str(job.get("backend") or "local")
+        remote_backend = self._remote_backend() if backend_key == "server" else None
+        if backend_key == "server" and remote_backend is not None:
+            remote_args = remote_backend.config.remote_args(args, dataset_root=self.datasetRootEdit.text)
+            submit_argv = remote_backend.submit_argv(
+                remote_args,
+                job_name=f"bone-{job.get('tool')}-{row_index + 1}",
+            )
+            process_program = submit_argv[0]
+            process_args = submit_argv[1:]
+            self._append_log(f"[batch] submitting remote {remote_backend.config.name}: {' '.join(submit_argv)}")
+        else:
+            process_program = self._python_slicer_executable()
+            process_args = self._subprocess_args(args)
+            self._append_log(f"[batch] launching: {process_program} {' '.join(process_args)}")
         process = qt.QProcess()
         process.setProcessChannelMode(qt.QProcess.MergedChannels)
-        process.setProcessEnvironment(self._process_environment())
+        if backend_key != "server":
+            process.setProcessEnvironment(self._process_environment())
         process.readyRead.connect(lambda process=process: self._append_process_output(process))
         process.finished.connect(
             lambda *signal_args, row_index=row_index, process=process, job=job: self._batch_process_finished(
@@ -1912,7 +2059,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             )
         )
         self._batchProcess = process
-        process.start(self._python_slicer_executable(), process_args)
+        process.start(process_program, process_args)
         if not process.waitForStarted(1000):
             self._batchProcess = None
             self._set_row_status(row_index, "Error")
@@ -1972,6 +2119,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._set_row_action(row_index, "Run")
             self._append_log("[batch] cancelled")
         elif exit_code == 0:
+            if str(job.get("backend") or "local") == "server":
+                self._sync_remote_outputs_for_tool(tool_key)
             if tool_key == "fea" and 0 <= row_index < len(self._batchRows):
                 published = self.logic.publish_fea_batch_outputs(
                     self.datasetRootEdit.text,
@@ -1989,6 +2138,24 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._set_row_action(row_index, "Run")
             self._append_log(f"[batch] failed with exit code {exit_code}")
         self._start_next_batch_job()
+
+    def _sync_remote_outputs_for_tool(self, tool_key):
+        backend = self._remote_backend()
+        if backend is None:
+            return
+        family = self.logic._output_family_for_tool(tool_key)
+        try:
+            argv = backend.sync_output_argv(family)
+            self._append_log(f"[batch] syncing remote outputs: {' '.join(argv)}")
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+            if result.stdout.strip():
+                self._append_log(result.stdout)
+            if result.stderr.strip():
+                self._append_log(result.stderr)
+            if result.returncode != 0:
+                self._append_log(f"[batch] remote output sync failed with exit code {result.returncode}")
+        except Exception as exc:
+            self._append_log(f"[batch] remote output sync failed: {exc}")
 
     def _refresh_row_output_paths(self, row_index, *, tool_key=None):
         if row_index < 0 or row_index >= len(self._batchRows):
@@ -2027,6 +2194,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         if row_index < 0 or row_index >= len(self._batchRows):
             self._append_log("[batch] Selected row is no longer available. Click Analyze again.")
             return
+        if self._selected_backend_key() == "server":
+            self._sync_remote_outputs_for_tool(self._selected_tool_key())
         row = self._batchRows[row_index]
         output_paths = [Path(path) for path in row.get("output_paths", []) if str(path)]
         if not output_paths:

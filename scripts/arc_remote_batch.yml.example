@@ -1,0 +1,33 @@
+# Copy this file outside the repository, edit paths, then point Slicer at it:
+#
+#   export SLICER_BONE_BATCH_REMOTE_CONFIG=/path/to/arc_remote_batch.yml
+#   export SLICER_BONE_BATCH_BACKEND=server
+#
+# The Batch Processor uses this only when "Execution backend" is set to Server.
+
+name: arc
+host: arc.ucalgary.ca
+scheduler: slurm
+
+# Remote normalized dataset root. This is the path passed to the core CLIs.
+remote_root: /path/on/arc/to/normalized_dataset
+
+# Optional local mirror used when pressing Load in Slicer. Outputs are rsynced
+# from remote_root/derivatives/<Family>/ into local_root/derivatives/<Family>/.
+local_root: /path/on/your/mac/to/local_dataset_mirror
+
+# Python executable inside the remote conda/mamba environment.
+python: /path/on/arc/to/conda/envs/bone-batch/bin/python
+
+# Scratch/work folder for generated SLURM job scripts and logs.
+work_dir: /path/on/arc/to/bone_batch_work
+
+# Optional shell setup executed inside each SLURM job before the Python CLI.
+setup_command: source ~/.bashrc
+
+# Optional environment variables exported in every SLURM job.
+environment:
+  PYTHONUNBUFFERED: "1"
+
+# Optional extra sbatch flags. Leave empty to let ARC choose partition/queue.
+sbatch_options: []
