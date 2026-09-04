@@ -87,6 +87,8 @@ _fea_batch_module = importlib.reload(_fea_batch_module)
 _remote_batch_module = importlib.reload(_remote_batch_module)
 
 from SlicerBoneImagingToolboxLib.fea_batch import (  # noqa: E402
+    FEAArtifact,
+    FEABatchCase,
     build_parosol_case_commands,
     case_readiness,
     discover_fea_batch_cases,
@@ -324,6 +326,10 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     @staticmethod
     def _fea_table_rows(root: Path, profile: str):
         cases = discover_fea_batch_cases(root)
+        return BatchProcessorLogic._fea_rows_from_cases(root, profile, cases)
+
+    @staticmethod
+    def _fea_rows_from_cases(root: Path, profile: str, cases):
         rows = []
         supported_roles = workflow_role_requirements(profile).get("image")
         preferred_roles = tuple(supported_roles.preferred_roles) if supported_roles else ("material_labelmap",)
@@ -356,6 +362,28 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 row["output_paths"] = [str(path) for path in output_paths]
             rows.append(row)
         return rows, f"Discovered {len(rows)} FEA source row(s)."
+
+    @staticmethod
+    def _fea_cases_from_batch_artifacts(artifacts):
+        grouped = {}
+        for artifact in artifacts:
+            key = (artifact.key.subject_id, artifact.key.voi, artifact.key.session_id)
+            if not key[0] or not key[1]:
+                continue
+            metadata = artifact.metadata if isinstance(artifact.metadata, dict) else {}
+            grouped.setdefault(key, []).append(
+                FEAArtifact(
+                    role=artifact.role,
+                    path=str(artifact.path),
+                    source=artifact.source,
+                    derivative=artifact.derivative or "",
+                    space=str(metadata.get("space") or "native"),
+                )
+            )
+        return [
+            FEABatchCase(subject_id=key[0], site=key[1], session_id=key[2], artifacts=tuple(value))
+            for key, value in sorted(grouped.items())
+        ]
 
     @staticmethod
     def _fea_command_for_row(dataset_root, profile: str, row: dict, force: bool = False) -> list[str]:
@@ -1957,6 +1985,15 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             artifact for artifact in derivative_records
             if artifact.derivative == self.logic._output_family_for_tool(tool)
         ]
+        if tool == "fea":
+            rows, _message = self.logic._fea_rows_from_cases(
+                Path(str(backend.config.remote_root)),
+                profile,
+                self.logic._fea_cases_from_batch_artifacts([*image_records, *derivative_records]),
+            )
+            for row in rows:
+                row["remote_backend"] = backend.config.name
+            return rows, f"Remote {backend.config.name}: discovered {len(rows)} row(s) in {backend.config.remote_root}."
         rows = self.logic._table_rows_for_tool(
             image_records,
             contour_artifacts,

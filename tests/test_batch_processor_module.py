@@ -296,6 +296,39 @@ def test_batch_processor_fea_rows_use_hom_ls_material_sources(tmp_path: Path, mo
     assert "--site" in command
 
 
+def test_batch_processor_remote_fea_rows_choose_material_labelmap_over_raw_image(monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    key = module.CaseKey("001", "001", "radiusleft")
+    raw = module.BatchArtifact(
+        Path("/home/mwalle/data/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_xct.AIM"),
+        key,
+        "image",
+        None,
+        "remote",
+        {},
+    )
+    material = module.BatchArtifact(
+        Path("/home/mwalle/data/derivatives/BoneContours/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_desc-fea-materials_label.AIM"),
+        key,
+        "material_labelmap",
+        "BoneContours",
+        "remote",
+        {},
+    )
+
+    rows, _message = logic._fea_rows_from_cases(
+        Path("/home/mwalle/data"),
+        "XtremeCTI",
+        logic._fea_cases_from_batch_artifacts([raw, material]),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["image_path"] == str(material.path)
+    assert rows[0]["input"] == f"source={material.path.name}"
+    assert raw.path.name not in rows[0]["input"]
+
+
 def test_batch_processor_fea_publishes_canonical_sed_and_summary(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
