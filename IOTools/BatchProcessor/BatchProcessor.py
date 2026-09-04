@@ -41,22 +41,43 @@ SCANCO_IO_MODULE_DIR = TOOLBOX_ROOT / "IOTools" / "ScancoIO"
 if SCANCO_IO_MODULE_DIR.exists() and str(SCANCO_IO_MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(SCANCO_IO_MODULE_DIR))
 
-from bone_imaging_derivatives import (  # noqa: E402
-    BatchArtifact,
-    CaseKey,
-    DerivativeManifest,
-    DerivativeRecord,
-    discover_derivative_artifacts,
-    discover_manifests,
-    discover_raw_xct_images,
-    manifest_path,
-    list_profiles,
-    preferred_contours,
-    prerequisite_status,
-    read_manifest,
-    record_output_path,
-    write_manifest,
-)
+try:
+    from bone_imaging_derivatives import (  # noqa: E402
+        BatchArtifact,
+        CaseKey,
+        DerivativeManifest,
+        DerivativeRecord,
+        discover_derivative_artifacts,
+        discover_manifests,
+        discover_raw_xct_images,
+        manifest_path,
+        list_profiles,
+        preferred_contours,
+        prerequisite_status,
+        read_manifest,
+        record_output_path,
+        write_manifest,
+    )
+except Exception as exc:
+    _DERIVATIVES_IMPORT_ERROR = exc
+    BatchArtifact = CaseKey = DerivativeManifest = DerivativeRecord = object
+
+    def _missing_derivatives_runtime(*_args, **_kwargs):
+        raise RuntimeError(
+            "The Bone Imaging Derivative Contract runtime package is not installed. "
+            "Open Bone Imaging > Setup and install/update runtime packages."
+        ) from _DERIVATIVES_IMPORT_ERROR
+
+    discover_derivative_artifacts = _missing_derivatives_runtime
+    discover_manifests = _missing_derivatives_runtime
+    discover_raw_xct_images = _missing_derivatives_runtime
+    manifest_path = _missing_derivatives_runtime
+    list_profiles = _missing_derivatives_runtime
+    preferred_contours = _missing_derivatives_runtime
+    prerequisite_status = _missing_derivatives_runtime
+    read_manifest = _missing_derivatives_runtime
+    record_output_path = _missing_derivatives_runtime
+    write_manifest = _missing_derivatives_runtime
 from SlicerBoneImagingToolboxLib.fea_batch import (  # noqa: E402
     build_parosol_case_commands,
     case_readiness,

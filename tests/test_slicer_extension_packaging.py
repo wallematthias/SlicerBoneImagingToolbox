@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 import re
@@ -13,11 +14,35 @@ def test_shared_toolbox_library_is_installed_with_scripted_modules() -> None:
 
     assert "TOOLBOX_SHARED_PYTHON_SCRIPTS" in cmake
     assert "ctkMacroCompilePythonScript" in cmake
-    assert "SlicerBoneImagingToolboxLib/__init__.py" in cmake
-    assert "SlicerBoneImagingToolboxLib/package_status.py" in cmake
-    assert "SlicerBoneImagingToolboxLib/slicer_update_ui.py" in cmake
-    assert "SlicerBoneImagingToolboxLib/vertebra_labels.py" in cmake
+    for helper_path in sorted((ROOT / "SlicerBoneImagingToolboxLib").glob("*.py")):
+        helper = helper_path.relative_to(ROOT).as_posix()
+        assert helper in cmake
     assert "Slicer_QTSCRIPTEDMODULES_LIB_DIR" in cmake
+
+
+def test_release_smoke_modules_do_not_require_optional_runtime_packages_at_import() -> None:
+    optional_roots = {
+        "bone_imaging_derivatives",
+        "parosol_py",
+    }
+    module_paths = [
+        *ROOT.glob("IOTools/*/*.py"),
+        *ROOT.glob("HRpQCTTools/*/*.py"),
+        *ROOT.glob("CTTools/*/*.py"),
+        *ROOT.glob("Setup/*/*.py"),
+        *ROOT.glob("SlicerBoneImagingToolboxLib/*.py"),
+    ]
+
+    for path in module_paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                names = {alias.name.split(".", 1)[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = {node.module.split(".", 1)[0]}
+            else:
+                continue
+            assert not (names & optional_roots), path
 
 
 def test_setup_module_is_registered_with_extension_packaging() -> None:

@@ -107,17 +107,47 @@ def _prepare_parosol_py_runtime_import():
     return source_path
 
 
-_workflow_geometry = _load_workflow_geometry_module()
-estimate_reference_to_sample_transform = _workflow_geometry.estimate_reference_to_sample_transform
-invert_rigid_transform = _workflow_geometry.invert_rigid_transform
-read_reference_points = _workflow_geometry.read_reference_points
-prealign_reference_points_to_sample = _workflow_geometry.prealign_reference_points_to_sample
-resolve_reference_space_editor = _workflow_geometry.resolve_reference_space_editor
-scale_reference_points_preserving_pose = _workflow_geometry.scale_reference_points_preserving_pose
-generate_slicer_disk_and_nodeset_geometry = getattr(
-    _workflow_geometry,
-    "generate_slicer_disk_and_nodeset_geometry",
-    None,
+try:
+    _workflow_geometry = _load_workflow_geometry_module()
+    _WORKFLOW_GEOMETRY_IMPORT_ERROR = None
+except Exception as exc:
+    _workflow_geometry = None
+    _WORKFLOW_GEOMETRY_IMPORT_ERROR = exc
+
+
+def _missing_workflow_geometry(*_args, **_kwargs):
+    raise RuntimeError(
+        "ParOSol-py workflow geometry is not available. "
+        "Open Bone Imaging > Setup and install/update runtime packages, or set SLICER_PAROSOL_SOURCE."
+    ) from _WORKFLOW_GEOMETRY_IMPORT_ERROR
+
+
+estimate_reference_to_sample_transform = (
+    _workflow_geometry.estimate_reference_to_sample_transform
+    if _workflow_geometry is not None
+    else _missing_workflow_geometry
+)
+invert_rigid_transform = _workflow_geometry.invert_rigid_transform if _workflow_geometry is not None else _missing_workflow_geometry
+read_reference_points = _workflow_geometry.read_reference_points if _workflow_geometry is not None else _missing_workflow_geometry
+prealign_reference_points_to_sample = (
+    _workflow_geometry.prealign_reference_points_to_sample
+    if _workflow_geometry is not None
+    else _missing_workflow_geometry
+)
+resolve_reference_space_editor = (
+    _workflow_geometry.resolve_reference_space_editor
+    if _workflow_geometry is not None
+    else _missing_workflow_geometry
+)
+scale_reference_points_preserving_pose = (
+    _workflow_geometry.scale_reference_points_preserving_pose
+    if _workflow_geometry is not None
+    else _missing_workflow_geometry
+)
+generate_slicer_disk_and_nodeset_geometry = (
+    getattr(_workflow_geometry, "generate_slicer_disk_and_nodeset_geometry", None)
+    if _workflow_geometry is not None
+    else None
 )
 
 from slicer.ScriptedLoadableModule import (

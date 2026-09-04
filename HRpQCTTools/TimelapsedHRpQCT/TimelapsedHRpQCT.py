@@ -98,8 +98,20 @@ if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PI
         else str(_PIPELINE_LOCAL_SRC) + os.pathsep + _existing_pythonpath
     )
 
-from bone_imaging_derivatives import discover_manifests  # noqa: E402
-from bone_imaging_derivatives import resolve_workflow_plan  # noqa: E402
+try:
+    from bone_imaging_derivatives import discover_manifests  # noqa: E402
+    from bone_imaging_derivatives import resolve_workflow_plan  # noqa: E402
+except Exception as exc:
+    _DERIVATIVES_IMPORT_ERROR = exc
+
+    def _missing_derivatives_runtime(*_args, **_kwargs):
+        raise RuntimeError(
+            "The Bone Imaging Derivative Contract runtime package is not installed. "
+            "Open Bone Imaging > Setup and install/update runtime packages."
+        ) from _DERIVATIVES_IMPORT_ERROR
+
+    discover_manifests = _missing_derivatives_runtime
+    resolve_workflow_plan = _missing_derivatives_runtime
 _timelapsed_scene = importlib.import_module("SlicerBoneImagingToolboxLib.timelapsed_scene")
 _timelapsed_scene = importlib.reload(_timelapsed_scene)
 TimelapsedSceneNodeCandidate = _timelapsed_scene.TimelapsedSceneNodeCandidate

@@ -3,8 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
-from bone_imaging_derivatives import resolve_workflow_plan as resolve_shared_workflow_plan
 from SlicerBoneImagingToolboxLib.derivatives import DerivativeRecord
+
+try:
+    from bone_imaging_derivatives import resolve_workflow_plan as resolve_shared_workflow_plan  # type: ignore
+except Exception as exc:
+    _WORKFLOW_PLANNING_IMPORT_ERROR = exc
+
+    def resolve_shared_workflow_plan(*_args, **_kwargs):
+        raise RuntimeError(
+            "The Bone Imaging Derivative Contract runtime package is not installed. "
+            "Open Bone Imaging > Setup and install/update runtime packages."
+        ) from _WORKFLOW_PLANNING_IMPORT_ERROR
 
 
 WORKFLOW_DEPENDENCIES: dict[str, tuple[str, ...]] = {

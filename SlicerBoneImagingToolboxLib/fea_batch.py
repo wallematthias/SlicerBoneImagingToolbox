@@ -8,8 +8,6 @@ from typing import Iterable
 import numpy as np
 import SimpleITK as sitk
 
-from bone_imaging_derivatives import record_output_path
-
 from .derivatives import (
     DerivativeRecord,
     discover_manifests,
@@ -19,6 +17,17 @@ from .derivatives import (
     normalize_subject_id,
 )
 from .derivatives import discover_shared_artifacts
+
+try:
+    from bone_imaging_derivatives import record_output_path  # type: ignore
+except Exception as exc:
+    _DERIVATIVES_IMPORT_ERROR = exc
+
+    def record_output_path(*_args, **_kwargs):
+        raise RuntimeError(
+            "The Bone Imaging Derivative Contract runtime package is not installed. "
+            "Open Bone Imaging > Setup and install/update runtime packages."
+        ) from _DERIVATIVES_IMPORT_ERROR
 
 
 IMAGE_SUFFIXES = (".aim", ".nii", ".nii.gz", ".mha", ".mhd", ".nrrd", ".nhdr")

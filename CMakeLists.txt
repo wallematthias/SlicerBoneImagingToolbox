@@ -17,15 +17,21 @@ set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/__init__.py
   SlicerBoneImagingToolboxLib/common_region.py
   SlicerBoneImagingToolboxLib/derivatives.py
+  SlicerBoneImagingToolboxLib/fea_batch.py
   SlicerBoneImagingToolboxLib/image_io.py
   SlicerBoneImagingToolboxLib/masks.py
+  SlicerBoneImagingToolboxLib/motionscore_review.py
+  SlicerBoneImagingToolboxLib/motionscore_scene.py
+  SlicerBoneImagingToolboxLib/motionscore_scene_runner.py
   SlicerBoneImagingToolboxLib/package_status.py
+  SlicerBoneImagingToolboxLib/remote_batch.py
   SlicerBoneImagingToolboxLib/registry.py
   SlicerBoneImagingToolboxLib/registration.py
   SlicerBoneImagingToolboxLib/segmentation_methods.py
   SlicerBoneImagingToolboxLib/slicer_pip.py
   SlicerBoneImagingToolboxLib/slicer_update_ui.py
   SlicerBoneImagingToolboxLib/spine_segmentation_batch.py
+  SlicerBoneImagingToolboxLib/timelapsed_scene.py
   SlicerBoneImagingToolboxLib/updater.py
   SlicerBoneImagingToolboxLib/vertebra_labels.py
   SlicerBoneImagingToolboxLib/workflow_planning.py
