@@ -272,6 +272,7 @@ def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api()
     assert "self._style_fe_scalar_volume(sed_node)" in source
     assert "self._load_event_segmentation" in source
     assert "def _write_scene_mechanoregulation_summary_table_csv" in source
+    assert 'outputs = case_outputs(case, roi="full")' in source
     assert "def _mechanoregulation_compact_rows" in source
     assert "Low conf" in source
     assert "Median" in source

@@ -1609,7 +1609,7 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
                     cort_mask_path=optional_path(staged.get("cort_mask_path")),
                     full_mask_path=optional_path(staged.get("full_mask_path")),
                 )
-                outputs = case_outputs(case)
+                outputs = case_outputs(case, roi="full")
                 if self._load_event_segmentation(
                     staged.get("remodelling_image_path"),
                     self._loaded_node_name(staged.get("case_id", "case"), "events"),
