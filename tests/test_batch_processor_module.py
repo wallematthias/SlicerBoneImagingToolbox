@@ -107,6 +107,8 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
     assert "self.serverCpusSpin" in source
     assert '"CPUs"' in source
     assert "f\"--cpus-per-task={values['cpus']}\"" in source
+    assert "f\"--ntasks={values['cpus']}\" if mpi else f\"--cpus-per-task={values['cpus']}\"" in source
+    assert 'mpi=backend_key == "server" and str(job.get("tool") or "") == "fea"' in source
     assert '"OMP_NUM_THREADS": thread_count' in source
     assert '"ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": thread_count' in source
     assert "Remote discovery returned invalid JSON" in source

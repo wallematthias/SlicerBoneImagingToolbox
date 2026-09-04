@@ -1807,7 +1807,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             return ""
         return str(self.serverRootEdit.text or "").strip()
 
-    def _remote_backend(self, *, local_root=None, remote_root=None):
+    def _remote_backend(self, *, local_root=None, remote_root=None, mpi: bool = False):
         try:
             config = load_remote_batch_config()
             local_text = str(local_root or "").strip()
@@ -1819,7 +1819,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                     remote_root=(remote_text or config.remote_root).rstrip("/"),
                 )
             if self._selected_backend_key() == "server":
-                resource_overrides = self._server_resource_overrides(config.sbatch_options)
+                resource_overrides = self._server_resource_overrides(config.sbatch_options, mpi=mpi)
                 updates.update(
                     sbatch_options=tuple(resource_overrides["sbatch_options"]),
                     environment={**dict(config.environment), **dict(resource_overrides["environment"])},
@@ -1836,14 +1836,14 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         values = {}
         for option in options or ():
             text = str(option).strip()
-            for key, name in (("--time", "time"), ("--mem", "mem"), ("--cpus-per-task", "cpus")):
+            for key, name in (("--time", "time"), ("--mem", "mem"), ("--cpus-per-task", "cpus"), ("--ntasks", "tasks")):
                 if text == key:
                     values[name] = ""
                 elif text.startswith(key + "="):
                     values[name] = text.split("=", 1)[1].strip()
         return values
 
-    def _server_resource_overrides(self, base_options):
+    def _server_resource_overrides(self, base_options, *, mpi: bool = False):
         values = self._server_sbatch_options_from_config(base_options)
         time_text = str(getattr(getattr(self, "serverTimeEdit", None), "text", "") or "").strip()
         memory_text = str(getattr(getattr(self, "serverMemoryEdit", None), "text", "") or "").strip()
@@ -1856,16 +1856,16 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             text = str(option).strip()
             if not text:
                 continue
-            if text.startswith(("--time", "--mem", "--cpus-per-task")):
+            if text.startswith(("--time", "--mem", "--cpus-per-task", "--ntasks")):
                 continue
             filtered.append(text)
         sbatch_options = [
             *filtered,
             f"--time={values['time']}",
             f"--mem={values['mem']}",
-            f"--cpus-per-task={values['cpus']}",
+            f"--ntasks={values['cpus']}" if mpi else f"--cpus-per-task={values['cpus']}",
         ]
-        thread_count = str(values["cpus"])
+        thread_count = "1" if mpi else str(values["cpus"])
         return {
             "sbatch_options": sbatch_options,
             "environment": {
@@ -2294,6 +2294,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         remote_backend = self._remote_backend(
             local_root=job.get("local_root"),
             remote_root=job.get("remote_root"),
+            mpi=backend_key == "server" and str(job.get("tool") or "") == "fea",
         ) if backend_key == "server" else None
         if backend_key == "server" and remote_backend is not None:
             remote_args = remote_backend.config.remote_args(args, dataset_root=job.get("local_root"))
