@@ -29,5 +29,7 @@ setup_command: source ~/.bashrc
 environment:
   PYTHONUNBUFFERED: "1"
 
-# Optional extra sbatch flags. Leave empty to let ARC choose partition/queue.
-sbatch_options: []
+# Optional extra sbatch flags. ARC requires a wall-time request, but leaving
+# partition/account unset lets ARC choose the queue.
+sbatch_options:
+  - --time=01:00:00
