@@ -8,6 +8,7 @@ import numpy as np
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1099,10 +1100,10 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         base = record_output_path(root, "Mechanoregulation", subject, str(row.get("voi_value", row.get("voi")) or ""), "runs", case_id)
         expected = []
         for pattern in (
-            "*_mechanoregulation_summary.csv",
-            "*_conditional_curves.png",
-            "*_schulte_binned_curves.png",
-            "*_mechanoregulation_summary.json",
+            f"{case_id}_roi-*_mechanoregulation_summary.csv",
+            f"{case_id}_roi-*_conditional_curves.png",
+            f"{case_id}_roi-*_schulte_binned_curves.png",
+            f"{case_id}_roi-*_mechanoregulation_summary.json",
         ):
             matches = sorted(base.glob(pattern))
             if not matches:
@@ -1949,6 +1950,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             return [], f"Remote discovery failed: {exc}"
         if not bool(payload.get("normalized", {}).get("ok")):
             return [], str(payload.get("normalized", {}).get("message") or "Remote dataset is not normalized.")
+        if tool == "mechanoregulation":
+            return self._discover_remote_mechanoregulation_rows(backend, profile)
         image_records = [self._artifact_from_remote_payload(item) for item in payload.get("raw_images", [])]
         derivative_records = [self._artifact_from_remote_payload(item) for item in payload.get("derivatives", [])]
         contour_artifacts = [
@@ -2007,6 +2010,83 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         for row in rows:
             row["remote_backend"] = backend.config.name
         return rows, f"Remote {backend.config.name}: discovered {len(rows)} row(s) in {backend.config.remote_root}."
+
+    def _discover_remote_mechanoregulation_rows(self, backend, profile):
+        command = self._remote_mechanoregulation_discovery_command(backend.config.remote_root, profile, backend.config.python)
+        try:
+            result = subprocess.run(
+                [backend.config.ssh, backend.config.host, backend._login_shell(command)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            payload = json.loads(result.stdout)
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            return [], f"Remote mechanoregulation discovery failed: {detail}"
+        except json.JSONDecodeError as exc:
+            return [], f"Remote mechanoregulation discovery returned invalid JSON: {exc}"
+        except Exception as exc:
+            return [], f"Remote mechanoregulation discovery failed: {exc}"
+        rows = []
+        for item in payload.get("cases", []):
+            row = dict(item)
+            row["remote_backend"] = backend.config.name
+            rows.append(row)
+        return rows, f"Remote {backend.config.name}: discovered {len(rows)} mechanoregulation row(s) in {backend.config.remote_root}."
+
+    @staticmethod
+    def _remote_mechanoregulation_discovery_command(remote_root: str, profile: str, python: str) -> str:
+        script = r"""
+import json
+from pathlib import Path
+from bonemechreg.timelapse import available_case_rois, case_outputs, discover_timelapse_cases
+
+root = Path(REMOTE_ROOT)
+profile = PROFILE
+cases = discover_timelapse_cases(root, sed_profile=profile)
+rows = []
+for case in cases:
+    sed_path = Path(case.baseline_sed_path) if case.baseline_sed_path else None
+    sed_ready = sed_path is not None and sed_path.exists()
+    expected = []
+    outputs_complete = True
+    rois = available_case_rois(case)
+    for roi in rois:
+        outputs = case_outputs(case, roi=roi)
+        for key in ("csv", "curves", "schulte_curves", "summary"):
+            path = Path(outputs[key])
+            expected.append(str(path))
+            outputs_complete = outputs_complete and path.exists()
+    t0 = str(getattr(case, "baseline_session_id", "") or "")
+    t1 = str(getattr(case, "followup_session_id", "") or "")
+    session = f"{t0}-{t1}" if t0 or t1 else str(case.case_id)
+    parts = [f"remodelling={Path(case.remodelling_image_path).name}"]
+    parts.append(f"sed={sed_path.name}" if sed_ready else f"sed=missing {profile} baseline SED")
+    for roi, path in rois.items():
+        p = Path(path) if path else None
+        parts.append(f"{str(roi).lower()}={p.name}" if p and p.exists() else f"{str(roi).lower()}=whole remodelling grid")
+    action = "Load" if sed_ready and outputs_complete else ("Run" if sed_ready else "Missing")
+    rows.append({
+        "action": action,
+        "subject": str(case.subject_id).removeprefix("sub-"),
+        "session": session,
+        "session_value": session,
+        "voi": str(case.site or "").lower(),
+        "voi_value": str(case.site or "").lower(),
+        "registered": False,
+        "status": "Done" if action == "Load" else ("Ready" if action == "Run" else "Missing SED"),
+        "input": "\n".join(parts),
+        "image_path": str(case.remodelling_image_path),
+        "sed_path": str(sed_path) if sed_ready else "",
+        "mechanoregulation_case_id": str(case.case_id),
+        "profile": profile,
+        "output_paths": expected if outputs_complete else [],
+    })
+print(json.dumps({"cases": rows}, sort_keys=True))
+""".replace("REMOTE_ROOT", repr(str(remote_root))).replace("PROFILE", repr(str(profile or "").strip()))
+        return f"{shlex.quote(str(python))} - <<'PY'\n{script}\nPY"
 
     @staticmethod
     def _artifact_from_remote_payload(item):
@@ -2443,6 +2523,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             "local_root": str(job.get("local_root") or ""),
             "remote_root": str(job.get("remote_root") or ""),
             "remote_job_name": str(job.get("remote_job_name") or ""),
+            "row": dict(job.get("row") or {}),
             "state": "SUBMITTED",
         }
         self._set_row_status(row_index, f"Submitted {job_id}")
@@ -2485,6 +2566,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                 continue
             self._remoteJobs.pop(row_key, None)
             if status == "Done":
+                if str(remote_job.get("tool") or "") == "fea":
+                    self._publish_remote_fea_outputs(remote_job, backend)
                 if row_index >= 0 and row_index < len(self._batchRows):
                     self._set_row_status(row_index, "Done")
                     self._set_row_action(row_index, "Load")
@@ -2503,6 +2586,82 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                     except Exception:
                         pass
         self._stop_remote_polling_if_idle()
+
+    def _publish_remote_fea_outputs(self, remote_job, backend):
+        row = dict(remote_job.get("row") or {})
+        subject = str(row.get("subject") or "").strip().removeprefix("sub-")
+        session = str(row.get("session_value", row.get("session")) or "").strip()
+        site = str(row.get("voi_value", row.get("voi")) or "").strip()
+        profile = str(remote_job.get("profile") or "").strip()
+        if not subject or not session or not site or not profile:
+            return
+        profile_slug = self.logic._filename_token(profile)
+        run_name = f"sub-{subject}_ses-{session}_site-{site}_{profile_slug}"
+        stem = f"sub-{subject}_ses-{session}_voi-{site}_desc-{profile_slug}"
+        remote_root = str(remote_job.get("remote_root") or backend.config.remote_root)
+        script = f"""
+from pathlib import Path
+import csv, json, shutil
+root = Path({remote_root!r})
+run_dir = root / 'derivatives' / 'FEA' / 'sub-{subject}' / 'xct' / 'runs' / {run_name!r}
+result_json = run_dir / 'result.json'
+result = json.loads(result_json.read_text(encoding='utf-8')) if result_json.exists() else {{}}
+exported = result.get('outputs', {{}}).get('exported', {{}}) if isinstance(result, dict) else {{}}
+candidates = [exported.get('sed'), run_dir / 'fields' / 'sed.nii.gz', run_dir / 'sed.nii.gz']
+sed_source = None
+for candidate in candidates:
+    if not candidate:
+        continue
+    path = Path(candidate)
+    if path.exists():
+        sed_source = path
+        break
+if sed_source is None:
+    raise SystemExit('FEA SED output missing; cannot publish canonical SED')
+base = root / 'derivatives' / 'FEA' / 'sub-{subject}' / 'ses-{session}' / 'xct'
+map_path = base / 'maps' / ({stem!r} + '_map-sed.nii.gz')
+csv_path = base / 'measurements' / ({stem!r} + '_fea.csv')
+map_path.parent.mkdir(parents=True, exist_ok=True)
+csv_path.parent.mkdir(parents=True, exist_ok=True)
+if sed_source.resolve() != map_path.resolve():
+    shutil.copy2(sed_source, map_path)
+def value(data, *paths):
+    for path in paths:
+        cur = data
+        for key in path:
+            if not isinstance(cur, dict) or key not in cur:
+                cur = None
+                break
+            cur = cur[key]
+        if cur is not None:
+            return cur
+    return ''
+with csv_path.open('w', newline='', encoding='utf-8') as stream:
+    writer = csv.DictWriter(stream, fieldnames=['Sample', 'Profile', 'Stiffness (N/mm)', 'Failure load (N)'])
+    writer.writeheader()
+    writer.writerow({{
+        'Sample': 'sub-{subject} ses-{session} voi-{site}',
+        'Profile': {profile!r},
+        'Stiffness (N/mm)': value(result, ('mechanics','generalized_stiffness','value'), ('mechanics','stiffness','z')),
+        'Failure load (N)': value(result, ('failure','failure_generalized_load','value'), ('failure','failure_load','z')),
+    }})
+print(str(map_path))
+print(str(csv_path))
+"""
+        try:
+            result = subprocess.run(
+                [backend.config.ssh, backend.config.host, backend._login_shell(f"{shlex.quote(backend.config.python)} - <<'PY'\n{script}\nPY")],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            text = self._clean_process_output((result.stdout or result.stderr or "").strip())
+            if result.returncode == 0 and text:
+                self._append_log(f"[batch] published remote FEA artifact(s):\n{text}")
+            elif result.returncode != 0:
+                self._append_log(f"[batch] remote FEA publish failed: {text}")
+        except Exception as exc:
+            self._append_log(f"[batch] remote FEA publish failed: {exc}")
 
     @staticmethod
     def _remote_job_terminal_state(state_text):
@@ -2554,6 +2713,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         family = self.logic._output_family_for_tool(tool_key)
         try:
             argv = backend.sync_output_argv(family)
+            local_sync_root = backend.config.local_dataset_root()
+            if local_sync_root is not None:
+                (local_sync_root / "derivatives").mkdir(parents=True, exist_ok=True)
             self._append_log(f"[batch] syncing remote outputs: {' '.join(argv)}")
             result = subprocess.run(argv, capture_output=True, text=True, timeout=300)
             if result.stdout.strip():

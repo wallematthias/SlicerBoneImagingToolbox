@@ -128,6 +128,25 @@ def test_batch_processor_remote_jobs_are_submitted_and_loaded_lazily() -> None:
     assert 'row.pop("output_paths", None)' in source
     assert "self._refresh_row_output_paths(row_index)" in source
     assert "syncing remote outputs" in source
+
+
+def test_batch_processor_remote_mechanoregulation_uses_core_case_discovery() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'if tool == "mechanoregulation":\n            return self._discover_remote_mechanoregulation_rows(backend, profile)' in source
+    assert "def _remote_mechanoregulation_discovery_command" in source
+    assert "from bonemechreg.timelapse import available_case_rois, case_outputs, discover_timelapse_cases" in source
+    assert '"mechanoregulation_case_id": str(case.case_id)' in source
+
+
+def test_batch_processor_remote_fea_completion_publishes_canonical_sed() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert '"row": dict(job.get("row") or {})' in source
+    assert 'if str(remote_job.get("tool") or "") == "fea":\n                    self._publish_remote_fea_outputs(remote_job, backend)' in source
+    assert "def _publish_remote_fea_outputs(self, remote_job, backend):" in source
+    assert "base / 'maps'" in source
+    assert "'_map-sed.nii.gz'" in source
     assert "preferred_contours" in source
     assert "prerequisite_status" in source
     assert "def normalized_dataset_status(" in source
