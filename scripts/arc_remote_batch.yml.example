@@ -32,4 +32,4 @@ environment:
 # Optional extra sbatch flags. ARC requires a wall-time request, but leaving
 # partition/account unset lets ARC choose the queue.
 sbatch_options:
-  - --time=01:00:00
+  - "--time=01:00:00"

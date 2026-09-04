@@ -51,6 +51,28 @@ def test_remote_batch_config_requires_explicit_private_config(monkeypatch) -> No
         load_remote_batch_config()
 
 
+def test_remote_batch_config_parses_sbatch_options_with_colons(tmp_path: Path) -> None:
+    config_path = tmp_path / "arc.yml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "name: arc",
+                "host: arc.ucalgary.ca",
+                "remote_root: /arc/project/sample",
+                "python: /home/mwalle/miniforge3/envs/bone/bin/python",
+                "work_dir: /home/mwalle/bone-batch",
+                "sbatch_options:",
+                "  - --time=01:00:00",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_remote_batch_config(config_path)
+
+    assert config.sbatch_options == ("--time=01:00:00",)
+
+
 def test_slurm_backend_builds_ssh_sbatch_wait_submission_without_partition() -> None:
     backend = SshSlurmBatchBackend(
         RemoteBatchConfig(

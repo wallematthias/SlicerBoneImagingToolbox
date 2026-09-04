@@ -189,16 +189,21 @@ def _parse_simple_yaml(text: str) -> dict[str, object]:
         if not raw_line.strip() or raw_line.lstrip().startswith("#"):
             continue
         if raw_line.startswith((" ", "\t")):
+            if raw_line.strip().startswith("-") and (current_list or current_mapping):
+                list_key = current_list or current_mapping
+                if list_key and not isinstance(payload.get(list_key), list):
+                    payload[list_key] = []
+                current_list = list_key
+                current_mapping = None
+                values = payload.setdefault(str(list_key), [])
+                if isinstance(values, list):
+                    values.append(str(_coerce_scalar(raw_line.strip()[1:].strip())))
+                continue
             if current_mapping and ":" in raw_line:
                 key, value = raw_line.strip().split(":", 1)
                 mapping = payload.setdefault(current_mapping, {})
                 if isinstance(mapping, dict):
                     mapping[key.strip()] = _coerce_scalar(value.strip())
-                continue
-            if current_list and raw_line.strip().startswith("-"):
-                values = payload.setdefault(current_list, [])
-                if isinstance(values, list):
-                    values.append(str(_coerce_scalar(raw_line.strip()[1:].strip())))
                 continue
         current_mapping = None
         current_list = None
