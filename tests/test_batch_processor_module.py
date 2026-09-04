@@ -139,6 +139,15 @@ def test_batch_processor_remote_mechanoregulation_uses_core_case_discovery() -> 
     assert '"mechanoregulation_case_id": str(case.case_id)' in source
 
 
+def test_batch_processor_remote_timelapse_discovers_existing_outputs() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'if tool == "timelapse":\n            derivative_records.extend(self._discover_remote_timelapse_outputs(backend))' in source
+    assert "def _remote_timelapse_outputs_command" in source
+    assert "pairwise_remodelling_table" in source
+    assert "remodelling_image" in source
+
+
 def test_batch_processor_remote_fea_completion_publishes_canonical_sed() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 

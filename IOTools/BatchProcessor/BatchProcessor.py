@@ -1954,6 +1954,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             return self._discover_remote_mechanoregulation_rows(backend, profile)
         image_records = [self._artifact_from_remote_payload(item) for item in payload.get("raw_images", [])]
         derivative_records = [self._artifact_from_remote_payload(item) for item in payload.get("derivatives", [])]
+        if tool == "timelapse":
+            derivative_records.extend(self._discover_remote_timelapse_outputs(backend))
         contour_artifacts = [
             artifact for artifact in derivative_records
             if artifact.derivative in {"IPLContours", "ImportedContours", "BoneContours"}
@@ -2010,6 +2012,75 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         for row in rows:
             row["remote_backend"] = backend.config.name
         return rows, f"Remote {backend.config.name}: discovered {len(rows)} row(s) in {backend.config.remote_root}."
+
+    def _discover_remote_timelapse_outputs(self, backend):
+        command = self._remote_timelapse_outputs_command(backend.config.remote_root, backend.config.python)
+        try:
+            result = subprocess.run(
+                [backend.config.ssh, backend.config.host, backend._login_shell(command)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            payload = json.loads(result.stdout)
+        except Exception as exc:
+            self._append_log(f"[batch] remote Timelapse output discovery skipped: {exc}")
+            return []
+        return [self._artifact_from_remote_payload(item) for item in payload.get("derivatives", [])]
+
+    @staticmethod
+    def _remote_timelapse_outputs_command(remote_root: str, python: str) -> str:
+        script = r"""
+import json
+import re
+from pathlib import Path
+
+root = Path(REMOTE_ROOT)
+timelapse = root / "derivatives" / "Timelapse"
+pairwise_re = re.compile(r"^sub-(?P<subject>[^_]+)_voi-(?P<voi>[^_]+)_pairwise_remodelling\.csv$", re.I)
+remodelling_re = re.compile(
+    r"^sub-(?P<subject>[^_]+)_voi-(?P<voi>[^_]+)_desc-(?P<roi>.+?)_t0-(?P<t0>[^_]+)_t1-(?P<t1>[^_]+)_.*_remodelling\.(?:nii\.gz|nii|nrrd|nhdr|mha|mhd|aim)$",
+    re.I,
+)
+rows = []
+for path in sorted(timelapse.glob("sub-*/xct/analysis/*_pairwise_remodelling.csv")):
+    match = pairwise_re.match(path.name)
+    if match is None:
+        continue
+    rows.append({
+        "path": str(path),
+        "family": "Timelapse",
+        "role": "pairwise_remodelling_table",
+        "source": "generated",
+        "metadata": {},
+        "key": {
+            "subject_id": match.group("subject"),
+            "session_id": "__series__",
+            "voi": match.group("voi").lower(),
+            "stack_index": None,
+        },
+    })
+for path in sorted(timelapse.glob("sub-*/xct/analysis/visualize/*_remodelling.*")):
+    match = remodelling_re.match(path.name)
+    if match is None:
+        continue
+    rows.append({
+        "path": str(path),
+        "family": "Timelapse",
+        "role": "remodelling_image",
+        "source": "generated",
+        "metadata": {"t1": match.group("t1"), "roi": match.group("roi")},
+        "key": {
+            "subject_id": match.group("subject"),
+            "session_id": match.group("t0"),
+            "voi": match.group("voi").lower(),
+            "stack_index": None,
+        },
+    })
+print(json.dumps({"derivatives": rows}, sort_keys=True))
+""".replace("REMOTE_ROOT", repr(str(remote_root)))
+        return f"{shlex.quote(str(python))} - <<'PY'\n{script}\nPY"
 
     def _discover_remote_mechanoregulation_rows(self, backend, profile):
         command = self._remote_mechanoregulation_discovery_command(backend.config.remote_root, profile, backend.config.python)
