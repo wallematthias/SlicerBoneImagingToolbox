@@ -1509,7 +1509,11 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.backendCombo.setItemData(1, "Server backends are configured in private adapters.", qt.Qt.ToolTipRole)
         self.backendCombo.currentIndexChanged.connect(self._on_backend_changed)
         if self._serverBackendEnabled:
-            self.backendCombo.setCurrentIndex(1)
+            previous = self.backendCombo.blockSignals(True)
+            try:
+                self.backendCombo.setCurrentIndex(1)
+            finally:
+                self.backendCombo.blockSignals(previous)
         self.backendLabel = qt.QLabel("Execution backend")
         self.backendLabel.visible = self._serverBackendEnabled
         self.backendCombo.visible = self._serverBackendEnabled
@@ -1729,6 +1733,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         )
 
     def _analyze_dataset(self):
+        if not hasattr(self, "statusLabel") or not hasattr(self, "table"):
+            return
         root = self._current_local_dataset_root()
         if self._selected_backend_key() == "server":
             rows, message = self._discover_remote_rows(

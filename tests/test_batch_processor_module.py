@@ -85,6 +85,8 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
 
     assert "SLICER_BONE_BATCH_BACKEND" in source
     assert "_serverBackendEnabled" in source
+    assert "previous = self.backendCombo.blockSignals(True)" in source
+    assert 'if not hasattr(self, "statusLabel") or not hasattr(self, "table"):' in source
     assert 'self.backendLabel.visible = self._serverBackendEnabled' in source
     assert 'self.backendCombo.visible = self._serverBackendEnabled' in source
     assert "self.serverRootEdit" in source
