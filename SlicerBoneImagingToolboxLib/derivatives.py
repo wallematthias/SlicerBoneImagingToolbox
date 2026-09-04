@@ -5,22 +5,62 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from bone_imaging_derivatives import (
-    ArtifactIndex,
-    ArtifactRecord,
-    apply_overrides,
-    build_naming_rows,
-    discover_artifacts as discover_shared_artifacts,
-    normalize_role,
-    normalize_session_id,
-    normalize_site,
-    normalize_subject_id,
-    read_manifest as read_shared_manifest,
-    site_category,
-    suggested_filename,
-    suggested_mids_relative_path,
-    suggested_mids_relative_paths,
-)
+_DERIVATIVES_IMPORT_ERROR = None
+try:
+    from bone_imaging_derivatives import (  # type: ignore
+        ArtifactIndex,
+        ArtifactRecord,
+        apply_overrides,
+        build_naming_rows,
+        build_rename_plan,
+        discover_artifacts as discover_shared_artifacts,
+        execute_rename_plan,
+        split_identity_metadata,
+        normalize_role,
+        normalize_session_id,
+        normalize_site,
+        normalize_subject_id,
+        read_manifest as read_shared_manifest,
+        site_category,
+        suggested_filename,
+        suggested_mids_relative_path,
+        suggested_mids_relative_paths,
+        undo_rename_manifest,
+    )
+    import bone_imaging_derivatives.naming as _naming_api  # type: ignore
+
+    if not hasattr(_naming_api, "apply_naming_row_overrides"):
+        import importlib
+
+        _naming_api = importlib.reload(_naming_api)
+    apply_naming_row_overrides = _naming_api.apply_naming_row_overrides
+except Exception as exc:
+    _DERIVATIVES_IMPORT_ERROR = exc
+    ArtifactIndex = ArtifactRecord = object
+
+    def _missing_derivatives_runtime(*_args, **_kwargs):
+        raise RuntimeError(
+            "The Bone Imaging Derivative Contract runtime package is not installed. "
+            "Open Bone Imaging > Setup and install/update runtime packages."
+        ) from _DERIVATIVES_IMPORT_ERROR
+
+    apply_overrides = _missing_derivatives_runtime
+    apply_naming_row_overrides = _missing_derivatives_runtime
+    build_naming_rows = _missing_derivatives_runtime
+    build_rename_plan = _missing_derivatives_runtime
+    discover_shared_artifacts = _missing_derivatives_runtime
+    execute_rename_plan = _missing_derivatives_runtime
+    normalize_role = _missing_derivatives_runtime
+    normalize_session_id = _missing_derivatives_runtime
+    normalize_site = _missing_derivatives_runtime
+    normalize_subject_id = _missing_derivatives_runtime
+    read_shared_manifest = _missing_derivatives_runtime
+    site_category = _missing_derivatives_runtime
+    split_identity_metadata = _missing_derivatives_runtime
+    suggested_filename = _missing_derivatives_runtime
+    suggested_mids_relative_path = _missing_derivatives_runtime
+    suggested_mids_relative_paths = _missing_derivatives_runtime
+    undo_rename_manifest = _missing_derivatives_runtime
 
 
 @dataclass(frozen=True)

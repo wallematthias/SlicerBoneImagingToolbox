@@ -24,20 +24,22 @@ TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
 
-from bone_imaging_derivatives import (  # noqa: E402
-    build_naming_rows,
-    build_rename_plan,
-    execute_rename_plan,
-    suggested_mids_relative_path,
-    suggested_mids_relative_paths,
-    split_identity_metadata,
-    undo_rename_manifest,
-)
-import bone_imaging_derivatives.naming as _naming_api  # noqa: E402
+import SlicerBoneImagingToolboxLib.derivatives as _derivatives_api  # noqa: E402
 
-if not hasattr(_naming_api, "apply_naming_row_overrides"):
-    _naming_api = importlib.reload(_naming_api)
-apply_naming_row_overrides = _naming_api.apply_naming_row_overrides
+if not all(
+    hasattr(_derivatives_api, name)
+    for name in ("apply_naming_row_overrides", "split_identity_metadata")
+):
+    _derivatives_api = importlib.reload(_derivatives_api)
+
+apply_naming_row_overrides = _derivatives_api.apply_naming_row_overrides
+build_naming_rows = _derivatives_api.build_naming_rows
+build_rename_plan = _derivatives_api.build_rename_plan
+execute_rename_plan = _derivatives_api.execute_rename_plan
+suggested_mids_relative_path = _derivatives_api.suggested_mids_relative_path
+suggested_mids_relative_paths = _derivatives_api.suggested_mids_relative_paths
+split_identity_metadata = _derivatives_api.split_identity_metadata
+undo_rename_manifest = _derivatives_api.undo_rename_manifest
 
 
 HEADERS = [

@@ -80,6 +80,14 @@ def test_batch_processor_module_uses_shared_discovery_and_batch_contract() -> No
     assert "discover_manifests" in source
 
 
+def test_dataset_naming_helper_reloads_derivative_wrapper_for_slicer_reload_cache() -> None:
+    source = (ROOT / "IOTools" / "DatasetNamingHelper" / "DatasetNamingHelper.py").read_text(encoding="utf-8")
+
+    assert "import SlicerBoneImagingToolboxLib.derivatives as _derivatives_api" in source
+    assert "importlib.reload(_derivatives_api)" in source
+    assert "split_identity_metadata = _derivatives_api.split_identity_metadata" in source
+
+
 def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 
