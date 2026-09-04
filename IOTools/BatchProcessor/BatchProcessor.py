@@ -2642,6 +2642,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         if not self._remoteJobs:
             self._stop_remote_polling_if_idle()
             return
+        backend_groups = {}
         for row_key, remote_job in list(self._remoteJobs.items()):
             backend = self._remote_backend(
                 local_root=remote_job.get("local_root"),
@@ -2649,42 +2650,79 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             )
             if backend is None:
                 continue
-            job_id = str(remote_job.get("job_id") or "")
-            row_index = int(remote_job.get("row_index", -1))
-            try:
-                result = subprocess.run(backend.status_argv(job_id), capture_output=True, text=True, timeout=30)
-                state_text = (result.stdout or result.stderr or "").strip()
-            except Exception as exc:
-                self._append_log(f"[batch] could not poll remote job {job_id}: {exc}")
-                continue
-            status, terminal = self._remote_job_terminal_state(state_text)
-            remote_job["state"] = status
-            if row_index >= 0 and row_index < len(self._batchRows):
-                self._set_row_status(row_index, f"{status} {job_id}".strip())
-            if not terminal:
-                continue
-            self._remoteJobs.pop(row_key, None)
-            if status == "Done":
-                if str(remote_job.get("tool") or "") == "fea":
-                    self._publish_remote_fea_outputs(remote_job, backend)
+            key = (
+                backend.config.host,
+                backend.config.remote_root,
+                backend.config.work_dir,
+                backend.config.python,
+            )
+            backend_groups.setdefault(key, (backend, []))[1].append((row_key, remote_job))
+
+        for _backend_key, (backend, jobs) in backend_groups.items():
+            state_by_job_id = self._remote_statuses_for_jobs(backend, jobs)
+            for row_key, remote_job in jobs:
+                job_id = str(remote_job.get("job_id") or "")
+                row_index = int(remote_job.get("row_index", -1))
+                state_text = state_by_job_id.get(job_id, "")
+                if not state_text:
+                    continue
+                status, terminal = self._remote_job_terminal_state(state_text)
+                remote_job["state"] = status
                 if row_index >= 0 and row_index < len(self._batchRows):
-                    self._set_row_status(row_index, "Done")
-                    self._set_row_action(row_index, "Load")
-                self._append_log(f"[batch] remote job {job_id} completed")
-            else:
-                if row_index >= 0 and row_index < len(self._batchRows):
-                    self._set_row_action(row_index, "Run")
-                self._append_log(f"[batch] remote job {job_id} ended: {state_text or status}")
-                log_name = str(remote_job.get("remote_job_name") or "")
-                if log_name:
-                    try:
-                        log_result = subprocess.run(backend.log_argv(log_name), capture_output=True, text=True, timeout=30)
-                        log_text = self._clean_process_output((log_result.stdout or log_result.stderr or "").strip())
-                        if log_text:
-                            self._append_log(log_text)
-                    except Exception:
-                        pass
+                    self._set_row_status(row_index, f"{status} {job_id}".strip())
+                if terminal:
+                    self._finish_remote_job(row_key, remote_job, backend, status, state_text)
         self._stop_remote_polling_if_idle()
+
+    def _remote_statuses_for_jobs(self, backend, jobs):
+        job_ids = [str(remote_job.get("job_id") or "") for _row_key, remote_job in jobs]
+        try:
+            if hasattr(backend, "statuses_argv"):
+                result = subprocess.run(backend.statuses_argv(job_ids), capture_output=True, text=True, timeout=30)
+                return self._parse_remote_status_rows(result.stdout or result.stderr or "")
+            statuses = {}
+            for job_id in job_ids:
+                result = subprocess.run(backend.status_argv(job_id), capture_output=True, text=True, timeout=30)
+                statuses[job_id] = (result.stdout or result.stderr or "").strip()
+            return statuses
+        except Exception as exc:
+            self._append_log(f"[batch] could not poll remote jobs: {exc}")
+            return {}
+
+    @staticmethod
+    def _parse_remote_status_rows(text):
+        statuses = {}
+        for line in str(text or "").splitlines():
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) < 2 or not parts[0]:
+                continue
+            statuses[parts[0]] = "|".join(parts[1:]).strip()
+        return statuses
+
+    def _finish_remote_job(self, row_key, remote_job, backend, status, state_text):
+        self._remoteJobs.pop(row_key, None)
+        job_id = str(remote_job.get("job_id") or "")
+        row_index = int(remote_job.get("row_index", -1))
+        if status == "Done":
+            if str(remote_job.get("tool") or "") == "fea":
+                self._publish_remote_fea_outputs(remote_job, backend)
+            if row_index >= 0 and row_index < len(self._batchRows):
+                self._set_row_status(row_index, "Done")
+                self._set_row_action(row_index, "Load")
+            self._append_log(f"[batch] remote job {job_id} completed")
+            return
+        if row_index >= 0 and row_index < len(self._batchRows):
+            self._set_row_action(row_index, "Run")
+        self._append_log(f"[batch] remote job {job_id} ended: {state_text or status}")
+        log_name = str(remote_job.get("remote_job_name") or "")
+        if log_name:
+            try:
+                log_result = subprocess.run(backend.log_argv(log_name), capture_output=True, text=True, timeout=30)
+                log_text = self._clean_process_output((log_result.stdout or log_result.stderr or "").strip())
+                if log_text:
+                    self._append_log(log_text)
+            except Exception:
+                pass
 
     def _publish_remote_fea_outputs(self, remote_job, backend):
         row = dict(remote_job.get("row") or {})

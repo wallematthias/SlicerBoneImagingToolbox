@@ -144,6 +144,26 @@ class SshSlurmBatchBackend:
         )
         return [self.config.ssh, self.config.host, self._login_shell(command)]
 
+    def statuses_argv(self, job_ids: Iterable[str]) -> list[str]:
+        """Return one SSH argv that prints ``job_id|state|exit_code`` rows."""
+        safe_jobs = [shlex.quote(str(job_id).strip()) for job_id in job_ids if str(job_id).strip()]
+        if not safe_jobs:
+            return [self.config.ssh, self.config.host, self._login_shell("true")]
+        jobs = " ".join(safe_jobs)
+        command = (
+            f"for job in {jobs}; do "
+            'state=$(squeue -h -j "$job" -o %T 2>/dev/null | head -n 1 || true); '
+            'if [ -n "$state" ]; then '
+            'printf "%s|%s|\\n" "$job" "$state"; '
+            "else "
+            'acct=$(sacct -n -P -X -j "$job" --format=State,ExitCode 2>/dev/null | head -n 1 || true); '
+            'if [ -n "$acct" ]; then printf "%s|%s\\n" "$job" "$acct"; '
+            'else printf "%s|UNKNOWN|\\n" "$job"; fi; '
+            "fi; "
+            "done"
+        )
+        return [self.config.ssh, self.config.host, self._login_shell(command)]
+
     def cancel_argv(self, job_id: str) -> list[str]:
         """Return an SSH argv that cancels ``job_id``."""
         return [self.config.ssh, self.config.host, f"scancel {shlex.quote(str(job_id).strip())}"]

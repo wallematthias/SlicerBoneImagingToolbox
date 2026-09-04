@@ -143,12 +143,16 @@ def test_slurm_backend_builds_status_cancel_and_log_commands() -> None:
     )
 
     status = backend.status_argv("47742177")
+    statuses = backend.statuses_argv(["47742177", "47742178"])
     cancel = backend.cancel_argv("47742177")
     log = backend.log_argv("bone-job")
 
     assert status[:2] == ["ssh", "arc.ucalgary.ca"]
     assert "squeue" in status[2]
     assert "sacct" in status[2]
+    assert statuses[:2] == ["ssh", "arc.ucalgary.ca"]
+    assert "for job in 47742177 47742178" in statuses[2]
+    assert 'printf "%s|%s|' in statuses[2]
     assert cancel == ["ssh", "arc.ucalgary.ca", "scancel 47742177"]
     assert "tail -n 80 /remote/work/jobs/bone-job/slurm.log" in log[2]
 

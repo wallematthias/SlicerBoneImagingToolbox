@@ -152,7 +152,8 @@ def test_batch_processor_remote_fea_completion_publishes_canonical_sed() -> None
     source = MODULE_PATH.read_text(encoding="utf-8")
 
     assert '"row": dict(job.get("row") or {})' in source
-    assert 'if str(remote_job.get("tool") or "") == "fea":\n                    self._publish_remote_fea_outputs(remote_job, backend)' in source
+    assert 'if str(remote_job.get("tool") or "") == "fea":\n                self._publish_remote_fea_outputs(remote_job, backend)' in source
+    assert "def _finish_remote_job(self, row_key, remote_job, backend, status, state_text):" in source
     assert "def _publish_remote_fea_outputs(self, remote_job, backend):" in source
     assert "base / 'maps'" in source
     assert "'_map-sed.nii.gz'" in source
