@@ -8,6 +8,13 @@ set -euo pipefail
 ENV_NAME="${BONE_BATCH_CONDA_ENV:-bone-batch}"
 PYTHON_VERSION="${BONE_BATCH_PYTHON_VERSION:-3.12}"
 CONDA_BIN="${CONDA_BIN:-conda}"
+BONE_IMAGING_DERIVATIVES_SPEC="${BONE_IMAGING_DERIVATIVES_SPEC:-bone-imaging-derivatives}"
+BONE_CONTOURING_SPEC="${BONE_CONTOURING_SPEC:-bone-contouring}"
+TIMELAPSED_HRPQCT_SPEC="${TIMELAPSED_HRPQCT_SPEC:-timelapsed-hrpqct}"
+BONE_MICROARCHITECTURE_SPEC="${BONE_MICROARCHITECTURE_SPEC:-bone-microarchitecture}"
+BONE_PLATE_ROD_THINNING_SPEC="${BONE_PLATE_ROD_THINNING_SPEC:-bone-plate-rod-thinning}"
+PAROSOL_PY_SPEC="${PAROSOL_PY_SPEC:-parosol-py}"
+BONEMECHREG_SPEC="${BONEMECHREG_SPEC:-bonemechreg}"
 
 if command -v micromamba >/dev/null 2>&1; then
   CONDA_BIN="${CONDA_BIN:-micromamba}"
@@ -33,13 +40,13 @@ fi
 python -m pip install --upgrade pip wheel setuptools
 
 python -m pip install \
-  bone-imaging-derivatives \
-  bone-contouring \
-  timelapsed-hrpqct \
-  bone-microarchitecture \
-  bone-plate-rod-thinning \
-  parosol-py \
-  bonemechreg
+  "${BONE_IMAGING_DERIVATIVES_SPEC}" \
+  "${BONE_CONTOURING_SPEC}" \
+  "${TIMELAPSED_HRPQCT_SPEC}" \
+  "${BONE_MICROARCHITECTURE_SPEC}" \
+  "${BONE_PLATE_ROD_THINNING_SPEC}" \
+  "${PAROSOL_PY_SPEC}" \
+  "${BONEMECHREG_SPEC}"
 
 python - <<'PY'
 import importlib
