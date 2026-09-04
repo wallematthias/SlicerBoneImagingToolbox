@@ -100,6 +100,16 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
     assert "self.serverRootEdit" in source
     assert '"Server directory"' in source
     assert '"Local processing directory"' in source
+    assert "self.serverTimeEdit" in source
+    assert '"Wall time"' in source
+    assert "self.serverMemoryEdit" in source
+    assert '"Memory"' in source
+    assert "self.serverCpusSpin" in source
+    assert '"CPUs"' in source
+    assert "f\"--cpus-per-task={values['cpus']}\"" in source
+    assert '"OMP_NUM_THREADS": thread_count' in source
+    assert '"ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": thread_count' in source
+    assert "Remote discovery returned invalid JSON" in source
 
 
 def test_batch_processor_remote_jobs_are_submitted_and_loaded_lazily() -> None:
@@ -113,6 +123,8 @@ def test_batch_processor_remote_jobs_are_submitted_and_loaded_lazily() -> None:
     assert "def _remote_job_terminal_state" in source
     assert "if self._selected_backend_key() == \"server\":" in source
     assert "self._sync_remote_outputs_for_tool(" in source
+    assert 'row.pop("output_paths", None)' in source
+    assert "self._refresh_row_output_paths(row_index)" in source
     assert "syncing remote outputs" in source
     assert "preferred_contours" in source
     assert "prerequisite_status" in source

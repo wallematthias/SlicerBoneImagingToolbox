@@ -1486,6 +1486,29 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.serverRootLabel.visible = False
         discovery_form.addRow(self.serverRootLabel, self.serverRootEdit)
 
+        self.serverTimeEdit = qt.QLineEdit()
+        self.serverTimeEdit.placeholderText = "00:30:00"
+        self.serverTimeLabel = qt.QLabel("Wall time")
+        self.serverTimeEdit.visible = False
+        self.serverTimeLabel.visible = False
+        discovery_form.addRow(self.serverTimeLabel, self.serverTimeEdit)
+
+        self.serverMemoryEdit = qt.QLineEdit()
+        self.serverMemoryEdit.placeholderText = "16G"
+        self.serverMemoryLabel = qt.QLabel("Memory")
+        self.serverMemoryEdit.visible = False
+        self.serverMemoryLabel.visible = False
+        discovery_form.addRow(self.serverMemoryLabel, self.serverMemoryEdit)
+
+        self.serverCpusSpin = qt.QSpinBox()
+        self.serverCpusSpin.minimum = 1
+        self.serverCpusSpin.maximum = 128
+        self.serverCpusSpin.value = 4
+        self.serverCpusLabel = qt.QLabel("CPUs")
+        self.serverCpusSpin.visible = False
+        self.serverCpusLabel.visible = False
+        discovery_form.addRow(self.serverCpusLabel, self.serverCpusSpin)
+
         self.analyzeButton = qt.QPushButton("Analyze")
         self.analyzeButton.clicked.connect(self._analyze_dataset)
         discovery_form.addRow("", self.analyzeButton)
@@ -1592,6 +1615,16 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self.serverRootEdit.visible = server_selected
         if hasattr(self, "serverRootLabel"):
             self.serverRootLabel.visible = server_selected
+        for attr in (
+            "serverTimeEdit",
+            "serverTimeLabel",
+            "serverMemoryEdit",
+            "serverMemoryLabel",
+            "serverCpusSpin",
+            "serverCpusLabel",
+        ):
+            if hasattr(self, attr):
+                getattr(self, attr).visible = server_selected
         if server_selected:
             self._populate_remote_defaults()
 
@@ -1604,6 +1637,13 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self.serverRootEdit.text = str(config.remote_root)
         if hasattr(self, "datasetRootEdit") and not str(self.datasetRootEdit.text or "").strip() and config.local_root:
             self.datasetRootEdit.text = str(Path(config.local_root).expanduser())
+        options = self._server_sbatch_options_from_config(config.sbatch_options)
+        if hasattr(self, "serverTimeEdit") and not str(self.serverTimeEdit.text or "").strip():
+            self.serverTimeEdit.text = str(options.get("time") or "00:30:00")
+        if hasattr(self, "serverMemoryEdit") and not str(self.serverMemoryEdit.text or "").strip():
+            self.serverMemoryEdit.text = str(options.get("mem") or "16G")
+        if hasattr(self, "serverCpusSpin") and options.get("cpus"):
+            self.serverCpusSpin.value = int(options["cpus"])
 
     def _update_table_headers(self, *args):
         del args
@@ -1736,16 +1776,70 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             config = load_remote_batch_config()
             local_text = str(local_root or "").strip()
             remote_text = str(remote_root or "").strip()
+            updates = {}
             if local_text or remote_text:
-                config = replace(
-                    config,
+                updates.update(
                     local_root=local_text or config.local_root,
                     remote_root=(remote_text or config.remote_root).rstrip("/"),
                 )
+            if self._selected_backend_key() == "server":
+                resource_overrides = self._server_resource_overrides(config.sbatch_options)
+                updates.update(
+                    sbatch_options=tuple(resource_overrides["sbatch_options"]),
+                    environment={**dict(config.environment), **dict(resource_overrides["environment"])},
+                )
+            if updates:
+                config = replace(config, **updates)
             return SshSlurmBatchBackend(config)
         except Exception as exc:
             self._append_log(f"[batch] remote backend unavailable: {exc}")
             return None
+
+    @staticmethod
+    def _server_sbatch_options_from_config(options):
+        values = {}
+        for option in options or ():
+            text = str(option).strip()
+            for key, name in (("--time", "time"), ("--mem", "mem"), ("--cpus-per-task", "cpus")):
+                if text == key:
+                    values[name] = ""
+                elif text.startswith(key + "="):
+                    values[name] = text.split("=", 1)[1].strip()
+        return values
+
+    def _server_resource_overrides(self, base_options):
+        values = self._server_sbatch_options_from_config(base_options)
+        time_text = str(getattr(getattr(self, "serverTimeEdit", None), "text", "") or "").strip()
+        memory_text = str(getattr(getattr(self, "serverMemoryEdit", None), "text", "") or "").strip()
+        cpus = int(getattr(getattr(self, "serverCpusSpin", None), "value", 1) or 1)
+        values["time"] = time_text or values.get("time") or "00:30:00"
+        values["mem"] = memory_text or values.get("mem") or "16G"
+        values["cpus"] = str(max(1, cpus))
+        filtered = []
+        for option in base_options or ():
+            text = str(option).strip()
+            if not text:
+                continue
+            if text.startswith(("--time", "--mem", "--cpus-per-task")):
+                continue
+            filtered.append(text)
+        sbatch_options = [
+            *filtered,
+            f"--time={values['time']}",
+            f"--mem={values['mem']}",
+            f"--cpus-per-task={values['cpus']}",
+        ]
+        thread_count = str(values["cpus"])
+        return {
+            "sbatch_options": sbatch_options,
+            "environment": {
+                "OMP_NUM_THREADS": thread_count,
+                "MKL_NUM_THREADS": thread_count,
+                "OPENBLAS_NUM_THREADS": thread_count,
+                "NUMEXPR_NUM_THREADS": thread_count,
+                "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": thread_count,
+            },
+        }
 
     def _registered_table_mode(self):
         return self.logic.profile_requests_registration(
@@ -1810,6 +1904,11 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                 timeout=120,
             )
             payload = json.loads(result.stdout)
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            return [], f"Remote discovery failed: {detail}"
+        except json.JSONDecodeError as exc:
+            return [], f"Remote discovery returned invalid JSON: {exc}"
         except Exception as exc:
             return [], f"Remote discovery failed: {exc}"
         if not bool(payload.get("normalized", {}).get("ok")):
@@ -2465,6 +2564,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                 remote_root=self._current_remote_dataset_root(),
             )
         row = self._batchRows[row_index]
+        if self._selected_backend_key() == "server":
+            row.pop("output_paths", None)
+            self._refresh_row_output_paths(row_index)
         output_paths = [Path(path) for path in row.get("output_paths", []) if str(path)]
         if not output_paths:
             output_paths = [Path(path) for path in self._refresh_row_output_paths(row_index)]
