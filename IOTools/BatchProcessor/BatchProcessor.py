@@ -1996,7 +1996,14 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                 profile,
                 self.logic._fea_cases_from_batch_artifacts([*image_records, *derivative_records]),
             )
+            fea_outputs = self._remote_fea_outputs_by_key(derivative_records, profile)
             for row in rows:
+                key = self.logic._row_case_key(row)
+                output_paths = fea_outputs.get(key, []) if key is not None else []
+                if output_paths:
+                    row["status"] = "Done"
+                    row["action"] = "Load"
+                    row["output_paths"] = [str(path) for path in output_paths]
                 row["remote_backend"] = backend.config.name
             return rows, f"Remote {backend.config.name}: discovered {len(rows)} row(s) in {backend.config.remote_root}."
         rows = self.logic._table_rows_for_tool(
@@ -2012,6 +2019,27 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         for row in rows:
             row["remote_backend"] = backend.config.name
         return rows, f"Remote {backend.config.name}: discovered {len(rows)} row(s) in {backend.config.remote_root}."
+
+    def _remote_fea_outputs_by_key(self, derivative_records, profile):
+        requested_profile = self.logic._filename_token(profile)
+        grouped = {}
+        for artifact in derivative_records:
+            if artifact.derivative != "FEA":
+                continue
+            artifact_profile = self.logic._filename_token(artifact.metadata.get("profile") or "")
+            if requested_profile and artifact_profile and artifact_profile != requested_profile:
+                continue
+            if artifact.role not in {"sed_map", "summary_table"}:
+                continue
+            grouped.setdefault(artifact.key, []).append(Path(artifact.path))
+        complete = {}
+        for key, paths in grouped.items():
+            names = {path.name for path in paths}
+            has_sed = any("_map-sed" in name for name in names)
+            has_table = any(name.endswith("_fea.csv") for name in names)
+            if has_sed and has_table:
+                complete[key] = sorted(paths, key=lambda path: path.name)
+        return complete
 
     def _discover_remote_timelapse_outputs(self, backend):
         command = self._remote_timelapse_outputs_command(backend.config.remote_root, backend.config.python)

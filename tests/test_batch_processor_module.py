@@ -156,6 +156,15 @@ def test_batch_processor_remote_fea_completion_publishes_canonical_sed() -> None
     assert "def _publish_remote_fea_outputs(self, remote_job, backend):" in source
     assert "base / 'maps'" in source
     assert "'_map-sed.nii.gz'" in source
+
+
+def test_batch_processor_remote_fea_rows_use_remote_artifact_memory() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "fea_outputs = self._remote_fea_outputs_by_key(derivative_records, profile)" in source
+    assert "def _remote_fea_outputs_by_key(self, derivative_records, profile):" in source
+    assert 'row["action"] = "Load"' in source
+    assert 'artifact.role not in {"sed_map", "summary_table"}' in source
     assert "preferred_contours" in source
     assert "prerequisite_status" in source
     assert "def normalized_dataset_status(" in source
