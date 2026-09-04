@@ -113,6 +113,18 @@ def test_discover_fea_batch_cases_supports_normalized_voi_layout_and_bone_contou
     assert cases[0].artifact_options("mask") == [str(full), str(trab)]
 
 
+def test_parosol_command_does_not_use_model_image_as_its_own_mask(tmp_path: Path) -> None:
+    model = tmp_path / "sub-001" / "ses-001" / "xct" / "sub-001_ses-001_voi-radiusleft_desc-fea-materials_label.AIM"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"")
+
+    case = discover_fea_batch_cases(tmp_path)[0]
+    command = build_parosol_case_commands(tmp_path, [case], workflow="XtremeCTI")[0]
+
+    assert command[0] == str(model)
+    assert "--mask" not in command
+
+
 def test_manifest_classification_uses_record_role_before_derivative_family(tmp_path: Path) -> None:
     """Segmentation derivative manifests must keep cort/full masks distinct from bone segmentation."""
     mask_cort = tmp_path / "derivatives" / "Segmentation" / "sub-001_ses-1_site-tibia_mask-cort.nii.gz"

@@ -53,13 +53,24 @@ class RemoteBatchConfig:
 
     def remote_args(self, args: Iterable[str], *, dataset_root: str | Path | None = None) -> list[str]:
         """Map local dataset-root arguments inside a CLI argv vector to remote paths."""
-        local_root = str(Path(dataset_root).expanduser()) if dataset_root else (str(Path(self.local_root).expanduser()) if self.local_root else "")
-        remote_root = self.remote_dataset_root(local_root) if local_root else self.remote_root
+        local_roots = []
+        if dataset_root:
+            local_roots.append(str(Path(dataset_root).expanduser()))
+        if self.local_root:
+            configured = str(Path(self.local_root).expanduser())
+            local_roots.append(configured)
+            try:
+                local_roots.append(str(Path(configured).resolve()))
+            except Exception:
+                pass
+        local_roots = _unique_existing_prefixes(local_roots)
+        remote_root = self.remote_root
         mapped: list[str] = []
         for arg in args:
             value = str(arg)
-            if local_root and (value == local_root or value.startswith(local_root + os.sep)):
-                suffix = value[len(local_root):].lstrip(os.sep)
+            matched_root = _matching_local_prefix(value, local_roots)
+            if matched_root:
+                suffix = value[len(matched_root):].lstrip(os.sep)
                 mapped.append(_posix_join(remote_root, suffix))
             else:
                 mapped.append(value)
@@ -257,6 +268,26 @@ def _coerce_scalar(value: str) -> object:
     if value.lower() in {"true", "false"}:
         return value.lower() == "true"
     return value
+
+
+def _unique_existing_prefixes(paths: Iterable[str]) -> list[str]:
+    """Return de-duplicated local prefixes, longest first for stable path mapping."""
+    seen: set[str] = set()
+    unique: list[str] = []
+    for raw_path in paths:
+        path = str(raw_path or "").rstrip(os.sep)
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return sorted(unique, key=len, reverse=True)
+
+
+def _matching_local_prefix(value: str, local_roots: Iterable[str]) -> str:
+    for local_root in local_roots:
+        if value == local_root or value.startswith(local_root + os.sep):
+            return local_root
+    return ""
 
 
 def _posix_join(*parts: str) -> str:

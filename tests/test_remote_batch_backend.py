@@ -44,6 +44,36 @@ def test_remote_batch_config_loads_private_json_and_maps_dataset_paths(tmp_path:
     ]
 
 
+def test_remote_batch_config_maps_selected_mac_tmp_dataset_root_even_when_configured_root_differs() -> None:
+    config = RemoteBatchConfig(
+        name="arc",
+        host="arc.ucalgary.ca",
+        remote_root="/home/mwalle/bone-batch-smoke",
+        local_root="/tmp/bone-batch-smoke-local",
+        python="/home/mwalle/miniforge3/envs/bone/bin/python",
+        work_dir="/home/mwalle/bone-batch",
+    )
+
+    args = config.remote_args(
+        [
+            "-m",
+            "parosol_py.cli",
+            "/private/tmp/bone-batch-smoke-local/sub-001/ses-001/xct/input.AIM",
+            "--dataset-root",
+            "/private/tmp/bone-batch-smoke-local",
+        ],
+        dataset_root="/private/tmp/bone-batch-smoke-local",
+    )
+
+    assert args == [
+        "-m",
+        "parosol_py.cli",
+        "/home/mwalle/bone-batch-smoke/sub-001/ses-001/xct/input.AIM",
+        "--dataset-root",
+        "/home/mwalle/bone-batch-smoke",
+    ]
+
+
 def test_remote_batch_config_requires_explicit_private_config(monkeypatch) -> None:
     monkeypatch.delenv("SLICER_BONE_BATCH_REMOTE_CONFIG", raising=False)
 

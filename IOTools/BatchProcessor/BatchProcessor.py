@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import replace
+import importlib
 import json
 import numpy as np
 import os
@@ -78,6 +79,13 @@ except Exception as exc:
     read_manifest = _missing_derivatives_runtime
     record_output_path = _missing_derivatives_runtime
     write_manifest = _missing_derivatives_runtime
+
+import SlicerBoneImagingToolboxLib.fea_batch as _fea_batch_module  # noqa: E402
+import SlicerBoneImagingToolboxLib.remote_batch as _remote_batch_module  # noqa: E402
+
+_fea_batch_module = importlib.reload(_fea_batch_module)
+_remote_batch_module = importlib.reload(_remote_batch_module)
+
 from SlicerBoneImagingToolboxLib.fea_batch import (  # noqa: E402
     build_parosol_case_commands,
     case_readiness,

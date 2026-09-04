@@ -261,7 +261,7 @@ def build_parosol_case_commands(
             else (() if mask_requirement is None else mask_requirement.preferred_roles)
         )
         mask = case.first_artifact(role for role in mask_roles if role)
-        if mask is not None:
+        if mask is not None and Path(mask.path).expanduser() != Path(image.path).expanduser():
             args.extend(["--mask", mask.path])
         elif mask_requirement is not None and mask_requirement.required:
             continue
