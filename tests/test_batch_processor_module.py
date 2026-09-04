@@ -90,6 +90,20 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
     assert "self.serverRootEdit" in source
     assert '"Server directory"' in source
     assert '"Local processing directory"' in source
+
+
+def test_batch_processor_remote_jobs_are_submitted_and_loaded_lazily() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "self._remoteJobs" in source
+    assert "self._remotePollTimer" in source
+    assert "parse_job_id" in source
+    assert "Submitted" in source
+    assert "def _poll_remote_jobs(self):" in source
+    assert "def _remote_job_terminal_state" in source
+    assert "if self._selected_backend_key() == \"server\":" in source
+    assert "self._sync_remote_outputs_for_tool(" in source
+    assert "syncing remote outputs" in source
     assert "preferred_contours" in source
     assert "prerequisite_status" in source
     assert "def normalized_dataset_status(" in source

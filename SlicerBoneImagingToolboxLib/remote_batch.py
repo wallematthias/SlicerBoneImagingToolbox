@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 from typing import Iterable, Mapping
 
@@ -66,7 +67,7 @@ class RemoteBatchConfig:
 
 
 class SshSlurmBatchBackend:
-    """Build SSH commands that submit toolbox CLIs to SLURM with ``sbatch --wait``."""
+    """Build SSH commands that submit toolbox CLIs to SLURM."""
 
     def __init__(self, config: RemoteBatchConfig) -> None:
         if config.scheduler.lower() not in {"slurm", "ssh-slurm"}:
@@ -87,7 +88,7 @@ class SshSlurmBatchBackend:
         return [self.config.ssh, self.config.host, self._login_shell(command)]
 
     def submit_argv(self, args: Iterable[str], *, job_name: str) -> list[str]:
-        """Return an SSH argv that submits one CLI command and streams its final log."""
+        """Return an SSH argv that submits one CLI command and prints the job id."""
         remote_args = [str(arg) for arg in args]
         command = " ".join([shlex.quote(self.config.python), *[shlex.quote(arg) for arg in remote_args]])
         job_token = _safe_job_token(job_name)
@@ -117,13 +118,41 @@ class SshSlurmBatchBackend:
             f"mkdir -p {shlex.quote(remote_dir)} && "
             f"cat > {shlex.quote(script_path)} <<'BONE_BATCH_SCRIPT'\n{script_body}\nBONE_BATCH_SCRIPT\n"
             f"chmod +x {shlex.quote(script_path)} && "
-            f"sbatch --wait --job-name={shlex.quote(job_token)} --output={shlex.quote(log_path)} --error={shlex.quote(log_path)} "
-            f"{sbatch_options} {shlex.quote(script_path)}; "
-            "rc=$?; "
-            f"cat {shlex.quote(log_path)} 2>/dev/null || true; "
-            "exit $rc"
+            f"sbatch --parsable --job-name={shlex.quote(job_token)} --output={shlex.quote(log_path)} --error={shlex.quote(log_path)} "
+            f"{sbatch_options} {shlex.quote(script_path)}"
         )
         return [self.config.ssh, self.config.host, self._login_shell(submit)]
+
+    def status_argv(self, job_id: str) -> list[str]:
+        """Return an SSH argv that prints a compact SLURM state for ``job_id``."""
+        safe_job = shlex.quote(str(job_id).strip())
+        command = (
+            f"state=$(squeue -h -j {safe_job} -o %T 2>/dev/null | head -n 1 || true); "
+            'if [ -n "$state" ]; then echo "$state"; '
+            f"else sacct -n -P -j {safe_job} --format=State,ExitCode 2>/dev/null | head -n 1; fi"
+        )
+        return [self.config.ssh, self.config.host, self._login_shell(command)]
+
+    def cancel_argv(self, job_id: str) -> list[str]:
+        """Return an SSH argv that cancels ``job_id``."""
+        return [self.config.ssh, self.config.host, f"scancel {shlex.quote(str(job_id).strip())}"]
+
+    def log_argv(self, job_name: str, *, lines: int = 80) -> list[str]:
+        """Return an SSH argv that tails the saved SLURM log for ``job_name``."""
+        job_token = _safe_job_token(job_name)
+        log_path = _posix_join(self.config.work_dir, "jobs", job_token, "slurm.log")
+        command = f"tail -n {int(lines)} {shlex.quote(log_path)} 2>/dev/null || true"
+        return [self.config.ssh, self.config.host, self._login_shell(command)]
+
+    @staticmethod
+    def parse_job_id(output: str) -> str | None:
+        """Extract a SLURM job id from ``sbatch`` output."""
+        text = str(output or "").strip()
+        if not text:
+            return None
+        first = text.splitlines()[-1].strip()
+        match = re.search(r"\b(\d+)(?:[.;]\S*)?\b", first)
+        return match.group(1) if match else None
 
     def sync_output_argv(self, family: str) -> list[str]:
         """Return an rsync argv for one derivative family back to the local mirror."""

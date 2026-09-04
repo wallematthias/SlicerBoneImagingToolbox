@@ -1426,14 +1426,19 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._batchRows = []
         self._batchQueue = []
         self._batchProcess = None
+        self._batchProcessOutput = {}
         self._batchRunningRow = None
         self._batchCancelled = False
+        self._remoteJobs = {}
         self._serverBackendEnabled = os.environ.get(SLICER_BONE_BATCH_BACKEND, "").strip().lower() in {
             "server",
             "ssh",
             "slurm",
             "arc",
         }
+        self._remotePollTimer = qt.QTimer()
+        self._remotePollTimer.setInterval(15000)
+        self._remotePollTimer.timeout.connect(self._poll_remote_jobs)
 
         discovery_box = ctk.ctkCollapsibleButton()
         discovery_box.text = "Discovery"
@@ -1851,6 +1856,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
 
     def _populate_rows(self, rows):
         self._batchRows = list(rows)
+        self._apply_remote_job_overrides()
         self.table.clearSpans()
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
@@ -2081,7 +2087,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._batchRunningRow = None
             self.runAllButton.enabled = bool(self._batchRows)
             self.cancelBatchButton.enabled = False
-            if str(self.datasetRootEdit.text or "").strip():
+            if str(self.datasetRootEdit.text or "").strip() and not self._remoteJobs:
                 self._analyze_dataset()
             return
         job = self._batchQueue.pop(0)
@@ -2120,10 +2126,12 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         ) if backend_key == "server" else None
         if backend_key == "server" and remote_backend is not None:
             remote_args = remote_backend.config.remote_args(args, dataset_root=job.get("local_root"))
+            job_name = f"bone-{job.get('tool')}-{row_index + 1}"
             submit_argv = remote_backend.submit_argv(
                 remote_args,
-                job_name=f"bone-{job.get('tool')}-{row_index + 1}",
+                job_name=job_name,
             )
+            job["remote_job_name"] = job_name
             process_program = submit_argv[0]
             process_args = submit_argv[1:]
             self._append_log(f"[batch] submitting remote {remote_backend.config.name}: {' '.join(submit_argv)}")
@@ -2145,6 +2153,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             )
         )
         self._batchProcess = process
+        self._batchProcessOutput[id(process)] = ""
         process.start(process_program, process_args)
         if not process.waitForStarted(1000):
             self._batchProcess = None
@@ -2161,6 +2170,21 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._set_row_status(row_index, "Cancelled")
             self._set_row_action(row_index, "Run")
         process = self._batchProcess
+        for remote_job in list(self._remoteJobs.values()):
+            if not isinstance(remote_job, dict) or not remote_job.get("job_id"):
+                continue
+            backend = self._remote_backend(
+                local_root=remote_job.get("local_root"),
+                remote_root=remote_job.get("remote_root"),
+            )
+            if backend is None:
+                continue
+            try:
+                subprocess.run(backend.cancel_argv(str(remote_job["job_id"])), capture_output=True, text=True, timeout=30)
+            except Exception as exc:
+                self._append_log(f"[batch] remote cancel failed: {exc}")
+        self._remoteJobs = {}
+        self._stop_remote_polling_if_idle()
         if process is not None:
             self._append_log("[batch] cancelling running job")
             process.terminate()
@@ -2176,6 +2200,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _append_process_output(self, process):
         text = self._clean_process_output(self._qbytearray_to_text(process.readAll()))
         if text:
+            key = id(process)
+            self._batchProcessOutput[key] = (self._batchProcessOutput.get(key, "") + "\n" + text).strip()
             self._append_log(text)
 
     @staticmethod
@@ -2196,6 +2222,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _batch_process_finished(self, row_index, process, job=None, *signal_args):
         self._append_process_output(process)
         exit_code = int(signal_args[0]) if signal_args else int(process.exitCode())
+        process_output = self._batchProcessOutput.pop(id(process), "")
         self._batchProcess = None
         job = dict(job or {})
         tool_key = str(job.get("tool") or self._selected_tool_key())
@@ -2206,11 +2233,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._append_log("[batch] cancelled")
         elif exit_code == 0:
             if str(job.get("backend") or "local") == "server":
-                self._sync_remote_outputs_for_tool(
-                    tool_key,
-                    local_root=job.get("local_root"),
-                    remote_root=job.get("remote_root"),
-                )
+                self._mark_remote_job_submitted(row_index, job, process_output)
+                self._start_next_batch_job()
+                return
             if tool_key == "fea" and 0 <= row_index < len(self._batchRows):
                 published = self.logic.publish_fea_batch_outputs(
                     str(job.get("local_root") or self.datasetRootEdit.text),
@@ -2228,6 +2253,127 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._set_row_action(row_index, "Run")
             self._append_log(f"[batch] failed with exit code {exit_code}")
         self._start_next_batch_job()
+
+    def _mark_remote_job_submitted(self, row_index, job, process_output):
+        backend = self._remote_backend(local_root=job.get("local_root"), remote_root=job.get("remote_root"))
+        job_id = backend.parse_job_id(process_output) if backend is not None else None
+        if not job_id:
+            self._set_row_status(row_index, "Error: no SLURM job id")
+            self._set_row_action(row_index, "Run")
+            self._append_log("[batch] remote submit finished but no SLURM job id was returned")
+            return
+        row_key = self._row_remote_key(row_index, job)
+        self._remoteJobs[row_key] = {
+            "job_id": str(job_id),
+            "row_index": int(row_index),
+            "tool": str(job.get("tool") or ""),
+            "profile": str(job.get("profile") or ""),
+            "local_root": str(job.get("local_root") or ""),
+            "remote_root": str(job.get("remote_root") or ""),
+            "remote_job_name": str(job.get("remote_job_name") or ""),
+            "state": "SUBMITTED",
+        }
+        self._set_row_status(row_index, f"Submitted {job_id}")
+        self._set_row_action(row_index, "Submitted")
+        self._append_log(f"[batch] submitted remote SLURM job {job_id}")
+        self._start_remote_polling()
+
+    def _start_remote_polling(self):
+        if self._remoteJobs and not self._remotePollTimer.isActive():
+            self._remotePollTimer.start()
+
+    def _stop_remote_polling_if_idle(self):
+        if not self._remoteJobs and self._remotePollTimer.isActive():
+            self._remotePollTimer.stop()
+
+    def _poll_remote_jobs(self):
+        if not self._remoteJobs:
+            self._stop_remote_polling_if_idle()
+            return
+        for row_key, remote_job in list(self._remoteJobs.items()):
+            backend = self._remote_backend(
+                local_root=remote_job.get("local_root"),
+                remote_root=remote_job.get("remote_root"),
+            )
+            if backend is None:
+                continue
+            job_id = str(remote_job.get("job_id") or "")
+            row_index = int(remote_job.get("row_index", -1))
+            try:
+                result = subprocess.run(backend.status_argv(job_id), capture_output=True, text=True, timeout=30)
+                state_text = (result.stdout or result.stderr or "").strip()
+            except Exception as exc:
+                self._append_log(f"[batch] could not poll remote job {job_id}: {exc}")
+                continue
+            status, terminal = self._remote_job_terminal_state(state_text)
+            remote_job["state"] = status
+            if row_index >= 0 and row_index < len(self._batchRows):
+                self._set_row_status(row_index, f"{status} {job_id}".strip())
+            if not terminal:
+                continue
+            self._remoteJobs.pop(row_key, None)
+            if status == "Done":
+                if row_index >= 0 and row_index < len(self._batchRows):
+                    self._set_row_status(row_index, "Done")
+                    self._set_row_action(row_index, "Load")
+                self._append_log(f"[batch] remote job {job_id} completed")
+            else:
+                if row_index >= 0 and row_index < len(self._batchRows):
+                    self._set_row_action(row_index, "Run")
+                self._append_log(f"[batch] remote job {job_id} ended: {state_text or status}")
+                log_name = str(remote_job.get("remote_job_name") or "")
+                if log_name:
+                    try:
+                        log_result = subprocess.run(backend.log_argv(log_name), capture_output=True, text=True, timeout=30)
+                        log_text = self._clean_process_output((log_result.stdout or log_result.stderr or "").strip())
+                        if log_text:
+                            self._append_log(log_text)
+                    except Exception:
+                        pass
+        self._stop_remote_polling_if_idle()
+
+    @staticmethod
+    def _remote_job_terminal_state(state_text):
+        text = str(state_text or "").strip().upper()
+        if not text:
+            return "Submitted", False
+        first = text.splitlines()[0].split("|")[0].strip()
+        if first in {"PENDING", "CONFIGURING"}:
+            return "Queued", False
+        if first in {"RUNNING", "COMPLETING"}:
+            return "Running", False
+        if first.startswith("COMPLETED"):
+            return "Done", True
+        if "OUT_OF_MEMORY" in first or "OOM" in first:
+            return "OOM", True
+        if first in {"FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "PREEMPTED"}:
+            return first.title(), True
+        return first.title(), True
+
+    def _row_remote_key(self, row_index, job=None):
+        row = dict((job or {}).get("row") or (self._batchRows[int(row_index)] if 0 <= int(row_index) < len(self._batchRows) else {}))
+        return "|".join(
+            str(value or "")
+            for value in (
+                (job or {}).get("tool") or self._selected_tool_key(),
+                (job or {}).get("profile") or self.profileCombo.currentData,
+                row.get("subject"),
+                row.get("session"),
+                row.get("voi_value", row.get("voi")),
+                row.get("stack_index"),
+            )
+        )
+
+    def _apply_remote_job_overrides(self):
+        for row_index, row in enumerate(self._batchRows):
+            key = self._row_remote_key(row_index, {"row": row, "tool": self._selected_tool_key(), "profile": self.profileCombo.currentData})
+            remote_job = self._remoteJobs.get(key)
+            if not remote_job:
+                continue
+            state = str(remote_job.get("state") or "SUBMITTED").title()
+            job_id = str(remote_job.get("job_id") or "")
+            row["status"] = f"{state} {job_id}".strip()
+            row["action"] = "Submitted"
 
     def _sync_remote_outputs_for_tool(self, tool_key, *, local_root=None, remote_root=None):
         backend = self._remote_backend(local_root=local_root, remote_root=remote_root)

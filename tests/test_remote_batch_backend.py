@@ -73,7 +73,7 @@ def test_remote_batch_config_parses_sbatch_options_with_colons(tmp_path: Path) -
     assert config.sbatch_options == ("--time=01:00:00",)
 
 
-def test_slurm_backend_builds_ssh_sbatch_wait_submission_without_partition() -> None:
+def test_slurm_backend_builds_async_sbatch_submission_without_partition() -> None:
     backend = SshSlurmBatchBackend(
         RemoteBatchConfig(
             name="arc",
@@ -88,10 +88,39 @@ def test_slurm_backend_builds_ssh_sbatch_wait_submission_without_partition() -> 
 
     assert argv[:2] == ["ssh", "arc.ucalgary.ca"]
     script = argv[2]
-    assert "sbatch --wait" in script
+    assert "sbatch --parsable" in script
+    assert "--wait" not in script
     assert "--partition" not in script
     assert "/env/bin/python -m bone_microarchitecture.cli run-batch /remote/data" in script
-    assert "cat " in script
+    assert "cat /remote/work/jobs/micro_001/slurm.log" not in script
+
+
+def test_slurm_backend_parses_submitted_job_id() -> None:
+    assert SshSlurmBatchBackend.parse_job_id("47742177\n") == "47742177"
+    assert SshSlurmBatchBackend.parse_job_id("47742177;cluster\n") == "47742177"
+    assert SshSlurmBatchBackend.parse_job_id("Submitted batch job 47742177\n") == "47742177"
+
+
+def test_slurm_backend_builds_status_cancel_and_log_commands() -> None:
+    backend = SshSlurmBatchBackend(
+        RemoteBatchConfig(
+            name="arc",
+            host="arc.ucalgary.ca",
+            remote_root="/remote/data",
+            python="/env/bin/python",
+            work_dir="/remote/work",
+        )
+    )
+
+    status = backend.status_argv("47742177")
+    cancel = backend.cancel_argv("47742177")
+    log = backend.log_argv("bone-job")
+
+    assert status[:2] == ["ssh", "arc.ucalgary.ca"]
+    assert "squeue" in status[2]
+    assert "sacct" in status[2]
+    assert cancel == ["ssh", "arc.ucalgary.ca", "scancel 47742177"]
+    assert "tail -n 80 /remote/work/jobs/bone-job/slurm.log" in log[2]
 
 
 def test_slurm_backend_syncs_output_family_to_local_dataset_root() -> None:
