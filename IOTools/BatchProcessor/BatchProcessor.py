@@ -3013,7 +3013,7 @@ print(str(csv_path))
     def _load_mechanoregulation_outputs(self, row, output_paths):
         loaded = 0
         folder_name = self._mechanoregulation_folder_name(row)
-        loaded += self._load_mechanoregulation_context_volumes(row, folder_name)
+        loaded += self._load_mechanoregulation_context_volumes(row, folder_name, output_paths)
         summary_paths = [
             Path(path)
             for path in output_paths
@@ -3140,10 +3140,20 @@ print(str(csv_path))
             return ""
         return f"{number:.4g}"
 
-    def _load_mechanoregulation_context_volumes(self, row, folder_name):
+    @staticmethod
+    def _mechanoregulation_surface_events_path(output_paths):
+        for path in output_paths or []:
+            path = Path(path)
+            if path.exists() and "surface-events" in path.name.lower():
+                return path
+        return None
+
+    def _load_mechanoregulation_context_volumes(self, row, folder_name, output_paths=None):
         loaded = 0
         sed_node = None
-        context_paths = [("sed", str(row.get("sed_path") or "").strip())]
+        surface_events_path = self._mechanoregulation_surface_events_path(output_paths)
+        sed_path = self._mechanoregulation_aligned_sed_display_path(row, surface_events_path)
+        context_paths = [("sed", str(sed_path or "").strip())]
         for role, path_text in context_paths:
             if not path_text:
                 continue
@@ -3171,7 +3181,7 @@ print(str(csv_path))
                 loaded += 1
             except Exception as exc:
                 self._append_log(f"[batch] Could not load mechanoregulation {role} context {path.name}: {exc}")
-        remodelling_path = Path(str(row.get("image_path") or "").strip())
+        remodelling_path = surface_events_path or Path(str(row.get("image_path") or "").strip())
         if remodelling_path.exists():
             loaded += self._load_mechanoregulation_remodelling_as_segmentation(
                 row,
@@ -3181,8 +3191,48 @@ print(str(csv_path))
             )
         return loaded
 
+    def _mechanoregulation_aligned_sed_display_path(self, row, reference_path):
+        sed_text = str(row.get("sed_path") or "").strip()
+        if not sed_text:
+            return None
+        sed_path = Path(sed_text)
+        if not sed_path.exists() or reference_path is None or not Path(reference_path).exists():
+            return sed_path
+        try:
+            sed_image = sitk.ReadImage(str(sed_path))
+            reference = sitk.ReadImage(str(reference_path))
+            same_grid = (
+                sed_image.GetSize() == reference.GetSize()
+                and sed_image.GetSpacing() == reference.GetSpacing()
+                and sed_image.GetOrigin() == reference.GetOrigin()
+                and sed_image.GetDirection() == reference.GetDirection()
+            )
+            if same_grid:
+                return sed_path
+            if sed_image.GetSize() == reference.GetSize() and sed_image.GetSpacing() == reference.GetSpacing():
+                aligned = sitk.GetImageFromArray(sitk.GetArrayFromImage(sed_image).astype(np.float32, copy=False))
+                aligned.CopyInformation(reference)
+            else:
+                aligned = sitk.Resample(
+                    sitk.Cast(sed_image, sitk.sitkFloat32),
+                    reference,
+                    sitk.Transform(3, sitk.sitkIdentity),
+                    sitk.sitkLinear,
+                    0.0,
+                    sitk.sitkFloat32,
+                )
+            cache_dir = Path(tempfile.gettempdir()) / "SlicerBoneImagingToolbox" / "BatchProcessor" / "mechanoregulation_display"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            output_path = cache_dir / f"{Path(reference_path).stem}_sed_on_events_grid.nii.gz"
+            sitk.WriteImage(aligned, str(output_path))
+            return output_path
+        except Exception as exc:
+            self._append_log(f"[batch] Could not align mechanoregulation SED for display: {exc}")
+            return sed_path
+
     def _load_mechanoregulation_remodelling_as_segmentation(self, row, path: Path, folder_name: str, sed_node):
-        if "_remodelling" not in path.name.lower():
+        lowered = path.name.lower()
+        if "_remodelling" not in lowered and "surface-events" not in lowered:
             return 0
         node_name = f"{path.stem}_formation-resorption"
         self._remove_existing_node_named(path.stem)

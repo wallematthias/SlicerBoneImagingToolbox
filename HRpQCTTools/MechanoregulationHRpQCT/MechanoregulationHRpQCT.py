@@ -329,7 +329,7 @@ class MechanoregulationHRpQCTLogic(ScriptedLoadableModuleLogic):
         return list(available_case_rois(case))
 
     def case_output_record(self, case, roi="full"):
-        _prefer_local_core()
+        _prefer_local_core(force_reload=True)
         from bonemechreg.timelapse import (
             case_outputs,
         )
@@ -339,7 +339,7 @@ class MechanoregulationHRpQCTLogic(ScriptedLoadableModuleLogic):
         metrics = read_metric_summary(summary_path)
         complete = all(
             outputs[key].exists()
-            for key in ("sed", "material", "summary", "csv", "curves")
+            for key in ("sed", "material", "summary", "csv", "surface_events", "curves")
         )
         return {
             "case": case,
@@ -900,8 +900,45 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             )
             sitk.WriteImage(resampled, str(path))
         except Exception as exc:
-            self._show(f"[scene] could not resample {path.name} to SED grid: {exc}")
+            self._show(f"[scene] could not resample {path.name} to reference grid: {exc}")
         return path
+
+    def _align_saved_scene_image_to_reference_image(self, path, reference_path, *, nearest=False):
+        if path is None or reference_path is None:
+            return path
+        path = Path(path)
+        reference_path = Path(reference_path)
+        try:
+            image = sitk.ReadImage(str(path))
+            reference = sitk.ReadImage(str(reference_path))
+            if (
+                image.GetSize() == reference.GetSize()
+                and np.allclose(image.GetSpacing(), reference.GetSpacing())
+                and np.allclose(image.GetOrigin(), reference.GetOrigin())
+                and np.allclose(image.GetDirection(), reference.GetDirection())
+            ):
+                return path
+            if image.GetSize() == reference.GetSize() and np.allclose(image.GetSpacing(), reference.GetSpacing()):
+                aligned = sitk.GetImageFromArray(sitk.GetArrayFromImage(image))
+                aligned.CopyInformation(reference)
+                sitk.WriteImage(aligned, str(path))
+                return path
+            interpolator = sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear
+            resampled = sitk.Resample(
+                image,
+                reference,
+                sitk.Transform(),
+                interpolator,
+                0,
+                image.GetPixelID(),
+            )
+            sitk.WriteImage(resampled, str(path))
+        except Exception as exc:
+            self._show(f"[scene] could not align {path.name} to remodelling grid: {exc}")
+        return path
+
+    def _align_saved_scene_scalar_to_reference_image(self, path, reference_path):
+        return self._align_saved_scene_image_to_reference_image(path, reference_path, nearest=False)
 
     def _refresh_scene_remodelling_role_controls(self):
         node = self.sceneRemodellingSelector.currentNode() if hasattr(self, "sceneRemodellingSelector") else None
@@ -1059,16 +1096,17 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         selected_segment_id = str(combo.currentData or "").strip()
         return selected_segment_id or None
 
-    def _save_scene_analysis_mask(self, node, path, reference_node=None):
+    def _save_scene_analysis_mask(self, node, path, reference_node=None, reference_path=None):
         if node is None:
             return None
         if not node.IsA("vtkMRMLSegmentationNode"):
             saved_path = self._save_scene_node(node, path)
-            return self._resample_saved_scene_image_to_reference_node(
+            saved_path = self._resample_saved_scene_image_to_reference_node(
                 saved_path,
                 reference_node,
                 nearest=True,
             )
+            return self._align_saved_scene_image_to_reference_image(saved_path, reference_path, nearest=True)
         segment_id = self._selected_scene_analysis_mask_segment_id()
         segmentation = node.GetSegmentation()
         if not segment_id:
@@ -1094,11 +1132,12 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             if not ok:
                 raise RuntimeError(f"Could not export selected segment from {node.GetName()}.")
             saved_path = self._save_scene_node(label_node, path)
-            return self._resample_saved_scene_image_to_reference_node(
+            saved_path = self._resample_saved_scene_image_to_reference_node(
                 saved_path,
                 reference_node,
                 nearest=True,
             )
+            return self._align_saved_scene_image_to_reference_image(saved_path, reference_path, nearest=True)
         finally:
             slicer.mrmlScene.RemoveNode(label_node)
 
@@ -1115,13 +1154,17 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         remodelling_path = self._save_scene_remodelling_map(
             remodelling_node,
             input_dir / f"scene-row-{row + 1:02d}_remodelling.nii.gz",
-            reference_node=sed_node,
         )
         baseline_sed_path = self._save_scene_node(sed_node, input_dir / f"scene-row-{row + 1:02d}_sed.nii.gz")
+        baseline_sed_path = self._align_saved_scene_scalar_to_reference_image(
+            baseline_sed_path,
+            remodelling_path,
+        )
         analysis_mask_path = self._save_scene_analysis_mask(
             self.sceneAnalysisMaskSelector.currentNode(),
             input_dir / f"scene-row-{row + 1:02d}_analysis-mask.nii.gz",
-            reference_node=sed_node,
+            reference_node=remodelling_node if not remodelling_node.IsA("vtkMRMLSegmentationNode") else None,
+            reference_path=remodelling_path,
         )
         if analysis_mask_path is not None:
             self._show(f"[scene] using analysis mask: {Path(analysis_mask_path).name}")
@@ -1587,12 +1630,10 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not staged_rows:
             slicer.util.warningDisplay("No scene mechanoregulation outputs are available yet.")
             return
-        if self._style_selected_scene_sed():
-            loaded += 1
         summary_paths = []
         for staged in staged_rows:
             try:
-                _prefer_local_core()
+                _prefer_local_core(force_reload=True)
                 from bonemechreg.timelapse import TimelapseCase, case_outputs
 
                 def optional_path(value):
@@ -1610,11 +1651,28 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
                     full_mask_path=optional_path(staged.get("full_mask_path")),
                 )
                 outputs = case_outputs(case, roi="full")
+                sed_node = None
+                sed_path = outputs.get("sed")
+                if sed_path is not None and Path(sed_path).exists():
+                    sed_node = self._load_scalar_volume(sed_path, self._loaded_node_name(staged.get("case_id", "case"), "sed"))
+                    if sed_node is not None:
+                        self._style_fe_scalar_volume(sed_node)
+                        loaded += 1
+                elif self._style_selected_scene_sed():
+                    sed_node = self.sceneSedSelector.currentNode()
+                    loaded += 1
+                event_path = self._scene_surface_events_path(outputs, staged)
+                is_surface_events = event_path is not None and Path(event_path).exists()
+                if not is_surface_events:
+                    event_path = staged.get("remodelling_image_path")
+                    self._show(f"[load] using volume remodelling fallback: {Path(event_path).name}")
+                else:
+                    self._show(f"[load] using analysed surface events: {Path(event_path).name}")
                 if self._load_event_segmentation(
-                    staged.get("remodelling_image_path"),
+                    event_path,
                     self._loaded_node_name(staged.get("case_id", "case"), "events"),
-                    reference_node=self.sceneSedSelector.currentNode(),
-                    mask_path=staged.get("full_mask_path"),
+                    reference_node=sed_node,
+                    mask_path=None if is_surface_events else staged.get("full_mask_path"),
                 ) is not None:
                     loaded += 1
                 csv_path = outputs.get("csv")
@@ -1631,6 +1689,26 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self._show(f"[scene] could not load compact mechanoregulation table: {exc}")
         if loaded:
             self.sceneStatusLabel.text = f"{self.sceneStatusLabel.text} Loaded {loaded} output artifact(s)."
+
+    def _scene_surface_events_path(self, outputs, staged):
+        path = outputs.get("surface_events") if outputs else None
+        if path is not None and Path(path).exists():
+            return Path(path)
+        output_dir = Path(staged.get("output_dir") or "")
+        if not output_dir.exists():
+            return path
+        case_id = str(staged.get("case_id") or "").strip()
+        patterns = []
+        if case_id:
+            patterns.append(f"{case_id}_roi-full_surface-events.nii.gz")
+            patterns.append(f"{case_id}*_surface-events.nii.gz")
+        patterns.append("*_roi-full_surface-events.nii.gz")
+        patterns.append("*_surface-events.nii.gz")
+        for pattern in patterns:
+            matches = sorted(output_dir.glob(pattern))
+            if matches:
+                return matches[0]
+        return path
 
     def _style_selected_scene_sed(self):
         sed_node = self.sceneSedSelector.currentNode() if hasattr(self, "sceneSedSelector") else None
@@ -1865,7 +1943,7 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             events = np.zeros(array.shape, dtype=np.uint8)
             events[array == 1] = 1
             events[(array == 3) | (array == 4)] = 2
-            mask_array = self._event_display_mask_array(mask_path, events.shape)
+            mask_array = self._event_display_mask_array(mask_path, events.shape, reference_path=path)
             if mask_array is not None:
                 events[~mask_array] = 0
             slicer.util.updateVolumeFromArray(label_node, events)
@@ -1921,13 +1999,30 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception:
             pass
 
-    def _event_display_mask_array(self, mask_path, expected_shape):
+    def _event_display_mask_array(self, mask_path, expected_shape, reference_path=None):
         if mask_path is None or not Path(mask_path).exists():
             return None
         try:
             import SimpleITK as sitk
 
             mask_image = sitk.ReadImage(str(mask_path))
+            if reference_path is not None and Path(reference_path).exists():
+                reference_image = sitk.ReadImage(str(reference_path))
+                same_grid = (
+                    mask_image.GetSize() == reference_image.GetSize()
+                    and mask_image.GetSpacing() == reference_image.GetSpacing()
+                    and mask_image.GetOrigin() == reference_image.GetOrigin()
+                    and mask_image.GetDirection() == reference_image.GetDirection()
+                )
+                if not same_grid:
+                    mask_image = sitk.Resample(
+                        sitk.Cast(mask_image > 0, sitk.sitkUInt8),
+                        reference_image,
+                        sitk.Transform(3, sitk.sitkIdentity),
+                        sitk.sitkNearestNeighbor,
+                        0,
+                        sitk.sitkUInt8,
+                    )
             mask_array = sitk.GetArrayFromImage(mask_image) > 0
         except Exception as exc:
             self._show(f"[load] could not apply analysis mask to event display: {exc}")

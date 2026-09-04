@@ -90,7 +90,7 @@ def test_parosol_scene_field_loader_restores_tight_crops_to_reference_grid() -> 
     assert "Loaded {display_name} field on reference grid" in load_body
 
 
-def test_mechanoregulation_scene_stages_inputs_on_selected_sed_grid() -> None:
+def test_mechanoregulation_scene_stages_inputs_on_remodelling_grid() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
     assert "import SimpleITK as sitk" in source
     helper_body = source.split("def _resample_saved_scene_image_to_reference_node", 1)[1].split("\n    def ", 1)[0]
@@ -99,7 +99,10 @@ def test_mechanoregulation_scene_stages_inputs_on_selected_sed_grid() -> None:
     assert "sitk.Resample(" in helper_body
     assert "sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear" in helper_body
     assert "saved_path = self._resample_saved_scene_image_to_reference_node(" in source
-    assert "reference_node=sed_node" in stage_body
+    assert "baseline_sed_path = self._align_saved_scene_scalar_to_reference_image(" in stage_body
+    assert "baseline_sed_path" in stage_body
+    assert "remodelling_path" in stage_body
+    assert "reference_node=remodelling_node" in stage_body
 
 
 def test_parosol_fea_manifest_writer_merges_existing_records() -> None:
@@ -270,6 +273,7 @@ def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api()
     assert "self._style_selected_scene_sed()" in source
     assert "def _style_selected_scene_sed" in source
     assert "self._style_fe_scalar_volume(sed_node)" in source
+    assert "def _align_saved_scene_scalar_to_reference_image" in source
     assert "self._load_event_segmentation" in source
     assert "def _write_scene_mechanoregulation_summary_table_csv" in source
     assert 'outputs = case_outputs(case, roi="full")' in source
@@ -281,7 +285,10 @@ def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api()
     assert 'slicer.util.loadTable(str(path), {"name": name})' not in source
     assert "MRMLIDImageIO" in source
     assert "ImageIO factory did not return an ImageIOBase" in source
-    assert "mask_path=staged.get(\"full_mask_path\")" in source
+    assert "def _scene_surface_events_path" in source
+    assert 'event_path = self._scene_surface_events_path(outputs, staged)' in source
+    assert "using analysed surface events" in source
+    assert 'mask_path=None if is_surface_events else staged.get("full_mask_path")' in source
     assert "def _event_display_mask_array" in source
     assert "events[~mask_array] = 0" in source
     assert "profile = \"standard\"" in source

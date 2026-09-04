@@ -289,6 +289,10 @@ def test_batch_processor_fea_and_mechanoregulation_use_low_blue_high_red_sed_col
 def test_batch_processor_mechanoregulation_loads_events_as_sed_linked_segmentation() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 
+    assert "def _mechanoregulation_surface_events_path(" in source
+    assert "surface-events" in source
+    assert "def _mechanoregulation_aligned_sed_display_path(" in source
+    assert "mechanoregulation_display" in source
     assert "def _load_mechanoregulation_remodelling_as_segmentation(" in source
     assert "def _load_binary_event_labelmap(" in source
     assert '("resorption", "Resorption", np.isin(remodelling_array, (1,)))' in source
