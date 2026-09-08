@@ -88,7 +88,7 @@ def test_dataset_naming_helper_reloads_derivative_wrapper_for_slicer_reload_cach
     assert "split_identity_metadata = _derivatives_api.split_identity_metadata" in source
 
 
-def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None:
+def test_batch_processor_remote_ui_hides_private_paths_but_keeps_resource_overrides() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 
     assert "SLICER_BONE_BATCH_BACKEND" in source
@@ -98,9 +98,9 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
     assert "show_backend_selector = len(self._batchBackends) > 1 or self._serverBackendEnabled" in source
     assert "self.backendLabel.visible = show_backend_selector" in source
     assert "self.backendCombo.visible = show_backend_selector" in source
-    assert "self.serverRootEdit" in source
-    assert '"Server directory"' in source
-    assert '"Local processing directory"' in source
+    assert "self.serverRootEdit" not in source
+    assert '"Server directory"' not in source
+    assert '"Local processing directory"' not in source
     assert "self.serverTimeEdit" in source
     assert '"Wall time"' in source
     assert "self.serverMemoryEdit" in source
@@ -185,8 +185,8 @@ def test_batch_processor_remote_fea_rows_use_remote_artifact_memory() -> None:
     assert "Execution backend" in source
     assert '("Bone Contouring", "bone_contouring")' in source
     assert '"bone_contouring": "BoneContours"' in source
-    assert "Local" in source
     assert "Server" in source
+    assert "LocalBatchBackend" in (ROOT / "SlicerBoneImagingToolboxLib" / "batch_backends.py").read_text(encoding="utf-8")
     assert "Server backends are configured in private adapters" in source
     assert 'self.skipExistingCheck.checked = True' in source
     assert 'self.table.setHorizontalHeaderLabels(headers)' in source

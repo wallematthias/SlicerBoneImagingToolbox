@@ -1520,13 +1520,6 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.datasetRootLabel = qt.QLabel("Dataset root")
         discovery_form.addRow(self.datasetRootLabel, root_row)
 
-        self.serverRootEdit = qt.QLineEdit()
-        self.serverRootEdit.placeholderText = "Remote normalized dataset root on the server"
-        self.serverRootEdit.visible = False
-        self.serverRootLabel = qt.QLabel("Server directory")
-        self.serverRootLabel.visible = False
-        discovery_form.addRow(self.serverRootLabel, self.serverRootEdit)
-
         self.serverTimeEdit = qt.QLineEdit()
         self.serverTimeEdit.placeholderText = "00:30:00"
         self.serverTimeLabel = qt.QLabel("Wall time")
@@ -1642,7 +1635,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _browse_dataset_root(self):
         path = qt.QFileDialog.getExistingDirectory(
             slicer.util.mainWindow(),
-            "Select local processing directory" if self._selected_backend_key() != "local" else "Select normalized dataset root",
+            "Select normalized dataset root",
             self.datasetRootEdit.text,
         )
         if path:
@@ -1651,17 +1644,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _apply_backend_visibility(self):
         server_selected = self._selected_backend_key() != "local"
         if hasattr(self, "datasetRootLabel"):
-            self.datasetRootLabel.text = "Local processing directory" if server_selected else "Dataset root"
+            self.datasetRootLabel.text = "Dataset root"
         if hasattr(self, "browseDatasetButton"):
-            self.browseDatasetButton.toolTip = (
-                "Select the local mirror used for server output load-back."
-                if server_selected
-                else "Select the normalized dataset root."
-            )
-        if hasattr(self, "serverRootEdit"):
-            self.serverRootEdit.visible = server_selected
-        if hasattr(self, "serverRootLabel"):
-            self.serverRootLabel.visible = server_selected
+            self.browseDatasetButton.toolTip = "Select the normalized dataset root."
         for attr in (
             "serverTimeEdit",
             "serverTimeLabel",
@@ -1680,8 +1665,6 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             config = load_remote_batch_config()
         except Exception:
             return
-        if hasattr(self, "serverRootEdit") and not str(self.serverRootEdit.text or "").strip():
-            self.serverRootEdit.text = str(config.remote_root)
         if hasattr(self, "datasetRootEdit") and not str(self.datasetRootEdit.text or "").strip() and config.local_root:
             self.datasetRootEdit.text = str(Path(config.local_root).expanduser())
         options = self._server_sbatch_options_from_config(config.sbatch_options)
@@ -1795,8 +1778,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._apply_backend_visibility()
         if self._has_active_batch():
             self._append_log("[batch] Backend change will not affect already queued jobs.")
-        server_text = str(self.serverRootEdit.text or "").strip() if hasattr(self, "serverRootEdit") else ""
-        if str(self.datasetRootEdit.text or "").strip() or server_text:
+        if str(self.datasetRootEdit.text or "").strip():
             self._analyze_dataset()
 
     def _selected_tool_key(self):
@@ -1852,9 +1834,10 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         return str(self.datasetRootEdit.text or "").strip()
 
     def _current_remote_dataset_root(self):
-        if not hasattr(self, "serverRootEdit"):
+        try:
+            return str(load_remote_batch_config().remote_root or "").strip()
+        except Exception:
             return ""
-        return str(self.serverRootEdit.text or "").strip()
 
     def _remote_backend(self, *, local_root=None, remote_root=None, mpi: bool = False):
         try:
