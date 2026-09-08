@@ -40,6 +40,15 @@ def test_batch_backend_registry_knows_private_toolbox_module_name() -> None:
     assert '"SlicerBoneImagingToolboxPrivateLib.batch_backends"' in source
 
 
+def test_batch_backend_registry_reinvokes_private_registration_hook() -> None:
+    source = (Path(__file__).resolve().parents[1] / "SlicerBoneImagingToolboxLib" / "batch_backends.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'getattr(module, "register_private_batch_backends", None)' in source
+    assert "registration()" in source
+
+
 def test_remote_batch_config_loads_private_json_and_maps_dataset_paths(tmp_path: Path) -> None:
     config_path = tmp_path / "arc.json"
     local_root = tmp_path / "local"

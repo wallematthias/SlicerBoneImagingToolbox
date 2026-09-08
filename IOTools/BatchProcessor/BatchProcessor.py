@@ -1805,6 +1805,43 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _selected_backend_key(self):
         return str(getattr(self.backendCombo, "currentData", "") or "local")
 
+    def _refresh_batch_backends(self):
+        previous_key = "local"
+        if hasattr(self, "backendCombo"):
+            previous_key = self._selected_backend_key()
+        self._batchBackends = self._available_batch_backends()
+        self._serverBackendEnabled = "server" in self._batchBackends or os.environ.get(SLICER_BONE_BATCH_BACKEND, "").strip().lower() in {
+            "server",
+            "ssh",
+            "slurm",
+            "arc",
+        }
+        if hasattr(self, "backendCombo"):
+            previous = self.backendCombo.blockSignals(True)
+            try:
+                self.backendCombo.clear()
+                for backend in self._batchBackends.values():
+                    self.backendCombo.addItem(backend.label, backend.key)
+                server_index = self.backendCombo.findData("server")
+                if server_index >= 0:
+                    self.backendCombo.setItemData(
+                        server_index,
+                        "Server backends are configured in private adapters.",
+                        qt.Qt.ToolTipRole,
+                    )
+                index = self.backendCombo.findData(previous_key)
+                if index < 0 and self._serverBackendEnabled:
+                    index = self.backendCombo.findData("server")
+                self.backendCombo.setCurrentIndex(index if index >= 0 else 0)
+            finally:
+                self.backendCombo.blockSignals(previous)
+        show_backend_selector = len(self._batchBackends) > 1 or self._serverBackendEnabled
+        if hasattr(self, "backendLabel"):
+            self.backendLabel.visible = show_backend_selector
+        if hasattr(self, "backendCombo"):
+            self.backendCombo.visible = show_backend_selector
+        self._apply_backend_visibility()
+
     def _available_batch_backends(self):
         backends = available_batch_backends()
         if getattr(self, "_serverBackendEnabled", False) and "server" not in backends:

@@ -115,6 +115,15 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
     assert "Remote discovery returned invalid JSON" in source
 
 
+def test_batch_processor_exposes_runtime_backend_refresh_hook() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "def _refresh_batch_backends(self):" in source
+    assert "self.backendCombo.clear()" in source
+    assert "self.backendCombo.addItem(backend.label, backend.key)" in source
+    assert "self._apply_backend_visibility()" in source
+
+
 def test_batch_processor_remote_jobs_are_submitted_and_loaded_lazily() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 

@@ -81,9 +81,15 @@ def _load_private_backend_modules() -> None:
     _PRIVATE_MODULES_LOADED = True
     for module_name in _private_backend_module_names():
         try:
-            importlib.import_module(module_name)
+            module = importlib.import_module(module_name)
         except Exception:
             continue
+        registration = getattr(module, "register_private_batch_backends", None)
+        if callable(registration):
+            try:
+                registration()
+            except Exception:
+                continue
 
 
 def _private_backend_module_names() -> tuple[str, ...]:
