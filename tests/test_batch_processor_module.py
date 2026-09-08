@@ -2226,6 +2226,13 @@ def test_batch_processor_populates_backend_combo_from_registry() -> None:
     assert 'if backend_key != "local" and remote_backend is not None:' in source
 
 
+def test_batch_processor_enables_server_when_private_backend_registered() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'self._serverBackendEnabled = "server" in self._batchBackends or os.environ.get(SLICER_BONE_BATCH_BACKEND, "")' in source
+    assert "self._batchBackends = self._available_batch_backends()" in source
+
+
 def test_timelapse_outputs_are_discovered_as_series_outputs(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     logic = module.BatchProcessorLogic()

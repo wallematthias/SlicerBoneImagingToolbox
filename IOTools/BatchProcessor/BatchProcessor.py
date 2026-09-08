@@ -1491,13 +1491,13 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._batchRunningRow = None
         self._batchCancelled = False
         self._remoteJobs = {}
-        self._serverBackendEnabled = os.environ.get(SLICER_BONE_BATCH_BACKEND, "").strip().lower() in {
+        self._batchBackends = self._available_batch_backends()
+        self._serverBackendEnabled = "server" in self._batchBackends or os.environ.get(SLICER_BONE_BATCH_BACKEND, "").strip().lower() in {
             "server",
             "ssh",
             "slurm",
             "arc",
         }
-        self._batchBackends = self._available_batch_backends()
         self._remotePollTimer = qt.QTimer()
         self._remotePollTimer.setInterval(15000)
         self._remotePollTimer.timeout.connect(self._poll_remote_jobs)
@@ -1642,7 +1642,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _browse_dataset_root(self):
         path = qt.QFileDialog.getExistingDirectory(
             slicer.util.mainWindow(),
-            "Select local processing directory" if self._selected_backend_key() == "server" else "Select normalized dataset root",
+            "Select local processing directory" if self._selected_backend_key() != "local" else "Select normalized dataset root",
             self.datasetRootEdit.text,
         )
         if path:
@@ -1807,7 +1807,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
 
     def _available_batch_backends(self):
         backends = available_batch_backends()
-        if self._serverBackendEnabled and "server" not in backends:
+        if getattr(self, "_serverBackendEnabled", False) and "server" not in backends:
             backends["server"] = SimpleNamespace(key="server", label="Server")
         return backends
 
