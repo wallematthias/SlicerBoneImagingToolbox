@@ -38,3 +38,54 @@ def test_relevant_tool_pages_link_their_tutorial_video():
     for video_id, page in TUTORIALS.items():
         text = (ROOT / page).read_text(encoding="utf-8")
         assert f"https://www.youtube.com/watch?v={video_id}" in text
+
+
+def test_transcript_workflow_details_are_documented():
+    expectations = {
+        "docs/tools/motion-scoring.md": [
+            "confidence threshold",
+            "review scope",
+            "blind review",
+            "retrain manifest",
+        ],
+        "docs/tools/segmentation-and-contours.md": [
+            "Gaussian",
+            "Laplace-Hamming",
+            "adaptive local thresholding",
+            "geodesic",
+            "custom profile",
+        ],
+        "docs/tools/plate-rod-morphometry.md": [
+            "Slenderness",
+            "Minimum plate voxels",
+            "Minimum rod voxels",
+            "Max thinning iterations",
+            "Backend",
+        ],
+        "docs/tools/mechanoregulation.md": [
+            "formation",
+            "resorption",
+            "quiescent",
+            "bootstrap",
+            "SED",
+        ],
+        "docs/tools/batch-processor.md": [
+            "Dataset Naming Helper",
+            "derivatives",
+            "Skip existing",
+            "queued jobs",
+            "tool-specific profile",
+        ],
+        "docs/tools/dataset-naming-helper.md": [
+            "header metadata",
+            "confidence",
+            "Undo rename",
+            "manifest",
+            "VOI",
+        ],
+    }
+
+    for page, terms in expectations.items():
+        text = (ROOT / page).read_text(encoding="utf-8")
+        for term in terms:
+            assert term in text

@@ -69,6 +69,18 @@ The module focuses on prediction and review:
 - manual correction of predicted grades,
 - export of reviewed results.
 
+## Review Workflow
+
+Motion Scoring is intentionally kept as its own review-focused module rather than being folded into the central Batch Processor. It manages scan loading, prediction review, manual correction, model retraining, and export of final grades.
+
+The review scope controls which scans are shown to the reader after prediction. Common scopes are all scans, only pending scans, or low-confidence scans. The confidence threshold defines which model predictions are considered low confidence and should be surfaced for manual review.
+
+During manual review, selecting a grade records the reader's decision and advances to the next scan in the active review scope. The reviewer tag is stored with the manual grade so several readers can review the same dataset independently.
+
+Optional blind review hides the model grade and prediction plot until the reader submits a grade. This is useful when model-assisted triage should not bias the reader.
+
+The retraining controls use previously reviewed datasets to prepare a retrain manifest, sample slices per scan, and fine-tune either the classifier or the full model depending on the selected training settings.
+
 ## Scene Mode
 
 Use loaded scan review when a scan is already open in Slicer. Select the scalar volume, run the model, and review the generated motion-grading image and grade.
@@ -83,6 +95,8 @@ Use loaded scan review when a scan is already open in Slicer. Select the scalar 
 6. Export the review table.
 
 When valid model weights are already present in `Local models folder`, the module uses those local files and skips the GitHub download. This is the preferred setup for managed workstations or offline installations.
+
+Motion Scoring can run on a normalized dataset, but it should ignore derivative artifacts and score only source scan images. Results are written under `derivatives/MotionScore/` so prediction, review, and export records stay with the dataset.
 
 Current default model catalog:
 

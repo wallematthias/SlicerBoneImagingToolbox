@@ -13,6 +13,8 @@ The helper can:
 - write JSON sidecars with non-identifying metadata,
 - keep a manifest that can undo a rename.
 
+The analysis combines filename parsing with available header metadata. Header metadata can help confirm subject identity, chronological session order, scanner/site information, voxel size, and whether a file is likely a source image or a mask. The review table shows a confidence estimate so uncertain rows can be corrected before files are renamed.
+
 The helper should not expose private subject names in shareable outputs. Identifying source metadata should either be stripped or kept in a private sidecar that is not part of an exported shareable dataset.
 
 ## Basic Workflow
@@ -24,6 +26,8 @@ The helper should not expose private subject names in shareable outputs. Identif
 5. Export the plan if you want to review it outside Slicer.
 6. Click `Rename` when the plan is correct.
 7. Use `Undo rename` if you need to restore the original file names from the manifest.
+
+Edits made directly in the review table are treated as overrides. Use them when a session label, VOI, stack, modality, or role was inferred incorrectly.
 
 ## Before And After
 

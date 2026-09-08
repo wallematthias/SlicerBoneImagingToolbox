@@ -19,6 +19,10 @@ Use it after the Dataset Naming Helper has normalized a dataset.
 
 Rows are tool-specific. Single-session tools run one session per row. Longitudinal or registered tools group the required sessions for one subject and VOI.
 
+If the dataset is not yet normalized, run the Dataset Naming Helper first. The Batch Processor is deliberately stricter than the interactive scene modules because cohort processing depends on stable subject, session, VOI, stack, and derivative paths.
+
+Each tool-specific profile defines the command, required inputs, and expected outputs for the selected tool. Shipped profiles provide scanner or workflow defaults. Some tools also discover user-exported custom profiles.
+
 ## Required Inputs By Tool
 
 | Tool | Typical required inputs | Typical outputs |
@@ -42,6 +46,8 @@ The table should show only inputs required by the selected tool/profile. A row w
 - Running rows can be cancelled.
 - `Skip existing` reuses compatible outputs when they already exist.
 - Switching tools or profiles should not change jobs already queued.
+
+The queued jobs keep the tool and profile that were active when they were added to the queue. This keeps a long run stable even if the visible Batch Processor controls are refreshed later.
 
 ## Outputs
 

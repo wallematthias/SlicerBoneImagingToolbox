@@ -33,6 +33,12 @@ Use scene mode when the remodelling map and SED field are already loaded.
 
 Scene mode resamples selected inputs onto the SED/remodelling analysis grid when needed.
 
+## Analysis Settings
+
+The remodelling image must identify formation and resorption events. For toolbox-generated remodelling maps, the default labels are used automatically. If the input uses different labels or a segmentation node, map the formation, resorption, and optional quiescent labels before running.
+
+Bootstrap iterations control confidence intervals for the reported mechanoregulation curves and odds ratios. Higher values give more stable intervals but take longer. The SED field should represent the baseline mechanical signal for the comparison being analyzed.
+
 ## Batch Mode
 
 Use `Bone Imaging > I/O > Batch Processor`.

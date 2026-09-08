@@ -54,6 +54,21 @@ Common profile families include:
 - optional geodesic periosteal-contour profiles,
 - user-defined custom profiles.
 
+## Advanced Settings
+
+Advanced settings expose the algorithm choices that are normally fixed by a profile. Changing these settings is useful for method development, protocol validation, or creating a custom profile.
+
+| Setting group | What it controls |
+| --- | --- |
+| Gaussian segmentation | Gaussian smoothing and threshold settings commonly used by XtremeCT II style workflows. |
+| Laplace-Hamming segmentation | Laplace-Hamming filtering and threshold settings commonly used by XtremeCT I style workflows. |
+| adaptive local thresholding | Local thresholding behavior for datasets where a single global threshold is not appropriate. |
+| Periosteal contour | Outer contour extraction. The standard contour is profile controlled; geodesic contour settings appear when a geodesic contour profile is selected. |
+| Endosteal contour | Inner contour extraction and trabecular/cortical separation behavior. |
+| Mask and material outputs | Generation of full, trabecular, cortical, and FEA material label outputs. |
+
+To reuse edited settings, enter a workflow display name and export a custom profile. Custom profiles are stored outside the shipped package profiles and are discovered by the Batch Processor.
+
 ## Output Roles
 
 | Role | Meaning |

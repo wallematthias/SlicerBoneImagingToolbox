@@ -27,6 +27,12 @@ Common profiles include:
 
 Each profile is treated as a separate output family. Running a load-history profile should not make the standard profile appear complete, and vice versa.
 
+## Advanced Settings
+
+Profiles define the material mapping, boundary conditions, solver settings, and post-processing outputs. The standard XtremeCT profiles run a canonical compression-style workflow. Load-history profiles run multiple load cases and save scale factors, load amplitudes, estimated loads, SED fields, and compact mechanics tables.
+
+Solver tolerance should stay fixed within a study. The shipped profiles use a tolerance of `1e-4`.
+
 ## Scene Mode
 
 Use scene mode for one loaded material label map.
