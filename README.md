@@ -21,7 +21,7 @@ Key pages:
 - [Installation](docs/installation.md)
 - [Dataset Format](docs/dataset-format.md)
 - [Batch Processor](docs/tools/batch-processor.md)
-- [Derivative Workflow Contract](docs/derivatives.md)
+- [derivative workflow contract](docs/derivatives.md)
 - [Adding A Tool](docs/development/adding-a-tool.md)
 
 ## Install From A Clone

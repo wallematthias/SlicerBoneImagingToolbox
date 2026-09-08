@@ -15,6 +15,7 @@ include(${Slicer_USE_FILE})
 
 set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/__init__.py
+  SlicerBoneImagingToolboxLib/batch_backends.py
   SlicerBoneImagingToolboxLib/common_region.py
   SlicerBoneImagingToolboxLib/derivatives.py
   SlicerBoneImagingToolboxLib/fea_batch.py

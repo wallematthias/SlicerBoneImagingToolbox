@@ -10,6 +10,12 @@ Batch mode uses dataset folders and derivative manifests as inputs, then writes 
 
 Both modes should call the same backend services. The mode only changes input and output adapters.
 
+dependency generation should be explicit: tools may derive missing secondary
+artifacts such as common-region masks or material label maps only when that
+artifact family owns the operation and records the output in its manifest.
+Routine analysis should report missing prerequisites rather than silently
+creating scientific inputs in another tool's namespace.
+
 ## Derivatives
 
 - `ImportedContours`: Scanco/IPL masks imported with a dataset, such as full, trabecular, cortical, and registration masks. These are preferred over generated masks when both are available.

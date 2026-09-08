@@ -4,6 +4,8 @@ All notable changes to this extension are documented in this file.
 
 ## Unreleased
 
+## [0.2.1] - 2026-09-08
+
 ### Changed
 
 - Renamed the extension container to SlicerBoneImagingToolbox and moved built-in modules under the `Bone Imaging` Slicer category.
@@ -16,6 +18,10 @@ All notable changes to this extension are documented in this file.
 - Updated the toolbox logo image for the Bone Imaging Toolbox name, including a transparent PNG variant for README and extension metadata previews.
 - Extended Scanco I/O import to use `aimio-py` image dispatch for AIM, ISQ, SCV, and GOBJ files, with explicit Slicer drag/drop readers for native volume, HU volume, density volume, and native segmentation import.
 - Added a `Bone Imaging.CT` Spine Segmentation module that installs `spine-segment`, runs vertebral CT segmentation in a Slicer subprocess, and loads vertebral-level, process/body, and cortical/trabecular outputs.
+- Added the central Batch Processor with shared discovery, queued row execution, load-back support, skip-existing behavior, and profile-aware row grouping for HR-pQCT workflows.
+- Added optional private batch backend hooks so remote ARC/SLURM execution can be enabled from the private toolbox without making public modules depend on private code.
+- Improved remote batch robustness by freezing each queued job's tool/profile/row context, keeping completion state tied to stable row identity, and surfacing remote FEA solver log tails.
+- Kept remote dataset path configuration in the private setup while preserving public Batch Processor wall-time, memory, and CPU overrides for individual batches.
 
 ## [0.2.0] - 2026-05-21
 
