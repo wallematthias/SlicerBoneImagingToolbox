@@ -2,6 +2,9 @@
 
 Mechanoregulation combines Timelapsed remodelling maps with ParOsol-FEA strain-energy-density fields. It reports how formation and resorption relate to local mechanical stimulus.
 
+!!! video "Tutorial video"
+    Watch the [mechanoregulation tutorial](https://www.youtube.com/watch?v=g0WAxdSCmLA), or browse [all tutorial videos](../tutorials/index.md).
+
 Core analysis logic lives in:
 
 https://github.com/wallematthias/BoneMechanoregulation

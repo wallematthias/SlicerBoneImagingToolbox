@@ -2,6 +2,9 @@
 
 Timelapsed Remodelling is the Slicer front end for longitudinal HR-pQCT registration, common-region generation, and remodelling analysis. The Slicer module supports interactive scene review; cohort runs are launched from the Batch Processor.
 
+!!! video "Tutorial video"
+    Watch the [Timelapsed Remodelling tutorial](https://www.youtube.com/watch?v=zuoMNC3o2XA), or browse [all tutorial videos](../tutorials/index.md).
+
 Core processing lives in the `timelapsed-hrpqct` Python package:
 
 https://github.com/wallematthias/TimelapsedHRpQCT

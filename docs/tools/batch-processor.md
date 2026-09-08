@@ -2,6 +2,9 @@
 
 The Batch Processor is the main cohort-processing interface. It discovers normalized datasets, shows tool-specific prerequisites, queues jobs, loads completed outputs, and keeps generated files inside `derivatives/`.
 
+!!! video "Tutorial video"
+    Watch the [Batch Processor tutorial](https://www.youtube.com/watch?v=KMDTtJk_x0s), or browse [all tutorial videos](../tutorials/index.md).
+
 Use it after the Dataset Naming Helper has normalized a dataset.
 
 ## Workflow

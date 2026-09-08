@@ -2,6 +2,9 @@
 
 Microarchitecture computes bone structure and density measurements from images, segmentations, and ROI masks. The Slicer module handles node selection, table display, map loading, and scene review. The `bone-microarchitecture` core package owns the measurement logic.
 
+!!! video "Tutorial video"
+    Watch the [microarchitecture tutorial](https://www.youtube.com/watch?v=wtnzl54njQM), or browse [all tutorial videos](../tutorials/index.md).
+
 https://github.com/wallematthias/bone-microarchitecture
 
 ## Required Inputs

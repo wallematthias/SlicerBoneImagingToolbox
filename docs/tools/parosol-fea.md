@@ -2,6 +2,9 @@
 
 ParOsol-FEA prepares and runs finite-element workflows from material label maps. The Slicer module handles scene selection, profile selection, output loading, and SED display. The `parosol-py` package owns workflow execution.
 
+!!! video "Tutorial video"
+    Watch the [ParOsol-FEA tutorial](https://www.youtube.com/watch?v=754TJkOADHA), or browse [all tutorial videos](../tutorials/index.md).
+
 https://github.com/wallematthias/parosol-py
 
 ## Required Inputs

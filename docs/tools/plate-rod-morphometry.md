@@ -2,6 +2,9 @@
 
 `Plate/Rod Morphometry` is the Slicer front end for the `plate-rod-thinning` core package. It runs topology-preserving plate/rod thinning, labels plate and rod skeleton elements, ports those labels back to the original trabecular thickness, and reports plate, rod, element, and junction measurements.
 
+!!! video "Tutorial video"
+    Watch the [plate/rod morphometry tutorial](https://www.youtube.com/watch?v=VRQsGUlJ0Ek), or browse [all tutorial videos](../tutorials/index.md).
+
 The Slicer module handles mask selection, segment dropdowns, background execution, output loading, 3D display, and result tables. The thinning and morphometry logic lives in:
 
 https://github.com/wallematthias/bone-plate-rod-thinning

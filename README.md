@@ -19,6 +19,7 @@ Until the hosted site is enabled, browse the source docs in [`docs/`](docs/index
 Key pages:
 
 - [Installation](docs/installation.md)
+- [Tutorial Videos](docs/tutorials/index.md)
 - [Dataset Format](docs/dataset-format.md)
 - [Batch Processor](docs/tools/batch-processor.md)
 - [derivative workflow contract](docs/derivatives.md)

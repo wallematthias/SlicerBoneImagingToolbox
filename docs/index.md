@@ -8,6 +8,9 @@ Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It pro
 
 The Slicer extension is the user-facing layer. Reusable scientific logic lives in focused Python packages such as `bone-contouring`, `timelapsed-hrpqct`, `bone-microarchitecture`, `plate-rod-thinning`, `parosol-py`, and `bone-mechanoregulation`.
 
+!!! video "Tutorial video"
+    Watch the [introduction tutorial](https://www.youtube.com/watch?v=iZs-SEPCT3o), or browse [all tutorial videos](tutorials/index.md).
+
 ## Slicer Modules
 
 ```text

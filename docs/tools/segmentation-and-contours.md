@@ -2,6 +2,9 @@
 
 Contouring creates bone segmentations, periosteal and endosteal contours, trabecular/cortical ROI masks, and material label maps. It is the preferred place to prepare masks before Timelapsed Remodelling, Microarchitecture, Plate/Rod Morphometry, and ParOsol-FEA.
 
+!!! video "Tutorial video"
+    Watch the [contouring tutorial](https://www.youtube.com/watch?v=bJsD-42t7hk), or browse [all tutorial videos](../tutorials/index.md).
+
 Core contouring logic lives in:
 
 https://github.com/wallematthias/bone-contouring
