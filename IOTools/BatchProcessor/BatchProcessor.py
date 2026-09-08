@@ -2781,6 +2781,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         if status == "Done":
             if str(remote_job.get("tool") or "") == "fea":
                 self._publish_remote_fea_outputs(remote_job, backend)
+                self._append_remote_job_log_tail(remote_job, backend)
             if job_visible:
                 self._set_row_status(row_index, "Done")
                 self._set_row_action(row_index, "Load")
@@ -2789,6 +2790,9 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         if job_visible:
             self._set_row_action(row_index, "Run")
         self._append_log(f"[batch] remote job {job_id} ended: {state_text or status}")
+        self._append_remote_job_log_tail(remote_job, backend)
+
+    def _append_remote_job_log_tail(self, remote_job, backend):
         log_name = str(remote_job.get("remote_job_name") or "")
         if log_name:
             try:

@@ -148,6 +148,14 @@ def test_batch_processor_matches_running_jobs_by_stable_row_identity() -> None:
     assert "dict(self._batchRows[row_index]) == dict(job.get(\"row\") or {})" not in source
 
 
+def test_remote_fea_completion_surfaces_solver_log_tail() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "def _append_remote_job_log_tail(self, remote_job, backend):" in source
+    assert "self._append_remote_job_log_tail(remote_job, backend)" in source
+    assert 'if str(remote_job.get("tool") or "") == "fea":' in source
+
+
 def test_fea_discovery_keeps_rows_with_missing_material_labelmap() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 
