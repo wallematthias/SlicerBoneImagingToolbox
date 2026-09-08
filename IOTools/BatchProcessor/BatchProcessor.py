@@ -340,8 +340,10 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         for case in cases:
             source = case.first_artifact(preferred_roles)
             if source is None:
-                continue
-            ok, missing = case_readiness(case, profile)
+                ok = False
+                missing = tuple(preferred_roles)
+            else:
+                ok, missing = case_readiness(case, profile)
             status = "Ready" if ok else "Missing HOM_LS"
             action = "Run" if ok else "Missing"
             output_paths = BatchProcessorLogic._fea_output_paths_for_case(root, case, profile)
@@ -2462,7 +2464,16 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         row_index = int(row_index)
         if row_index < 0 or row_index >= len(self._batchRows):
             return False
-        return dict(self._batchRows[row_index]) == dict(job.get("row") or {})
+        return self._row_identity(self._batchRows[row_index]) == self._row_identity(job.get("row") or {})
+
+    def _row_identity(self, row):
+        row = dict(row or {})
+        return (
+            str(row.get("subject") or row.get("subject_id") or ""),
+            str(row.get("session_value", row.get("session")) or ""),
+            str(row.get("voi_value", row.get("voi")) or ""),
+            str(row.get("stack_index") or ""),
+        )
 
     def _set_row_status(self, row_index, status):
         if 0 <= int(row_index) < len(self._batchRows):

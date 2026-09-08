@@ -140,6 +140,22 @@ def test_batch_processor_remote_jobs_are_submitted_and_loaded_lazily() -> None:
     assert "syncing remote outputs" in source
 
 
+def test_batch_processor_matches_running_jobs_by_stable_row_identity() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "def _row_identity(self, row):" in source
+    assert "return self._row_identity(self._batchRows[row_index]) == self._row_identity(job.get(\"row\") or {})" in source
+    assert "dict(self._batchRows[row_index]) == dict(job.get(\"row\") or {})" not in source
+
+
+def test_fea_discovery_keeps_rows_with_missing_material_labelmap() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "source = case.first_artifact(preferred_roles)" in source
+    assert "if source is None:\n                ok = False" in source
+    assert "source=missing HOM_LS" in source
+
+
 def test_batch_processor_remote_mechanoregulation_uses_core_case_discovery() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
 
