@@ -12,6 +12,26 @@ from SlicerBoneImagingToolboxLib.remote_batch import (
 )
 
 
+def test_batch_backend_registry_exposes_local_backend() -> None:
+    from SlicerBoneImagingToolboxLib.batch_backends import available_batch_backends, get_batch_backend
+
+    assert "local" in available_batch_backends()
+    assert get_batch_backend("local").label == "Local"
+
+
+def test_batch_backend_registry_accepts_private_backend() -> None:
+    from SlicerBoneImagingToolboxLib.batch_backends import available_batch_backends, get_batch_backend, register_batch_backend
+
+    class PrivateBackend:
+        key = "arc-slurm"
+        label = "ARC / SLURM"
+
+    register_batch_backend(PrivateBackend())
+
+    assert available_batch_backends()["arc-slurm"].label == "ARC / SLURM"
+    assert get_batch_backend("arc-slurm").key == "arc-slurm"
+
+
 def test_remote_batch_config_loads_private_json_and_maps_dataset_paths(tmp_path: Path) -> None:
     config_path = tmp_path / "arc.json"
     local_root = tmp_path / "local"

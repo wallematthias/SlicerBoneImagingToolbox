@@ -95,8 +95,9 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
     assert "_serverBackendEnabled" in source
     assert "previous = self.backendCombo.blockSignals(True)" in source
     assert 'if not hasattr(self, "statusLabel") or not hasattr(self, "table"):' in source
-    assert 'self.backendLabel.visible = self._serverBackendEnabled' in source
-    assert 'self.backendCombo.visible = self._serverBackendEnabled' in source
+    assert "show_backend_selector = len(self._batchBackends) > 1 or self._serverBackendEnabled" in source
+    assert "self.backendLabel.visible = show_backend_selector" in source
+    assert "self.backendCombo.visible = show_backend_selector" in source
     assert "self.serverRootEdit" in source
     assert '"Server directory"' in source
     assert '"Local processing directory"' in source
@@ -2196,11 +2197,32 @@ def test_queued_batch_jobs_snapshot_tool_profile_and_row() -> None:
     assert 'profile=str(job.get("profile") or "")' in source
     assert 'row=dict(job.get("row") or {})' in source
     assert 'if self._has_active_batch():' in source
-    assert 'self._append_log("[batch] Tool/profile change will apply after the active queue finishes.")' in source
+    assert 'self._append_log("[batch] Tool/profile change will not affect already queued jobs.")' in source
     finish_handler = source[
         source.index("    def _batch_process_finished(") : source.index("    def _refresh_row_output_paths(", source.index("    def _batch_process_finished("))
     ]
     assert 'if self._selected_tool_key() == "fea"' not in finish_handler
+
+
+def test_active_batches_allow_selector_changes_but_jobs_keep_snapshots() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "def _job_description(self, job):" in source
+    assert 'job.get("tool")' in source
+    assert 'job.get("profile")' in source
+    assert "Tool/profile change will not affect already queued jobs." in source
+    assert "self._update_table_headers()" in source
+    assert 'tool=str(job.get("tool") or "")' in source
+    assert 'profile=str(job.get("profile") or "")' in source
+
+
+def test_batch_processor_populates_backend_combo_from_registry() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "available_batch_backends()" in source
+    assert 'self.backendCombo.addItem(backend.label, backend.key)' in source
+    assert 'server_selected = self._selected_backend_key() != "local"' in source
+    assert 'len(self._batchBackends) > 1 or self._serverBackendEnabled' in source
 
 
 def test_timelapse_outputs_are_discovered_as_series_outputs(tmp_path: Path, monkeypatch) -> None:

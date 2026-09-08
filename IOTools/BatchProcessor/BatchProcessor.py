@@ -82,11 +82,14 @@ except Exception as exc:
     write_manifest = _missing_derivatives_runtime
 
 import SlicerBoneImagingToolboxLib.fea_batch as _fea_batch_module  # noqa: E402
+import SlicerBoneImagingToolboxLib.batch_backends as _batch_backends_module  # noqa: E402
 import SlicerBoneImagingToolboxLib.remote_batch as _remote_batch_module  # noqa: E402
 
 _fea_batch_module = importlib.reload(_fea_batch_module)
+_batch_backends_module = importlib.reload(_batch_backends_module)
 _remote_batch_module = importlib.reload(_remote_batch_module)
 
+from SlicerBoneImagingToolboxLib.batch_backends import available_batch_backends  # noqa: E402
 from SlicerBoneImagingToolboxLib.fea_batch import (  # noqa: E402
     FEAArtifact,
     FEABatchCase,
@@ -1494,6 +1497,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             "slurm",
             "arc",
         }
+        self._batchBackends = self._available_batch_backends()
         self._remotePollTimer = qt.QTimer()
         self._remotePollTimer.setInterval(15000)
         self._remotePollTimer.timeout.connect(self._poll_remote_jobs)
@@ -1585,19 +1589,25 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         workflow_form.addRow("Skip existing", self.skipExistingCheck)
 
         self.backendCombo = qt.QComboBox()
-        self.backendCombo.addItem("Local", "local")
-        self.backendCombo.addItem("Server", "server")
-        self.backendCombo.setItemData(1, "Server backends are configured in private adapters.", qt.Qt.ToolTipRole)
+        for backend in self._batchBackends.values():
+            self.backendCombo.addItem(backend.label, backend.key)
+        server_index = self.backendCombo.findData("server")
+        if server_index >= 0:
+            self.backendCombo.setItemData(server_index, "Server backends are configured in private adapters.", qt.Qt.ToolTipRole)
         self.backendCombo.currentIndexChanged.connect(self._on_backend_changed)
         if self._serverBackendEnabled:
             previous = self.backendCombo.blockSignals(True)
             try:
-                self.backendCombo.setCurrentIndex(1)
+                index = self.backendCombo.findData("server")
+                if index < 0:
+                    index = 1 if self.backendCombo.count > 1 else 0
+                self.backendCombo.setCurrentIndex(index)
             finally:
                 self.backendCombo.blockSignals(previous)
         self.backendLabel = qt.QLabel("Execution backend")
-        self.backendLabel.visible = self._serverBackendEnabled
-        self.backendCombo.visible = self._serverBackendEnabled
+        show_backend_selector = len(self._batchBackends) > 1 or self._serverBackendEnabled
+        self.backendLabel.visible = show_backend_selector
+        self.backendCombo.visible = show_backend_selector
         workflow_form.addRow(self.backendLabel, self.backendCombo)
         self._apply_backend_visibility()
 
@@ -1639,7 +1649,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self.datasetRootEdit.text = str(path)
 
     def _apply_backend_visibility(self):
-        server_selected = self._selected_backend_key() == "server" and self._serverBackendEnabled
+        server_selected = self._selected_backend_key() != "local"
         if hasattr(self, "datasetRootLabel"):
             self.datasetRootLabel.text = "Local processing directory" if server_selected else "Dataset root"
         if hasattr(self, "browseDatasetButton"):
@@ -1761,8 +1771,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._populate_profile_combo()
         self._update_profile_hint()
         if self._has_active_batch():
-            self._append_log("[batch] Tool/profile change will apply after the active queue finishes.")
-            return
+            self._append_log("[batch] Tool/profile change will not affect already queued jobs.")
         self._update_table_headers()
         if str(self.datasetRootEdit.text or "").strip():
             self._analyze_dataset()
@@ -1771,8 +1780,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         del args
         self._update_profile_hint()
         if self._has_active_batch():
-            self._append_log("[batch] Tool/profile change will apply after the active queue finishes.")
-            return
+            self._append_log("[batch] Tool/profile change will not affect already queued jobs.")
         self._update_table_headers()
         if str(self.datasetRootEdit.text or "").strip():
             self._analyze_dataset()
@@ -1786,8 +1794,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         del args
         self._apply_backend_visibility()
         if self._has_active_batch():
-            self._append_log("[batch] Backend change will apply after the active queue finishes.")
-            return
+            self._append_log("[batch] Backend change will not affect already queued jobs.")
         server_text = str(self.serverRootEdit.text or "").strip() if hasattr(self, "serverRootEdit") else ""
         if str(self.datasetRootEdit.text or "").strip() or server_text:
             self._analyze_dataset()
@@ -1796,9 +1803,13 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         return str(getattr(self.toolCombo, "currentData", "") or "")
 
     def _selected_backend_key(self):
-        if not getattr(self, "_serverBackendEnabled", False):
-            return "local"
         return str(getattr(self.backendCombo, "currentData", "") or "local")
+
+    def _available_batch_backends(self):
+        backends = available_batch_backends()
+        if self._serverBackendEnabled and "server" not in backends:
+            backends["server"] = SimpleNamespace(key="server", label="Server")
+        return backends
 
     def _current_local_dataset_root(self):
         return str(self.datasetRootEdit.text or "").strip()
@@ -2412,6 +2423,27 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             "row": dict(self._batchRows[row_index]),
         }
 
+    def _job_description(self, job):
+        tool = str(job.get("tool") or "batch")
+        profile = str(job.get("profile") or "").strip()
+        row = dict(job.get("row") or {})
+        subject = str(row.get("subject") or row.get("subject_id") or "").strip()
+        session = str(row.get("session") or row.get("session_value") or "").strip()
+        voi = str(row.get("voi") or row.get("voi_value") or row.get("site") or "").strip()
+        parts = [tool]
+        if profile:
+            parts.append(profile)
+        context = " ".join(part for part in (subject, session, voi) if part)
+        if context:
+            parts.append(context)
+        return " / ".join(parts)
+
+    def _job_matches_current_row(self, row_index, job):
+        row_index = int(row_index)
+        if row_index < 0 or row_index >= len(self._batchRows):
+            return False
+        return dict(self._batchRows[row_index]) == dict(job.get("row") or {})
+
     def _set_row_status(self, row_index, status):
         if 0 <= int(row_index) < len(self._batchRows):
             self._batchRows[int(row_index)]["status"] = str(status)
@@ -2446,7 +2478,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         else:
             row_index = int(job)
             job = self._batch_job_for_row(row_index)
-        if row_index < 0 or row_index >= len(self._batchRows):
+        if row_index < 0 or not dict(job.get("row") or {}):
             self._start_next_batch_job()
             return
         try:
@@ -2459,7 +2491,8 @@ print(json.dumps({"cases": rows}, sort_keys=True))
                 force=bool(job.get("force")),
             )
         except Exception as exc:
-            self._set_row_status(row_index, f"Error: {exc}")
+            if self._job_matches_current_row(row_index, job):
+                self._set_row_status(row_index, f"Error: {exc}")
             self._append_log(f"[batch] {exc}")
             self._start_next_batch_job()
             return
@@ -2467,8 +2500,9 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         self.cancelBatchButton.enabled = True
         self._batchRunningRow = row_index
         self._batchCancelled = False
-        self._set_row_status(row_index, "Running")
-        self._set_row_action(row_index, "Running")
+        if self._job_matches_current_row(row_index, job):
+            self._set_row_status(row_index, "Running")
+            self._set_row_action(row_index, "Running")
         backend_key = str(job.get("backend") or "local")
         remote_backend = self._remote_backend(
             local_root=job.get("local_root"),
@@ -2489,7 +2523,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         else:
             process_program = self._python_slicer_executable()
             process_args = self._subprocess_args(args)
-            self._append_log(f"[batch] launching: {process_program} {' '.join(process_args)}")
+            self._append_log(f"[batch] launching {self._job_description(job)}: {process_program} {' '.join(process_args)}")
         process = qt.QProcess()
         process.setProcessChannelMode(qt.QProcess.MergedChannels)
         if backend_key != "server":
@@ -2508,7 +2542,8 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         process.start(process_program, process_args)
         if not process.waitForStarted(1000):
             self._batchProcess = None
-            self._set_row_status(row_index, "Error")
+            if self._job_matches_current_row(row_index, job):
+                self._set_row_status(row_index, "Error")
             self._append_log("[batch] could not start process")
             self._start_next_batch_job()
 
@@ -2578,30 +2613,36 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         job = dict(job or {})
         tool_key = str(job.get("tool") or self._selected_tool_key())
         profile = str(job.get("profile") or self.profileCombo.currentData or "")
+        job_visible = self._job_matches_current_row(row_index, job)
         if self._batchCancelled:
-            self._set_row_status(row_index, "Cancelled")
-            self._set_row_action(row_index, "Run")
+            if job_visible:
+                self._set_row_status(row_index, "Cancelled")
+                self._set_row_action(row_index, "Run")
             self._append_log("[batch] cancelled")
         elif exit_code == 0:
             if str(job.get("backend") or "local") == "server":
                 self._mark_remote_job_submitted(row_index, job, process_output)
                 self._start_next_batch_job()
                 return
-            if tool_key == "fea" and 0 <= row_index < len(self._batchRows):
+            if tool_key == "fea":
                 published = self.logic.publish_fea_batch_outputs(
                     str(job.get("local_root") or self.datasetRootEdit.text),
-                    dict(job.get("row") or self._batchRows[row_index]),
+                    dict(job.get("row") or {}),
                     profile,
                 )
                 if published:
                     self._append_log(f"[batch] published {len(published)} FEA artifact(s)")
-            self._refresh_row_output_paths(row_index, tool_key=tool_key)
-            self._set_row_status(row_index, "Done")
-            self._set_row_action(row_index, "Load")
+            if job_visible:
+                self._refresh_row_output_paths(row_index, tool_key=tool_key)
+                self._set_row_status(row_index, "Done")
+                self._set_row_action(row_index, "Load")
+            else:
+                self._append_log(f"[batch] finished {self._job_description(job)}")
             self._append_log("[batch] finished")
         else:
-            self._set_row_status(row_index, f"Error {exit_code}")
-            self._set_row_action(row_index, "Run")
+            if job_visible:
+                self._set_row_status(row_index, f"Error {exit_code}")
+                self._set_row_action(row_index, "Run")
             self._append_log(f"[batch] failed with exit code {exit_code}")
         self._start_next_batch_job()
 
@@ -2609,8 +2650,9 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         backend = self._remote_backend(local_root=job.get("local_root"), remote_root=job.get("remote_root"))
         job_id = backend.parse_job_id(process_output) if backend is not None else None
         if not job_id:
-            self._set_row_status(row_index, "Error: no SLURM job id")
-            self._set_row_action(row_index, "Run")
+            if self._job_matches_current_row(row_index, job):
+                self._set_row_status(row_index, "Error: no SLURM job id")
+                self._set_row_action(row_index, "Run")
             self._append_log("[batch] remote submit finished but no SLURM job id was returned")
             return
         row_key = self._row_remote_key(row_index, job)
@@ -2625,8 +2667,9 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             "row": dict(job.get("row") or {}),
             "state": "SUBMITTED",
         }
-        self._set_row_status(row_index, f"Submitted {job_id}")
-        self._set_row_action(row_index, "Submitted")
+        if self._job_matches_current_row(row_index, job):
+            self._set_row_status(row_index, f"Submitted {job_id}")
+            self._set_row_action(row_index, "Submitted")
         self._append_log(f"[batch] submitted remote SLURM job {job_id}")
         self._start_remote_polling()
 
@@ -2668,7 +2711,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
                     continue
                 status, terminal = self._remote_job_terminal_state(state_text)
                 remote_job["state"] = status
-                if row_index >= 0 and row_index < len(self._batchRows):
+                if self._job_matches_current_row(row_index, remote_job):
                     self._set_row_status(row_index, f"{status} {job_id}".strip())
                 if terminal:
                     self._finish_remote_job(row_key, remote_job, backend, status, state_text)
@@ -2703,15 +2746,16 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         self._remoteJobs.pop(row_key, None)
         job_id = str(remote_job.get("job_id") or "")
         row_index = int(remote_job.get("row_index", -1))
+        job_visible = self._job_matches_current_row(row_index, remote_job)
         if status == "Done":
             if str(remote_job.get("tool") or "") == "fea":
                 self._publish_remote_fea_outputs(remote_job, backend)
-            if row_index >= 0 and row_index < len(self._batchRows):
+            if job_visible:
                 self._set_row_status(row_index, "Done")
                 self._set_row_action(row_index, "Load")
             self._append_log(f"[batch] remote job {job_id} completed")
             return
-        if row_index >= 0 and row_index < len(self._batchRows):
+        if job_visible:
             self._set_row_action(row_index, "Run")
         self._append_log(f"[batch] remote job {job_id} ended: {state_text or status}")
         log_name = str(remote_job.get("remote_job_name") or "")
