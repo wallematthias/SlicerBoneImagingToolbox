@@ -78,6 +78,18 @@ def test_detect_update_context_uses_zip_strategy_for_manual_download(tmp_path: P
     assert context == ModuleUpdateContext(toolbox_root=toolbox, git_root=None, strategy="zip")
 
 
+def test_detect_update_context_supports_flat_slicer_extension_install(tmp_path: Path) -> None:
+    extension_root = tmp_path / "Extensions-34928" / "BoneImagingToolbox"
+    module_dir = extension_root / "lib" / "Slicer-5.13" / "qt-scripted-modules"
+    module_dir.mkdir(parents=True)
+    setup_module = module_dir / "BoneImagingToolboxSetup.py"
+    setup_module.write_text("# installed setup module\n", encoding="utf-8")
+
+    context = detect_update_context(setup_module)
+
+    assert context == ModuleUpdateContext(toolbox_root=extension_root, git_root=None, strategy="extension")
+
+
 def test_toolbox_module_dirs_include_external_scripted_modules(tmp_path: Path) -> None:
     toolbox = _make_toolbox(tmp_path / "SlicerBoneImagingToolbox-main")
     external_module = toolbox / "ExternalModules" / "SlicerParOSol" / "ParOSolFEA"

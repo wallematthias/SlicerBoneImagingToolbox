@@ -10,7 +10,7 @@ from urllib import request as urllib_request
 from zipfile import ZipFile
 from pathlib import Path
 
-from .registry import TOOLBOX_DISPLAY_NAME, builtin_module_dirs
+from .registry import TOOLBOX_DISPLAY_NAME, TOOLBOX_NAME, builtin_module_dirs
 
 
 GITHUB_REPO = "wallematthias/SlicerBoneImagingToolbox"
@@ -57,12 +57,22 @@ def _has_toolbox_modules(path: Path) -> bool:
     return all((path / name).is_dir() for name in anchors)
 
 
+def _is_installed_extension_root(path: Path) -> bool:
+    """Return true for Slicer Extension Manager's flattened install layout."""
+    if path.name != TOOLBOX_NAME:
+        return False
+    return any(
+        candidate.is_file()
+        for candidate in path.glob("lib/Slicer-*/qt-scripted-modules/BoneImagingToolboxSetup.py")
+    )
+
+
 def find_toolbox_root(start_path: str | Path) -> Path:
     """Return the folder that contains the built-in toolbox module directories."""
     start = Path(start_path).resolve()
     base = start if start.is_dir() else start.parent
     for candidate in [base, *base.parents]:
-        if _has_toolbox_modules(candidate):
+        if _has_toolbox_modules(candidate) or _is_installed_extension_root(candidate):
             return candidate
     raise RuntimeError(f"Could not locate {TOOLBOX_DISPLAY_NAME} root from {start}")
 
@@ -80,10 +90,14 @@ def find_git_root(start_path: str | Path) -> Path | None:
 def detect_update_context(start_path: str | Path) -> ModuleUpdateContext:
     toolbox_root = find_toolbox_root(start_path)
     git_root = find_git_root(toolbox_root)
+    if git_root is None and _is_installed_extension_root(toolbox_root):
+        strategy = "extension"
+    else:
+        strategy = "git" if git_root is not None else "zip"
     return ModuleUpdateContext(
         toolbox_root=toolbox_root,
         git_root=git_root,
-        strategy="git" if git_root is not None else "zip",
+        strategy=strategy,
     )
 
 
@@ -134,6 +148,17 @@ def check_for_updates(start_path: str | Path, *, timeout: int = 8) -> ToolboxUpd
     context = detect_update_context(start_path)
     latest = latest_remote_revision(timeout=timeout)
     installed = installed_revision(context)
+    if context.strategy == "extension":
+        return ToolboxUpdateCheck(
+            context=context,
+            installed_revision=installed,
+            latest_revision=latest,
+            update_available=False,
+            message=(
+                "This Slicer Extension Manager install is managed by Slicer. "
+                "Update the toolbox through Extension Manager or install a newer nightly extension."
+            ),
+        )
     available = installed is None or not latest.startswith(installed) and not installed.startswith(latest)
     if available:
         where = "git checkout" if context.strategy == "git" else "manual download"
@@ -252,6 +277,11 @@ def update_manual_download(context: ModuleUpdateContext, *, revision: str | None
 
 def update_toolbox(start_path: str | Path, *, latest_revision: str | None = None) -> ToolboxUpdateResult:
     context = detect_update_context(start_path)
+    if context.strategy == "extension":
+        raise RuntimeError(
+            "This Slicer Extension Manager install cannot be replaced safely from inside the toolbox. "
+            "Update it through Extension Manager or install a newer nightly extension."
+        )
     if context.strategy == "git":
         return update_git_checkout(context)
     return update_manual_download(context, revision=latest_revision)

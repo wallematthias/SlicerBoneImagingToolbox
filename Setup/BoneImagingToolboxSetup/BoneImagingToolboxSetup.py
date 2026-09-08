@@ -159,7 +159,7 @@ class BoneImagingToolboxSetupWidget(ScriptedLoadableModuleWidget):
         qt.QTimer.singleShot(0, self._refresh_packages)
 
     def _set_initial_status(self):
-        self.toolboxStatusLabel.text = f"{TOOLBOX_DISPLAY_NAME} checkout: {self.logic.toolbox_root()}"
+        self.toolboxStatusLabel.text = f"{TOOLBOX_DISPLAY_NAME} location: {self.logic.toolbox_root()}"
         self.packageStatusLabel.text = "Checking installed package versions and latest PyPI releases..."
 
     def _log(self, message):
