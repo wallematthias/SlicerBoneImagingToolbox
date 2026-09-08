@@ -2507,9 +2507,9 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         remote_backend = self._remote_backend(
             local_root=job.get("local_root"),
             remote_root=job.get("remote_root"),
-            mpi=backend_key == "server" and str(job.get("tool") or "") == "fea",
-        ) if backend_key == "server" else None
-        if backend_key == "server" and remote_backend is not None:
+            mpi=backend_key != "local" and str(job.get("tool") or "") == "fea",
+        ) if backend_key != "local" else None
+        if backend_key != "local" and remote_backend is not None:
             remote_args = remote_backend.config.remote_args(args, dataset_root=job.get("local_root"))
             job_name = f"bone-{job.get('tool')}-{row_index + 1}"
             submit_argv = remote_backend.submit_argv(
@@ -2526,7 +2526,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             self._append_log(f"[batch] launching {self._job_description(job)}: {process_program} {' '.join(process_args)}")
         process = qt.QProcess()
         process.setProcessChannelMode(qt.QProcess.MergedChannels)
-        if backend_key != "server":
+        if backend_key == "local":
             process.setProcessEnvironment(self._process_environment())
         process.readyRead.connect(lambda process=process: self._append_process_output(process))
         process.finished.connect(

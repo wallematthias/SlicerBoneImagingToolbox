@@ -32,6 +32,14 @@ def test_batch_backend_registry_accepts_private_backend() -> None:
     assert get_batch_backend("arc-slurm").key == "arc-slurm"
 
 
+def test_batch_backend_registry_knows_private_toolbox_module_name() -> None:
+    source = (Path(__file__).resolve().parents[1] / "SlicerBoneImagingToolboxLib" / "batch_backends.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"SlicerBoneImagingToolboxPrivateLib.batch_backends"' in source
+
+
 def test_remote_batch_config_loads_private_json_and_maps_dataset_paths(tmp_path: Path) -> None:
     config_path = tmp_path / "arc.json"
     local_root = tmp_path / "local"

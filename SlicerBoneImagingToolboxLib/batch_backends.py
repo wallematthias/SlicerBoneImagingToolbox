@@ -91,6 +91,7 @@ def _private_backend_module_names() -> tuple[str, ...]:
     names = [name.strip() for name in configured.split(os.pathsep) if name.strip()]
     names.extend(
         [
+            "SlicerBoneImagingToolboxPrivateLib.batch_backends",
             "SlicerBoneImagingToolboxPrivate.batch_backends",
             "SlicerBoneImagingToolbox_private.batch_backends",
             "slicer_bone_imaging_toolbox_private.batch_backends",

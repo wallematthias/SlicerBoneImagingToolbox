@@ -109,7 +109,7 @@ def test_batch_processor_remote_ui_is_private_and_has_server_directory() -> None
     assert '"CPUs"' in source
     assert "f\"--cpus-per-task={values['cpus']}\"" in source
     assert "f\"--ntasks={values['cpus']}\" if mpi else f\"--cpus-per-task={values['cpus']}\"" in source
-    assert 'mpi=backend_key == "server" and str(job.get("tool") or "") == "fea"' in source
+    assert 'mpi=backend_key != "local" and str(job.get("tool") or "") == "fea"' in source
     assert '"OMP_NUM_THREADS": thread_count' in source
     assert '"ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": thread_count' in source
     assert "Remote discovery returned invalid JSON" in source
@@ -2223,6 +2223,7 @@ def test_batch_processor_populates_backend_combo_from_registry() -> None:
     assert 'self.backendCombo.addItem(backend.label, backend.key)' in source
     assert 'server_selected = self._selected_backend_key() != "local"' in source
     assert 'len(self._batchBackends) > 1 or self._serverBackendEnabled' in source
+    assert 'if backend_key != "local" and remote_backend is not None:' in source
 
 
 def test_timelapse_outputs_are_discovered_as_series_outputs(tmp_path: Path, monkeypatch) -> None:
