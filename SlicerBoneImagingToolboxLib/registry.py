@@ -21,6 +21,7 @@ DEFAULT_BUILTIN_MODULE_DIRS = (
     "HRpQCTTools/MechanoregulationHRpQCT",
     "HRpQCTTools/BoneMicroarchitecture",
     "HRpQCTTools/PlateRodMorphometryHRpQCT",
+    "HRpQCTTools/VoidspaceHRpQCT",
     "HRpQCTTools/ParOSolFEA",
     "CTTools/SpineSegmentationCT",
 )

@@ -79,6 +79,8 @@ To reuse edited settings, enter a workflow display name and export a custom prof
 | `cort` | cortical ROI mask |
 | `fea-materials` | material label map for ParOsol-FEA |
 
-## Citation
+## Attribution
+
+The contouring workflow builds on profile definitions and processing conventions developed with the Galateia Kazakia lab.
 
 Credit Bone Imaging Toolbox and `bone-contouring` for generated masks. Cite study-specific segmentation or contouring definitions required by the analysis protocol or target journal.

@@ -95,7 +95,7 @@ sample020_KN_BL.AIM
 sample020_KN_FL1_REGMASK.AIM
 ```
 
-## Citation
+## Attribution
 
 For Timelapsed remodelling, cite:
 

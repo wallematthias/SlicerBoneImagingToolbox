@@ -4,7 +4,7 @@
 
 # Bone Imaging Toolbox for 3D Slicer
 
-Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, longitudinal remodelling, microarchitecture, plate/rod morphometry, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
+Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, longitudinal remodelling, microarchitecture, voidspace analysis, plate/rod morphometry, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
 
 The toolbox appears in Slicer under the `Bone Imaging` category. Reusable scientific logic lives in focused Python packages, while this repository owns the Slicer UI, scene integration, batch orchestration, setup page, and user documentation.
 
@@ -22,6 +22,11 @@ Key pages:
 - [Tutorial Videos](docs/tutorials/index.md)
 - [Dataset Format](docs/dataset-format.md)
 - [Batch Processor](docs/tools/batch-processor.md)
+- [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md)
+- [Motion Scoring](docs/tools/motion-scoring.md)
+- [Segmentation and Contours](docs/tools/segmentation-and-contours.md)
+- [Scanco I/O](docs/tools/scanco-io.md)
+- [Voidspace](docs/tools/voidspace.md)
 - [derivative workflow contract](docs/derivatives.md)
 - [Adding A Tool](docs/development/adding-a-tool.md)
 
@@ -41,6 +46,7 @@ exec(open(script).read(), {"__name__": "__main__", "SCRIPT_PATH": script})
 ```
 
 Restart Slicer, then open `Bone Imaging > Setup > Toolbox Setup` to install or update runtime packages.
+Motion Scoring requires the `PyTorch` extension from Slicer's Extension Manager; Spine Segmentation may also use it depending on the selected runtime.
 
 ## Included Workflows
 
@@ -53,6 +59,7 @@ Restart Slicer, then open `Bone Imaging > Setup > Toolbox Setup` to install or u
 - Timelapsed Remodelling
 - Mechanoregulation
 - Microarchitecture
+- Voidspace
 - Plate/Rod Morphometry
 - ParOsol-FEA
 - Spine Segmentation
@@ -65,6 +72,7 @@ The Slicer modules wrap these focused packages where possible:
 - [`bone-contouring`](https://github.com/wallematthias/bone-contouring)
 - [`timelapsed-hrpqct`](https://github.com/wallematthias/TimelapsedHRpQCT)
 - [`bone-microarchitecture`](https://github.com/wallematthias/bone-microarchitecture)
+- [`voidspace`](https://github.com/wallematthias/voidspace)
 - [`plate-rod-thinning`](https://github.com/wallematthias/bone-plate-rod-thinning)
 - [`parosol-py`](https://github.com/wallematthias/parosol-py)
 - [`bone-mechanoregulation`](https://github.com/wallematthias/BoneMechanoregulation)
@@ -80,6 +88,8 @@ Use the citation that matches the workflow and results you report. Tool-specific
 - Multistack registration: Whittier DE et al. *Bone*. 2023;176:116893. doi: [10.1016/j.bone.2023.116893](https://doi.org/10.1016/j.bone.2023.116893).
 - Motion grading: Walle M et al. *Bone*. 2023;166:116607. doi: [10.1016/j.bone.2022.116607](https://doi.org/10.1016/j.bone.2022.116607).
 - Plate/rod network morphometry: Walle M et al. *Front Bioeng Biotechnol*. 2024;12:1384280. doi: [10.3389/fbioe.2024.1384280](https://doi.org/10.3389/fbioe.2024.1384280).
+- Voidspace: Whittier DE, Burt LA, Boyd SK. *Bone*. 2021;143:115785. doi: [10.1016/j.bone.2020.115785](https://doi.org/10.1016/j.bone.2020.115785).
+- Dynamic voidspace: Whittier DE et al. *Journal of Bone and Mineral Research*. 2025;40(6):791-798. doi: [10.1093/jbmr/zjaf046](https://doi.org/10.1093/jbmr/zjaf046).
 - Spine vertebral localization: Payer C et al. VISAPP 2020. doi: [10.5220/0008975201240133](https://doi.org/10.5220/0008975201240133).
 - Spine compartment workflow: Walle M and Matheson BE et al. *GigaScience*. 2025;14:giaf094. doi: [10.1093/gigascience/giaf094](https://doi.org/10.1093/gigascience/giaf094).
 

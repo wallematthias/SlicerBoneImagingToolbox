@@ -31,6 +31,9 @@ Each tool-specific profile defines the command, required inputs, and expected ou
 | Timelapsed Remodelling | XCT images, registration ROI, bone segmentation, analysis ROIs | transforms, common region, remodelling maps, comparison table |
 | Microarchitecture | XCT/BMD image, bone segmentation, analysis ROIs | scalar maps, measurement table |
 | Registered Microarchitecture profile | Microarchitecture inputs plus common region | common-region-restricted measurement table |
+| Voidspace | bone segmentation and optional mask | all-void and large-void masks, measurement table |
+| Registered Voidspace profile | native segmentation, native full mask, native common region | common-region-restricted all-void and large-void masks, measurement table |
+| Dynamic Voidspace profile | adjacent Timelapsed registered segmentations and common region | expanded, contracted, and quiescent voidspace masks, change table |
 | Plate/Rod Morphometry | bone segmentation and trabecular ROI | plate/rod maps and summary table |
 | Registered Plate/Rod profile | Plate/rod inputs plus common region | common-region-restricted summary table |
 | ParOsol-FEA | material label map | SED field, mechanics table |
@@ -55,4 +58,4 @@ Outputs are written as derivative artifacts with manifest records. Loaded output
 
 ## Citation
 
-Cite the analysis workflow selected in the Batch Processor. For Timelapsed remodelling and mechanoregulation, cite [Walle et al., Bone 2023](https://doi.org/10.1016/j.bone.2023.116780). For multistack registration, cite [Whittier et al., Bone 2023](https://doi.org/10.1016/j.bone.2023.116893).
+Cite the analysis workflow selected in the Batch Processor. For Timelapsed remodelling and mechanoregulation, cite [Walle et al., Bone 2023](https://doi.org/10.1016/j.bone.2023.116780). For multistack registration, cite [Whittier et al., Bone 2023](https://doi.org/10.1016/j.bone.2023.116893). For voidspace profiles, see the [Voidspace](voidspace.md) citation guidance.

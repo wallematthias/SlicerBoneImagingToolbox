@@ -20,9 +20,10 @@ raw scans
 | 3 | Contouring | bone segmentation, full/trab/cort ROIs, material labels |
 | 4 | Timelapsed Remodelling | transforms, common region, remodelling maps |
 | 5 | Microarchitecture | thickness, spacing, BMD, volume, and porosity measurements |
-| 6 | Plate/Rod Morphometry | plate/rod maps and network measurements |
-| 7 | ParOsol-FEA | SED fields and mechanical summary |
-| 8 | Mechanoregulation | remodelling-mechanics association tables and curves |
+| 6 | Voidspace | all-void, large-void, and longitudinal void change maps |
+| 7 | Plate/Rod Morphometry | plate/rod maps and network measurements |
+| 8 | ParOsol-FEA | SED fields and mechanical summary |
+| 9 | Mechanoregulation | remodelling-mechanics association tables and curves |
 
 Motion Scoring is usually run near the beginning as a quality-control step.
 
@@ -41,6 +42,7 @@ The toolbox is designed so downstream tools reuse upstream derivatives:
 
 - Timelapsed Remodelling can consume `ImportedContours` or `BoneContours`.
 - Microarchitecture and Plate/Rod Morphometry can reuse native maps and apply common regions only during measurement.
+- Voidspace consumes existing segmentations and masks. Registered voidspace uses native segmentations with Timelapsed native common regions; dynamic voidspace uses Timelapsed registered segmentations for voxelwise pair comparison. Voidspace does not create registrations.
 - Mechanoregulation consumes Timelapsed remodelling maps and ParOsol-FEA SED fields.
 
 Manifests in `derivatives/<Family>/manifest.json` are the preferred source of truth for reusable outputs.

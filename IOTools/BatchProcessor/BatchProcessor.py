@@ -127,6 +127,7 @@ TOOL_PROFILES = {
     "microarchitecture": (
         ("XtremeCT II", "xtremectii", False),
         ("XtremeCT II - registered", "xtremectii-registered", True),
+        ("Functional bone", "functional-bone", True),
     ),
     "timelapse": (
         ("Standard", "standard", True),
@@ -136,6 +137,11 @@ TOOL_PROFILES = {
     "plate_rod": (
         ("Standard", "standard", False),
         ("Standard - registered", "standard-registered", True),
+    ),
+    "voidspace": (
+        ("Voidspace", "standard", False),
+        ("Registered voidspace", "registered", True),
+        ("Dynamic voidspace", "dynamic", True),
     ),
     "fea": (
         ("XtremeCT I", "XtremeCTI", False),
@@ -155,11 +161,22 @@ _SEGMENT_COLORS = {
     "full": (0.2, 0.8, 0.25),
     "trab": (0.0, 0.75, 1.0),
     "cort": (1.0, 0.55, 0.1),
-    "seg": (1.0, 0.95, 0.3),
+    "seg": (0.45, 0.45, 0.45),
+    "baseline_seg": (0.40, 0.40, 0.40),
+    "followup_seg": (0.58, 0.58, 0.58),
     "fea-materials": (0.92, 0.62, 0.15),
     "common_region": (0.72, 0.42, 1.0),
     "resorption": (1.0, 0.05, 0.70),
     "formation": (1.0, 0.48, 0.0),
+    "voidspace_all": (0.0, 0.75, 1.0),
+    "voidspace_large": (1.0, 0.22, 0.12),
+    "voidspace_quiescent": (0.78, 0.78, 0.78),
+    "voidspace_expanded": (0.0, 0.68, 0.78),
+    "voidspace_contracted": (0.92, 0.78, 0.18),
+    "voidspace_analysis": (0.45, 0.70, 0.65),
+    "functional_bone_analysis": (0.30, 0.72, 0.55),
+    "baseline_analysis_mask": (0.50, 0.72, 0.68),
+    "followup_analysis_mask": (0.35, 0.62, 0.74),
 }
 _MICROARCHITECTURE_MEASUREMENT_NAME = re.compile(
     r"^sub-(?P<subject>[^_]+)_ses-(?P<session>[^_]+)_voi-(?P<voi>[^_]+)"
@@ -188,6 +205,380 @@ _SUPPRESSED_PROCESS_OUTPUT_MARKERS = (
     "itkObjectFactoryBase.cxx",
     "libMRMLIDIOPlugin.dylib",
 )
+_VOIDSPACE_REGISTERED_SCRIPT = r"""
+from __future__ import annotations
+
+import argparse
+import numpy as np
+from pathlib import Path
+
+import SimpleITK as sitk
+
+from voidspace import analyze_maps, run_case
+from voidspace.io import read_mask, write_mask_like
+
+
+def _reference_image(reference):
+    return reference.image if hasattr(reference, "image") else reference
+
+
+def _array_on_reference_grid(array, source_reference, target_reference):
+    source_image = _reference_image(source_reference)
+    target_image = _reference_image(target_reference)
+    if source_image.GetSize() == target_image.GetSize() and source_image.GetOrigin() == target_image.GetOrigin():
+        return np.asarray(array, dtype=bool)
+    image = sitk.GetImageFromArray(np.asarray(array, dtype=np.uint8))
+    image.CopyInformation(source_image)
+    resampled = sitk.Resample(
+        image,
+        target_image,
+        sitk.Transform(),
+        sitk.sitkNearestNeighbor,
+        0,
+        sitk.sitkUInt8,
+    )
+    return sitk.GetArrayFromImage(resampled).astype(bool)
+
+
+def _intersect_masks(mask_paths: list[str], output_path: Path) -> Path:
+    intersection, spacing, reference = read_mask(mask_paths[0])
+    for path in mask_paths[1:]:
+        mask, mask_spacing, mask_reference = read_mask(path)
+        if mask_spacing != spacing:
+            raise ValueError("all masks must have the same spacing")
+        mask = _array_on_reference_grid(mask, mask_reference, reference)
+        if mask.shape != intersection.shape:
+            raise ValueError("all masks must overlap the reference image space")
+        intersection = intersection & mask
+    write_mask_like(intersection, reference, output_path)
+    return output_path
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--segmentation", required=True)
+    parser.add_argument("--full-mask", required=True)
+    parser.add_argument("--common-region", required=True)
+    parser.add_argument("--native-output-dir", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    output_dir = Path(args.output_dir)
+    native_output_dir = Path(args.native_output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    native_output_dir.mkdir(parents=True, exist_ok=True)
+    large_void = native_output_dir / "voidspace_large_mask.nii.gz"
+    all_void = native_output_dir / "voidspace_all_mask.nii.gz"
+    native_outputs = [
+        path
+        for stem in ("voidspace_large_mask", "voidspace_all_mask")
+        for suffix in (".AIM", ".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd")
+        if (path := native_output_dir / f"{stem}{suffix}").exists()
+    ]
+    large_void = next((path for path in native_outputs if "voidspace_large_mask" in path.name), large_void)
+    all_void = next((path for path in native_outputs if "voidspace_all_mask" in path.name), all_void)
+    if not large_void.exists() or not all_void.exists():
+        result = run_case(
+            segmentation_path=args.segmentation,
+            output_dir=native_output_dir,
+            force=True,
+        )
+        large_void = result.large_mask_path
+        all_void = result.all_mask_path
+    analysis_mask = output_dir / "voidspace_analysis_mask.nii.gz"
+    _intersect_masks(
+        [args.full_mask, args.common_region],
+        analysis_mask,
+    )
+    analyze_maps(
+        large_void_path=large_void,
+        all_void_path=all_void,
+        mask_path=analysis_mask,
+        output_dir=output_dir,
+        force=args.force,
+    )
+    return 0
+
+
+raise SystemExit(main())
+"""
+
+_VOIDSPACE_DYNAMIC_SCRIPT = r"""
+from __future__ import annotations
+
+import argparse
+import numpy as np
+from pathlib import Path
+
+import SimpleITK as sitk
+
+from voidspace import compare, run_case
+from voidspace.io import read_mask, write_mask_like
+
+
+def _existing_map(directory: Path, stem: str) -> Path | None:
+    for suffix in (".AIM", ".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd"):
+        path = directory / f"{stem}{suffix}"
+        if path.exists():
+            return path
+    return None
+
+
+def _reference_image(reference):
+    return reference.image if hasattr(reference, "image") else reference
+
+
+def _array_on_reference_grid(array, source_reference, target_reference):
+    source_image = _reference_image(source_reference)
+    target_image = _reference_image(target_reference)
+    if source_image.GetSize() == target_image.GetSize() and source_image.GetOrigin() == target_image.GetOrigin():
+        return np.asarray(array, dtype=bool)
+    image = sitk.GetImageFromArray(np.asarray(array, dtype=np.uint8))
+    image.CopyInformation(source_image)
+    resampled = sitk.Resample(
+        image,
+        target_image,
+        sitk.Transform(),
+        sitk.sitkNearestNeighbor,
+        0,
+        sitk.sitkUInt8,
+    )
+    return sitk.GetArrayFromImage(resampled).astype(bool)
+
+
+def _intersect_masks(mask_paths: list[str], output_path: Path) -> Path:
+    intersection, spacing, reference = read_mask(mask_paths[0])
+    for path in mask_paths[1:]:
+        mask, mask_spacing, mask_reference = read_mask(path)
+        if mask_spacing != spacing:
+            raise ValueError("all masks must have the same spacing")
+        mask = _array_on_reference_grid(mask, mask_reference, reference)
+        if mask.shape != intersection.shape:
+            raise ValueError("all masks must overlap the reference image space")
+        intersection = intersection & mask
+    write_mask_like(intersection, reference, output_path)
+    return output_path
+
+
+def _registered_void(segmentation: str, full_mask: str, common_region: str, output_dir: Path, *, force: bool) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    analysis_mask = output_dir / "voidspace_analysis_mask.nii.gz"
+    large_void = _existing_map(output_dir, "voidspace_large_mask")
+    all_void = _existing_map(output_dir, "voidspace_all_mask")
+    if force or large_void is None or all_void is None:
+        _intersect_masks(
+            [full_mask, common_region],
+            analysis_mask,
+        )
+        result = run_case(
+            segmentation_path=segmentation,
+            mask_path=analysis_mask,
+            output_dir=output_dir,
+            force=True if force or large_void is not None or all_void is not None else False,
+        )
+        return result.large_mask_path
+    return large_void
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--baseline-seg", required=True)
+    parser.add_argument("--baseline-full-mask", required=True)
+    parser.add_argument("--baseline-output-dir", required=True)
+    parser.add_argument("--followup-seg", required=True)
+    parser.add_argument("--followup-full-mask", required=True)
+    parser.add_argument("--followup-output-dir", required=True)
+    parser.add_argument("--common-region", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    baseline_void = _registered_void(
+        args.baseline_seg,
+        args.baseline_full_mask,
+        args.common_region,
+        Path(args.baseline_output_dir),
+        force=args.force,
+    )
+    followup_void = _registered_void(
+        args.followup_seg,
+        args.followup_full_mask,
+        args.common_region,
+        Path(args.followup_output_dir),
+        force=args.force,
+    )
+    compare(
+        baseline_void_path=baseline_void,
+        followup_void_path=followup_void,
+        mask_path=Path(args.baseline_output_dir) / "voidspace_analysis_mask.nii.gz",
+        output_dir=args.output_dir,
+        force=args.force,
+    )
+    output_dir = Path(args.output_dir)
+    for suffix in (".AIM", ".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd"):
+        stable = output_dir / f"voidspace_stable_mask{suffix}"
+        quiescent = output_dir / f"voidspace_quiescent_mask{suffix}"
+        if stable.exists() and not quiescent.exists():
+            stable.rename(quiescent)
+    return 0
+
+
+raise SystemExit(main())
+"""
+_FUNCTIONAL_BONE_SCRIPT = r"""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import numpy as np
+
+from bone_imaging_derivatives.layout import voi_token
+from bone_microarchitecture.batch import (
+    _load_map,
+    _load_volume,
+    _masked_maps_for_measurements,
+    _summarize_measurements,
+    run_microarchitecture_batch,
+)
+from bone_microarchitecture.results import write_measurement_csv
+
+
+def _map_filename(subject: str, session: str, site: str, map_name: str, extension: str) -> str:
+    token = map_name.lower().replace(".", "-")
+    return f"sub-{subject}_ses-{session}_voi-{voi_token(site)}_map-{token}{extension}"
+
+
+def _same_geometry(left, right) -> bool:
+    if left is None or right is None:
+        return True
+    return (
+        left.GetSize() == right.GetSize()
+        and left.GetSpacing() == right.GetSpacing()
+        and left.GetOrigin() == right.GetOrigin()
+        and left.GetDirection() == right.GetDirection()
+    )
+
+
+def _existing_native_maps(map_dir: Path, subject: str, session: str, site: str, *, has_cortical: bool):
+    required = {"Tb.Th", "Tb.Sp", "Tb.N", "Tt.BMD", "Tb.BMD"}
+    if has_cortical:
+        required.update({"Ct.Th", "Ct.Po.Dm", "Ct.BMD"})
+    maps = {}
+    for map_name in required:
+        for extension in (".nii.gz", ".npy"):
+            path = map_dir / _map_filename(subject, session, site, map_name, extension)
+            if path.exists():
+                maps[map_name] = _load_map(path)
+                break
+    return maps if required <= set(maps) else None
+
+
+def _write_mask(path: Path, mask, reference) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if reference.sitk_image is None:
+        np.save(path, np.asarray(mask, dtype=np.uint8))
+        return
+    import SimpleITK as sitk
+
+    image = sitk.GetImageFromArray(np.asarray(mask, dtype=np.uint8))
+    image.CopyInformation(reference.sitk_image)
+    sitk.WriteImage(image, str(path))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--segmentation", required=True)
+    parser.add_argument("--full-mask", required=True)
+    parser.add_argument("--trab-mask", required=True)
+    parser.add_argument("--cort-mask", required=True)
+    parser.add_argument("--common-region", required=True)
+    parser.add_argument("--voidspace-mask", required=True)
+    parser.add_argument("--dataset-root", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--maps-dir", required=True)
+    parser.add_argument("--subject", required=True)
+    parser.add_argument("--session", required=True)
+    parser.add_argument("--site", required=True)
+    parser.add_argument("--thickness-method", default="hildebrand")
+    parser.add_argument("--thickness-backend", default="auto")
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    image = _load_volume(Path(args.image), scaling="bmd")
+    case_spacing = image.spacing
+    if case_spacing is None:
+        raise ValueError("functional bone analysis needs image geometry or spacing")
+    volumes = {
+        "bone_segmentation": _load_volume(Path(args.segmentation), scaling="native"),
+        "periosteal_mask": _load_volume(Path(args.full_mask), scaling="native"),
+        "trabecular_mask": _load_volume(Path(args.trab_mask), scaling="native"),
+        "common_region": _load_volume(Path(args.common_region), scaling="native"),
+        "voidspace_mask": _load_volume(Path(args.voidspace_mask), scaling="native"),
+    }
+    volumes["cortical_mask"] = _load_volume(Path(args.cort_mask), scaling="native")
+    masks = {
+        "bone_segmentation": np.asarray(volumes["bone_segmentation"].array) > 0,
+        "periosteal_mask": np.asarray(volumes["periosteal_mask"].array) > 0,
+        "trabecular_mask": np.asarray(volumes["trabecular_mask"].array) > 0,
+        "cortical_mask": np.asarray(volumes["cortical_mask"].array) > 0,
+    }
+    common = np.asarray(volumes["common_region"].array) > 0
+    voidspace = np.asarray(volumes["voidspace_mask"].array) > 0
+    expected_shape = np.asarray(image.array).shape
+    arrays = {"common_region": common, "voidspace_mask": voidspace, **masks}
+    mismatched = [name for name, array in arrays.items() if np.asarray(array).shape != expected_shape]
+    if mismatched:
+        raise ValueError("functional bone inputs must be in the image space: " + ", ".join(mismatched))
+    geometry_mismatched = [
+        name
+        for name, volume in volumes.items()
+        if not _same_geometry(image.sitk_image, volume.sitk_image)
+    ]
+    if geometry_mismatched:
+        raise ValueError("functional bone inputs must match image geometry: " + ", ".join(geometry_mismatched))
+
+    functional_common = common & ~voidspace
+    analysis_extension = ".nii.gz" if image.sitk_image is not None else ".npy"
+    analysis_path = Path(args.output_dir) / f"functional_bone_analysis_mask{analysis_extension}"
+    _write_mask(analysis_path, functional_common, image)
+    maps_dir = Path(args.maps_dir)
+    run_microarchitecture_batch(
+        Path(args.dataset_root),
+        use_common_region=False,
+        require_common_region=False,
+        force=args.force,
+        subject_id=args.subject,
+        site=args.site,
+        session_id=args.session,
+        thickness_method=args.thickness_method,
+        thickness_backend=args.thickness_backend,
+    )
+    native_maps = _existing_native_maps(
+        maps_dir,
+        args.subject,
+        args.session,
+        args.site,
+        has_cortical=True,
+    )
+    if native_maps is None:
+        raise ValueError("compatible native microarchitecture maps were not found after running native microarchitecture")
+
+    measurement_masks = {role: (np.asarray(mask) > 0) & functional_common for role, mask in masks.items()}
+    measurements = _summarize_measurements(image.array, measurement_masks, native_maps, case_spacing)
+    measurement_maps = _masked_maps_for_measurements(native_maps, measurement_masks)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"sub-{args.subject}_ses-{args.session}_voi-{voi_token(args.site)}_measurements.csv"
+    write_measurement_csv(output_path, measurements, measurement_maps)
+    print(output_path)
+    return 0
+
+
+raise SystemExit(main())
+"""
 
 
 class BatchProcessor(ScriptedLoadableModule):
@@ -251,7 +642,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if root.name == "derivatives":
             root = root.parent
         tool = str(tool or "")
-        registered = self.profile_requests_registration(tool, profile) or bool(registered and tool in {"microarchitecture", "plate_rod", "timelapse"})
+        registered = self.profile_requests_registration(tool, profile) or bool(registered and tool in {"microarchitecture", "plate_rod", "timelapse", "voidspace"})
         if tool == "fea":
             ok, message = self.normalized_dataset_status(root)
             if not ok:
@@ -274,15 +665,18 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         common_region_records = self._discover_common_region_records(root)
         existing_outputs = self._discover_existing_outputs(root, self._output_family_for_tool(tool))
         rows = self._table_rows_for_tool(
+            root,
             images,
             contour_artifacts,
             registration_records,
             common_region_records,
-            self._existing_outputs_for_profile(tool, registered, existing_outputs),
+            self._existing_outputs_for_profile(tool, registered, existing_outputs, profile),
             tool=tool,
             profile=profile,
             registered=registered,
         )
+        if tool == "voidspace":
+            self._annotate_voidspace_existing_outputs(root, rows)
         return rows, f"Discovered {len(rows)} row(s)."
 
     @staticmethod
@@ -303,6 +697,12 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         return str(profile or "").strip().lower() in {"multistack", "ped-fx"}
 
     @staticmethod
+    def profile_groups_timepoints(tool: str, profile: str) -> bool:
+        if str(tool or "") == "voidspace":
+            return str(profile or "").strip() in {"registered", "dynamic"}
+        return BatchProcessorLogic.profile_requests_registration(tool, profile)
+
+    @staticmethod
     def _output_family_for_tool(tool: str) -> str:
         return {
             "bone_contouring": "BoneContours",
@@ -310,19 +710,23 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             "microarchitecture": "Microarchitecture",
             "timelapse": "Timelapse",
             "plate_rod": "PlateRodMorphometry",
+            "voidspace": "Voidspace",
             "fea": "FEA",
             "mechanoregulation": "Mechanoregulation",
         }.get(str(tool or ""), "Microarchitecture")
 
     @staticmethod
     def _required_roles_for_tool(tool: str, profile: str) -> tuple[str, ...]:
-        del profile
         if tool in {"bone_contouring", "mask_label_algebra"}:
             return ()
         if tool == "timelapse":
             return ("segmentation", "full", "trab", "cort")
         if tool == "plate_rod":
             return ("segmentation", "trab")
+        if tool == "voidspace":
+            if str(profile or "").strip() in {"registered", "dynamic"}:
+                return ("segmentation", "full")
+            return ("segmentation",)
         if tool == "fea":
             return ()
         return ("segmentation", "full", "trab", "cort")
@@ -947,6 +1351,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         measurement_patterns = (
             "sub-*/ses-*/xct/measurements/*_measurements.csv",
             "sub-*/ses-*/xct/registered_measurements/*_measurements.csv",
+            "sub-*/ses-*/xct/functional_bone_measurements/*_measurements.csv",
         )
         for pattern in measurement_patterns:
             for path in sorted(micro_root.glob(pattern)):
@@ -966,7 +1371,11 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         ),
                         "measurements_table",
                         "Microarchitecture",
-                        metadata={"use_common_region": "/registered_measurements/" in path_text},
+                        metadata={
+                            "use_common_region": "/registered_measurements/" in path_text
+                            or "/functional_bone_measurements/" in path_text,
+                            "functional_bone": "/functional_bone_measurements/" in path_text,
+                        },
                     )
                 )
         map_patterns = (
@@ -996,9 +1405,10 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         return tuple(outputs)
 
     @staticmethod
-    def _existing_outputs_for_profile(tool: str, registered: bool, existing_outputs):
+    def _existing_outputs_for_profile(tool: str, registered: bool, existing_outputs, profile: str = ""):
         if str(tool or "") not in {"microarchitecture", "plate_rod"}:
             return tuple(existing_outputs)
+        profile_value = str(profile or "").strip()
         filtered = []
         for artifact in existing_outputs:
             if BatchProcessorLogic._is_map_output_for_tool(tool, artifact):
@@ -1006,7 +1416,15 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 continue
             path_text = str(artifact.path).replace("\\", "/").lower()
             common_region = bool(artifact.metadata.get("use_common_region"))
+            functional_bone = bool(artifact.metadata.get("functional_bone")) or "/functional_bone_measurements/" in path_text
             path_registered = "/registered_measurements/" in path_text
+            if str(tool or "") == "microarchitecture":
+                if profile_value == "functional-bone":
+                    if functional_bone:
+                        filtered.append(artifact)
+                    continue
+                if functional_bone:
+                    continue
             if registered and (common_region or path_registered):
                 filtered.append(artifact)
             elif not registered and not common_region and not path_registered:
@@ -1048,11 +1466,15 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             return [str(path) for path in self._fea_output_paths_for_row(root, row)]
         if tool == "mechanoregulation":
             return [str(path) for path in self._mechanoregulation_output_paths_for_row(root, row)]
+        if tool == "voidspace":
+            return [str(path) for path in self._voidspace_output_paths_for_row(root, row)]
+        if tool == "microarchitecture" and str(row.get("profile") or "").strip() == "functional-bone":
+            return [str(path) for path in self._functional_bone_output_paths_for_row(root, row)]
         key = self._row_case_key(row)
         if key is None:
             return []
         outputs = self._discover_existing_outputs(root, self._output_family_for_tool(tool))
-        outputs = self._existing_outputs_for_profile(tool, bool(row.get("registered")), outputs)
+        outputs = self._existing_outputs_for_profile(tool, bool(row.get("registered")), outputs, str(row.get("profile") or ""))
         return [str(artifact.path) for artifact in outputs if artifact.key == key]
 
     @staticmethod
@@ -1160,6 +1582,67 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         return [str(path) for path in paths]
 
     @staticmethod
+    def _voidspace_output_paths_for_row(root: Path, row: dict) -> list[Path]:
+        profile = str(row.get("profile") or "").strip()
+        if not profile:
+            if bool(row.get("registered")):
+                profile = "registered"
+            elif row.get("common_region_path") or row.get("mask_path"):
+                profile = "common-region"
+            else:
+                profile = "standard"
+        output_dir = BatchProcessorLogic._voidspace_output_dir_for_row(root, profile, row)
+        if not output_dir.exists():
+            return []
+        paths: list[Path] = []
+        if profile == "dynamic":
+            names = (
+                "voidspace_change_measurements.csv",
+                "voidspace_analysis_mask.nii.gz",
+                "voidspace_analysis_mask.nrrd",
+                "voidspace_quiescent_mask.AIM",
+                "voidspace_quiescent_mask.nii.gz",
+                "voidspace_quiescent_mask.nrrd",
+                "voidspace_stable_mask.AIM",
+                "voidspace_stable_mask.nii.gz",
+                "voidspace_stable_mask.nrrd",
+                "voidspace_expanded_mask.AIM",
+                "voidspace_expanded_mask.nii.gz",
+                "voidspace_expanded_mask.nrrd",
+                "voidspace_contracted_mask.AIM",
+                "voidspace_contracted_mask.nii.gz",
+                "voidspace_contracted_mask.nrrd",
+            )
+        else:
+            names = (
+                "voidspace_measurements.csv",
+                "voidspace_analysis_mask.nii.gz",
+                "voidspace_analysis_mask.nrrd",
+                "voidspace_all_mask.AIM",
+                "voidspace_all_mask.nii.gz",
+                "voidspace_all_mask.nrrd",
+                "voidspace_large_mask.AIM",
+                "voidspace_large_mask.nii.gz",
+                "voidspace_large_mask.nrrd",
+            )
+        for name in names:
+            path = output_dir / name
+            if path.exists():
+                paths.append(path)
+        return paths
+
+    @staticmethod
+    def _annotate_voidspace_existing_outputs(root: Path, rows: list[dict]) -> None:
+        for row in rows:
+            output_paths = [str(path) for path in BatchProcessorLogic._voidspace_output_paths_for_row(root, row)]
+            if not output_paths:
+                continue
+            row["output_paths"] = output_paths
+            row["status"] = "Done"
+            if str(row.get("action") or ""):
+                row["action"] = "Load"
+
+    @staticmethod
     def _row_case_key(row: dict):
         subject = str(row.get("subject") or "").strip()
         session = str(row.get("session_value", row.get("session")) or "").strip()
@@ -1190,6 +1673,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         include_registrations: bool = False,
         include_image: bool = True,
         roles: tuple[str, ...] | None = None,
+        common_region_label: str = "common",
     ):
         aliases = (
             ("seg", "segmentation"),
@@ -1206,7 +1690,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if mask_parts:
             parts.extend(mask_parts)
         for common in sorted(common_regions, key=lambda record: str(record.path)):
-            parts.append(f"common={common.path.name}")
+            parts.append(f"{common_region_label}={common.path.name}")
         if include_registrations:
             for registration in sorted(registrations, key=lambda record: (record.role, str(record.path))):
                 parts.append(f"registration={registration.path.name}")
@@ -1276,6 +1760,10 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             return self._fea_command_for_row(self._dataset_root(dataset_root), profile, row, force=force)
         if tool_key == "mechanoregulation":
             return self._mechanoregulation_command_for_row(self._dataset_root(dataset_root), profile, row, force=force)
+        if tool_key == "voidspace":
+            return self._voidspace_command_for_row(self._dataset_root(dataset_root), profile, row, force=force)
+        if tool_key == "microarchitecture" and str(profile or "").strip() == "functional-bone":
+            return self._functional_bone_command_for_row(self._dataset_root(dataset_root), row, force=force)
         if tool_key not in self._CLI_COMMANDS:
             raise ValueError(f"{tool_key} does not expose a one-row batch processor command yet.")
         module, command = self._CLI_COMMANDS[tool_key]
@@ -1307,7 +1795,270 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             args.append("--force")
         return args
 
-    def _table_rows_for_tool(self, image_records, contour_artifacts, registration_records, common_region_records, existing_outputs, *, tool: str, profile: str, registered: bool):
+    @staticmethod
+    def _microarchitecture_case_dirs(root: Path, row: dict) -> tuple[Path, Path]:
+        subject = str(row.get("subject") or "").strip()
+        session = str(row.get("session_value", row.get("session")) or "").strip()
+        voi = BatchProcessorLogic._filename_token(str(row.get("voi_value", row.get("voi")) or "").strip().lower())
+        base = root / "derivatives" / "Microarchitecture" / f"sub-{subject}" / f"ses-{session}" / "xct"
+        return base / "maps", base / "functional_bone_measurements"
+
+    @staticmethod
+    def _functional_bone_output_paths_for_row(root: Path, row: dict) -> list[Path]:
+        subject = str(row.get("subject") or "").strip()
+        session = str(row.get("session_value", row.get("session")) or "").strip()
+        voi = BatchProcessorLogic._filename_token(str(row.get("voi_value", row.get("voi")) or "").strip().lower())
+        maps_dir, measurements_dir = BatchProcessorLogic._microarchitecture_case_dirs(root, row)
+        paths = []
+        table = measurements_dir / f"sub-{subject}_ses-{session}_voi-{voi}_measurements.csv"
+        if table.exists():
+            paths.append(table)
+        for suffix in (".nii.gz", ".npy", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd"):
+            analysis = measurements_dir / f"functional_bone_analysis_mask{suffix}"
+            if analysis.exists():
+                paths.append(analysis)
+                break
+        for path in sorted(maps_dir.glob(f"sub-{subject}_ses-{session}_voi-{voi}_map-*")):
+            if path.is_file():
+                paths.append(path)
+        return paths
+
+    @staticmethod
+    def _functional_bone_command_for_row(root: Path, row: dict, *, force: bool = False) -> list[str]:
+        required = {
+            "image_path": "image",
+            "seg_path": "segmentation",
+            "full_mask_path": "full mask",
+            "trab_mask_path": "trabecular mask",
+            "cort_mask_path": "cortical mask",
+            "common_region_path": "common-region mask",
+            "voidspace_mask_path": "registered voidspace mask",
+        }
+        missing = [label for key, label in required.items() if not str(row.get(key) or "").strip()]
+        if missing:
+            raise ValueError(f"Functional bone rows require {', '.join(missing)}.")
+        maps_dir, output_dir = BatchProcessorLogic._microarchitecture_case_dirs(root, row)
+        args = [
+            "-c",
+            _FUNCTIONAL_BONE_SCRIPT,
+            "--image",
+            str(row["image_path"]),
+            "--segmentation",
+            str(row["seg_path"]),
+            "--full-mask",
+            str(row["full_mask_path"]),
+            "--trab-mask",
+            str(row["trab_mask_path"]),
+            "--common-region",
+            str(row["common_region_path"]),
+            "--voidspace-mask",
+            str(row["voidspace_mask_path"]),
+            "--dataset-root",
+            str(root),
+            "--maps-dir",
+            str(maps_dir),
+            "--output-dir",
+            str(output_dir),
+            "--subject",
+            str(row.get("subject") or ""),
+            "--session",
+            str(row.get("session_value", row.get("session")) or ""),
+            "--site",
+            str(row.get("voi_value", row.get("voi")) or ""),
+        ]
+        args.extend(["--cort-mask", str(row["cort_mask_path"])])
+        if force:
+            args.append("--force")
+        return args
+
+    @staticmethod
+    def _voidspace_output_dir_for_row(root: Path, profile: str, row: dict) -> Path:
+        subject = str(row.get("subject") or "").strip()
+        session = str(row.get("session_value", row.get("session")) or "").strip()
+        voi = str(row.get("voi_value", row.get("voi")) or "").strip().lower()
+        profile_dir = {
+            "registered": "registered",
+            "dynamic": "dynamic",
+        }.get(str(profile or "").strip(), "native")
+        return root / "derivatives" / "Voidspace" / f"sub-{subject}" / f"ses-{session}" / "xct" / profile_dir / f"voi-{voi}"
+
+    @staticmethod
+    def _voidspace_mask_path_for_row(profile: str, row: dict) -> str:
+        if str(profile or "").strip() not in {"registered", "dynamic"}:
+            return ""
+        paths = row.get("common_region_paths")
+        if isinstance(paths, (list, tuple)) and paths:
+            return str(paths[0])
+        return str(row.get("common_region_path") or row.get("mask_path") or "")
+
+    @staticmethod
+    def _voidspace_full_mask_path_for_row(profile: str, row: dict) -> str:
+        if str(profile or "").strip() not in {"registered", "dynamic"}:
+            return ""
+        return str(row.get("full_mask_path") or "")
+
+    def _voidspace_command_for_row(self, root: Path, profile: str, row: dict, *, force: bool = False) -> list[str]:
+        profile_value = str(profile or "").strip()
+        if profile_value == "dynamic":
+            required = {
+                "baseline_seg_path": "baseline registered segmentation",
+                "baseline_full_mask_path": "baseline registered full mask",
+                "baseline_output_dir": "baseline registered output directory",
+                "followup_seg_path": "follow-up registered segmentation",
+                "followup_full_mask_path": "follow-up registered full mask",
+                "followup_output_dir": "follow-up registered output directory",
+                "common_region_path": "registered common-region mask",
+            }
+            missing = [label for key, label in required.items() if not str(row.get(key) or "").strip()]
+            if missing:
+                raise ValueError(f"Dynamic voidspace rows require {', '.join(missing)}.")
+            args = [
+                "-c",
+                _VOIDSPACE_DYNAMIC_SCRIPT,
+                "--baseline-seg",
+                str(row["baseline_seg_path"]),
+                "--baseline-full-mask",
+                str(row["baseline_full_mask_path"]),
+                "--baseline-output-dir",
+                str(row["baseline_output_dir"]),
+                "--followup-seg",
+                str(row["followup_seg_path"]),
+                "--followup-full-mask",
+                str(row["followup_full_mask_path"]),
+                "--followup-output-dir",
+                str(row["followup_output_dir"]),
+                "--common-region",
+                str(row["common_region_path"]),
+            ]
+            args.extend(
+                [
+                    "--output-dir",
+                    str(self._voidspace_output_dir_for_row(root, profile_value, row)),
+                ]
+            )
+            if force:
+                args.append("--force")
+            return args
+        segmentation_path = str(row.get("seg_path") or row.get("segmentation_path") or "").strip()
+        if not segmentation_path:
+            raise ValueError("Voidspace rows require a segmentation input path.")
+        if profile_value == "registered":
+            mask_path = self._voidspace_mask_path_for_row(profile_value, row)
+            if not mask_path:
+                raise ValueError("Voidspace + common region rows require a common-region mask input path.")
+            full_mask_path = self._voidspace_full_mask_path_for_row(profile_value, row)
+            if not full_mask_path:
+                raise ValueError("Voidspace + common region rows require a full mask input path.")
+            args = [
+                "-c",
+                _VOIDSPACE_REGISTERED_SCRIPT,
+                "--segmentation",
+                segmentation_path,
+                "--full-mask",
+                full_mask_path,
+                "--common-region",
+                mask_path,
+                "--native-output-dir",
+                str(self._voidspace_output_dir_for_row(root, "standard", row)),
+                "--output-dir",
+                str(self._voidspace_output_dir_for_row(root, profile_value, row)),
+            ]
+            if force:
+                args.append("--force")
+            return args
+        args = [
+            "-m",
+            "voidspace.cli",
+            "run-case",
+            "--segmentation",
+            segmentation_path,
+            "--output-dir",
+            str(self._voidspace_output_dir_for_row(root, profile_value, row)),
+        ]
+        mask_path = self._voidspace_mask_path_for_row(profile_value, row)
+        if mask_path:
+            args.extend(["--mask", mask_path])
+        if force:
+            args.append("--force")
+        return args
+
+    @staticmethod
+    def _voidspace_existing_mask(root: Path, profile: str, row: dict, stem: str) -> str:
+        output_dir = BatchProcessorLogic._voidspace_output_dir_for_row(root, profile, row)
+        for suffix in (".AIM", ".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd"):
+            path = output_dir / f"{stem}{suffix}"
+            if path.exists():
+                return str(path)
+        return ""
+
+    @staticmethod
+    def _apply_functional_bone_inputs(root: Path, row: dict, contours, common_regions) -> None:
+        row["profile"] = "functional-bone"
+        row["seg_path"] = str(contours["segmentation"].path) if "segmentation" in contours else ""
+        row["full_mask_path"] = str(contours["full"].path) if "full" in contours else ""
+        row["trab_mask_path"] = str(contours["trab"].path) if "trab" in contours else ""
+        row["cort_mask_path"] = str(contours["cort"].path) if "cort" in contours else ""
+        row["common_region_paths"] = [str(common.path) for common in common_regions]
+        if common_regions:
+            row["common_region_path"] = str(common_regions[0].path)
+        voidspace_mask = BatchProcessorLogic._voidspace_existing_mask(root, "registered", row, "voidspace_large_mask")
+        row["voidspace_mask_path"] = voidspace_mask
+        if voidspace_mask:
+            row["input"] = f"{row.get('input', '')}\nvoidspace={Path(voidspace_mask).name}".strip()
+
+    @staticmethod
+    def _timelapse_transformed_input(root: Path, row: dict, role: str) -> str:
+        subject = str(row.get("subject") or "").strip()
+        session = str(row.get("session_value", row.get("session")) or "").strip()
+        voi = str(row.get("voi_value", row.get("voi")) or "").strip().lower()
+        if not subject or not session or not voi:
+            return ""
+        transformed_dir = root / "derivatives" / "Timelapse" / f"sub-{subject}" / f"ses-{session}" / "xct" / "transformed"
+        if role == "image":
+            candidates = [transformed_dir / f"sub-{subject}_ses-{session}_voi-{voi}_image-fused.nii.gz"]
+        else:
+            candidates = [transformed_dir / f"sub-{subject}_ses-{session}_voi-{voi}_desc-{role}_mask-fused.nii.gz"]
+        candidates.extend(sorted(transformed_dir.glob(f"*voi-{voi}*{role}*fused*")))
+        for path in candidates:
+            if path.exists():
+                return str(path)
+        return ""
+
+    @staticmethod
+    def _timelapse_pair_common_region_path(root: Path, subject: str, voi: str, baseline_session: str, followup_session: str) -> str:
+        analysis_dir = root / "derivatives" / "Timelapse" / f"sub-{subject}" / "xct" / "analysis"
+        table_path = analysis_dir / f"sub-{subject}_voi-{voi}_pairwise_remodelling.csv"
+        if table_path.exists():
+            try:
+                with table_path.open(newline="", encoding="utf-8") as stream:
+                    for record in csv.DictReader(stream):
+                        if str(record.get("compartment") or "").strip().lower() != "full":
+                            continue
+                        if str(record.get("t0") or "").strip() != baseline_session:
+                            continue
+                        if str(record.get("t1") or "").strip() != followup_session:
+                            continue
+                        path = Path(str(record.get("common_region_path") or "").strip())
+                        if path.exists():
+                            return str(path)
+            except Exception:
+                pass
+        path = analysis_dir / "common_regions" / f"sub-{subject}_voi-{voi}_desc-full_common-alltimepoints.nii.gz"
+        return str(path) if path.exists() else ""
+
+    @staticmethod
+    def _apply_timelapse_transformed_voidspace_inputs(root: Path, row: dict) -> None:
+        seg_path = BatchProcessorLogic._timelapse_transformed_input(root, row, "seg")
+        full_path = BatchProcessorLogic._timelapse_transformed_input(root, row, "full")
+        image_path = BatchProcessorLogic._timelapse_transformed_input(root, row, "image")
+        if seg_path:
+            row["seg_path"] = seg_path
+        if full_path:
+            row["full_mask_path"] = full_path
+        if image_path:
+            row["image_path"] = image_path
+
+    def _table_rows_for_tool(self, root: Path, image_records, contour_artifacts, registration_records, common_region_records, existing_outputs, *, tool: str, profile: str, registered: bool):
         image_records = list(image_records)
         required_roles = self._required_roles_for_tool(tool, profile)
         registrations_by_key = self._registration_records_by_key(registration_records)
@@ -1326,7 +2077,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 required_roles=required_roles,
                 existing_outputs=status_outputs,
             )
-        if registered:
+        if self.profile_groups_timepoints(tool, profile):
             grouped = {}
             for record in image_records:
                 result = status_by_key.get(record.key)
@@ -1370,7 +2121,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                     "session_value": record.key.session_id,
                     "voi": self._voi_text(record.key),
                     "voi_value": record.key.voi,
-                    "registered": True,
+                    "registered": bool(registered),
                     "image_path": str(record.path),
                     "status": self._status_text(result),
                     "input": self._input_text(
@@ -1378,21 +2129,39 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         contours,
                         registrations,
                         common_regions,
-                        include_registrations=True,
+                        include_registrations=registered,
                         include_image=tool != "plate_rod",
                         roles=required_roles,
+                        common_region_label="mask" if tool == "voidspace" else "common",
                     ),
                 }
-                if tool in {"microarchitecture", "plate_rod"} and not common_regions:
+                if tool in {"microarchitecture", "plate_rod", "voidspace"} and not common_regions:
                     group["missing"].add("common region")
                     group["action"] = "Missing"
-                    row["status"] = "Missing common region"
+                    row["status"] = "Missing mask" if tool == "voidspace" else "Missing common region"
+                if tool == "voidspace":
+                    row["profile"] = str(profile)
+                    row["seg_path"] = str(contours["segmentation"].path) if "segmentation" in contours else ""
+                    row["full_mask_path"] = str(contours["full"].path) if "full" in contours else ""
+                    row["common_region_paths"] = [str(common.path) for common in common_regions]
+                    if common_regions:
+                        row["common_region_path"] = str(common_regions[0].path)
+                    if bool(registered) and str(profile or "").strip() == "dynamic":
+                        self._apply_timelapse_transformed_voidspace_inputs(root, row)
+                if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone":
+                    self._apply_functional_bone_inputs(root, row, contours, common_regions)
+                    if not row.get("voidspace_mask_path"):
+                        group["missing"].add("voidspace")
+                        group["action"] = "Missing"
+                        row["status"] = "Missing voidspace"
                 row_outputs = outputs_by_key.get(record.key, [])
                 has_measurements_output = any(
                     self._is_measurement_output_for_tool(tool, artifact)
                     for artifact in row_outputs
                 )
                 output_paths = [str(artifact.path) for artifact in row_outputs]
+                if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone" and has_measurements_output:
+                    output_paths = [str(path) for path in self._functional_bone_output_paths_for_row(root, row)]
                 if output_paths and (tool not in {"microarchitecture", "plate_rod"} or has_measurements_output):
                     row["output_paths"] = output_paths
                 row["has_measurements_output"] = has_measurements_output
@@ -1400,6 +2169,58 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             rows = []
             for group_key, group in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1], item[0][2] or 0)):
                 group_rows = sorted(group["rows"], key=lambda row: (len(str(row["session"])), str(row["session"])))
+                if tool == "voidspace" and str(profile or "").strip() == "dynamic":
+                    pair_rows = []
+                    for previous, current in zip(group_rows, group_rows[1:]):
+                        pair = dict(current)
+                        baseline_session = str(previous.get("session_value", previous.get("session")) or "")
+                        followup_session = str(current.get("session_value", current.get("session")) or "")
+                        pair_session = f"{baseline_session}-{followup_session}"
+                        pair_common_region_path = self._timelapse_pair_common_region_path(
+                            root,
+                            str(pair.get("subject") or ""),
+                            str(pair.get("voi_value") or ""),
+                            baseline_session,
+                            followup_session,
+                        )
+                        pair["session"] = pair_session
+                        pair["session_value"] = pair_session
+                        pair_output_dir = self._voidspace_output_dir_for_row(root, "dynamic", pair)
+                        pair["baseline_seg_path"] = str(previous.get("seg_path") or "")
+                        pair["baseline_full_mask_path"] = str(previous.get("full_mask_path") or "")
+                        pair["baseline_output_dir"] = str(pair_output_dir / "baseline")
+                        pair["followup_seg_path"] = str(current.get("seg_path") or "")
+                        pair["followup_full_mask_path"] = str(current.get("full_mask_path") or "")
+                        pair["followup_output_dir"] = str(pair_output_dir / "followup")
+                        if pair_common_region_path:
+                            pair["common_region_path"] = pair_common_region_path
+                            pair["common_region_paths"] = [pair_common_region_path]
+                        pair["input"] = (
+                            f"baseline={Path(pair['baseline_seg_path']).name if pair['baseline_seg_path'] else 'missing registered segmentation'}\n"
+                            f"followup={Path(pair['followup_seg_path']).name if pair['followup_seg_path'] else 'missing registered segmentation'}\n"
+                            f"mask={Path(str(pair.get('common_region_path') or '')).name if pair.get('common_region_path') else 'missing'}"
+                        )
+                        if (
+                            not pair["baseline_seg_path"]
+                            or not pair["baseline_full_mask_path"]
+                            or not pair["followup_seg_path"]
+                            or not pair["followup_full_mask_path"]
+                            or not pair.get("common_region_path")
+                        ):
+                            pair["status"] = "Missing registered timelapse inputs"
+                        pair_rows.append(pair)
+                    group_rows = pair_rows
+                    if not group_rows:
+                        group["action"] = "Missing"
+                    elif any(
+                        not row.get("baseline_seg_path")
+                        or not row.get("baseline_full_mask_path")
+                        or not row.get("followup_seg_path")
+                        or not row.get("followup_full_mask_path")
+                        or not row.get("common_region_path")
+                        for row in group_rows
+                    ):
+                        group["action"] = "Missing"
                 if tool in {"microarchitecture", "plate_rod"}:
                     group_output_paths = sorted(
                         {
@@ -1426,7 +2247,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         group["action"] = "Load"
                         if group_rows:
                             group_rows[0]["output_paths"] = group_output_paths
-                if len(group_rows) < 2:
+                if len(group_rows) < 2 and tool != "voidspace":
                     group["action"] = "Missing"
                     for row in group_rows:
                         row["status"] = "Missing longitudinal series"
@@ -1449,6 +2270,10 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 self._case_lookup_key(record.key),
                 [],
             )
+            common_regions = common_regions_by_key.get(
+                self._case_lookup_key(record.key),
+                [],
+            )
             row = {
                 "action": action,
                 "subject": record.key.subject_id,
@@ -1456,21 +2281,42 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 "session_value": record.key.session_id,
                 "voi": self._voi_text(record.key),
                 "voi_value": record.key.voi,
-                "registered": False,
+                "registered": bool(registered),
                 "image_path": str(record.path),
                 "input": self._input_text(
                     record,
                     contours,
                     registrations,
+                    common_regions,
                     include_registrations=False,
                     include_image=tool != "plate_rod",
                     roles=required_roles,
+                    common_region_label="mask" if tool == "voidspace" else "common",
                 ),
                 "status": status,
             }
+            if tool == "voidspace":
+                row["profile"] = str(profile)
+                row["seg_path"] = str(contours["segmentation"].path) if "segmentation" in contours else ""
+                row["full_mask_path"] = str(contours["full"].path) if "full" in contours else ""
+                row["common_region_paths"] = [str(common.path) for common in common_regions]
+                if common_regions:
+                    row["common_region_path"] = str(common_regions[0].path)
+                if bool(registered) and str(profile or "").strip() == "dynamic":
+                    self._apply_timelapse_transformed_voidspace_inputs(root, row)
+                if str(profile or "").strip() == "registered" and not common_regions:
+                    row["action"] = "Missing"
+                    row["status"] = "Missing mask"
+            if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone":
+                self._apply_functional_bone_inputs(root, row, contours, common_regions)
+                if not row.get("voidspace_mask_path"):
+                    row["action"] = "Missing"
+                    row["status"] = "Missing voidspace"
             row_outputs = outputs_by_key.get(record.key, [])
             has_measurements_output = any(self._is_measurement_output_for_tool(tool, artifact) for artifact in row_outputs)
             output_paths = [str(artifact.path) for artifact in row_outputs]
+            if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone" and has_measurements_output:
+                output_paths = [str(path) for path in self._functional_bone_output_paths_for_row(root, row)]
             if output_paths and (tool not in {"microarchitecture", "plate_rod"} or has_measurements_output):
                 row["output_paths"] = output_paths
             rows.append(row)
@@ -1562,6 +2408,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             ("Microarchitecture", "microarchitecture"),
             ("Timelapsed Remodelling", "timelapse"),
             ("Plate/Rod Morphometry", "plate_rod"),
+            ("Voidspace", "voidspace"),
             ("ParOsol-FEA", "fea"),
             ("Mechanoregulation", "mechanoregulation"),
         ):
@@ -1865,6 +2712,29 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._append_log(f"[batch] remote backend unavailable: {exc}")
             return None
 
+    def _remote_backend_available(self, backend):
+        try:
+            result = subprocess.run(
+                backend.availability_argv(),
+                capture_output=True,
+                text=True,
+                timeout=backend.config.connect_timeout_seconds + 2,
+            )
+        except subprocess.TimeoutExpired:
+            self._append_log("[batch] Remote server is not reachable before the connection timeout.")
+            return False
+        except Exception as exc:
+            self._append_log(f"[batch] Remote server is not reachable: {exc}")
+            return False
+        if result.returncode == 0:
+            return True
+        detail = (result.stderr or result.stdout or "").strip()
+        message = "Remote server is not reachable"
+        if detail:
+            message = f"{message}: {detail}"
+        self._append_log(f"[batch] {message}")
+        return False
+
     @staticmethod
     def _server_sbatch_options_from_config(options):
         values = {}
@@ -1955,6 +2825,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             return [], f"Set {SLICER_BONE_BATCH_REMOTE_CONFIG} to a private ARC/SLURM backend config."
         if not str(backend.config.remote_root or "").strip():
             return [], "Enter a server directory."
+        if not self._remote_backend_available(backend):
+            return [], "Remote server is not reachable. Check VPN/network connection or switch execution backend to Local."
         try:
             result = subprocess.run(
                 backend.discover_argv(
@@ -2040,11 +2912,12 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                 row["remote_backend"] = backend.config.name
             return rows, f"Remote {backend.config.name}: discovered {len(rows)} row(s) in {backend.config.remote_root}."
         rows = self.logic._table_rows_for_tool(
+            Path(str(backend.config.remote_root)),
             image_records,
             contour_artifacts,
             registration_records,
             common_region_records,
-            self.logic._existing_outputs_for_profile(tool, registered, existing_outputs),
+            self.logic._existing_outputs_for_profile(tool, registered, existing_outputs, profile),
             tool=tool,
             profile=profile,
             registered=registered,
@@ -2078,7 +2951,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         command = self._remote_timelapse_outputs_command(backend.config.remote_root, backend.config.python)
         try:
             result = subprocess.run(
-                [backend.config.ssh, backend.config.host, backend._login_shell(command)],
+                backend.shell_argv(command),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -2341,6 +3214,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             "bone-contouring/src",
             "bone-microarchitecture/src",
             "bone-plate-rod-thinning",
+            "voidspace/src",
             "Timelapsed" + "HRpQCT/src",
             "parosol-py/src",
             "BoneMechanoregulation",
@@ -2367,6 +3241,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             "bone_microarchitecture.cli": _local_repo_path("bone-microarchitecture", "src"),
             "timelapsedhrpqct.cli": _local_repo_path("Timelapsed" + "HRpQCT", "src"),
             "plate_rod_thinning.cli": _local_repo_path("bone-plate-rod-thinning"),
+            "voidspace.cli": _local_repo_path("voidspace", "src"),
             "parosol_py.cli": _local_repo_path("parosol-py", "src"),
             "bonemechreg.cli": _local_repo_path("BoneMechanoregulation"),
         }
@@ -2395,27 +3270,66 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             return
         self._append_log(f"[batch] Row is not runnable: {row.get('status', action)}")
 
+    def _row_indices_for_group_action(self, row_index):
+        if row_index < 0 or row_index >= len(self._batchRows):
+            return []
+        row = self._batchRows[row_index]
+        grouped_child_commands = (
+            self._selected_tool_key() == "voidspace"
+            or (
+                self._selected_tool_key() == "microarchitecture"
+                and str(row.get("profile") or self.profileCombo.currentData or "").strip() == "functional-bone"
+            )
+        )
+        if not grouped_child_commands or int(row.get("action_row_span") or 0) <= 1:
+            return [row_index]
+        group_id = row.get("group_id")
+        indices = []
+        for offset in range(int(row.get("action_row_span") or 0)):
+            child_index = row_index + offset
+            if child_index >= len(self._batchRows):
+                break
+            child = self._batchRows[child_index]
+            if group_id and child.get("group_id") != group_id:
+                break
+            indices.append(child_index)
+        return indices or [row_index]
+
     def _queue_row(self, row_index):
-        if row_index in self._queued_row_indices():
+        queued_any = False
+        queued_indices = self._queued_row_indices()
+        for child_index in self._row_indices_for_group_action(row_index):
+            if child_index in queued_indices:
+                continue
+            self._batchQueue.append(self._batch_job_for_row(child_index))
+            self._set_row_status(child_index, "Queued")
+            queued_any = True
+        if not queued_any:
             return
-        self._batchQueue.append(self._batch_job_for_row(row_index))
         self._set_row_action(row_index, "Queued")
-        self._set_row_status(row_index, "Queued")
         self.cancelBatchButton.enabled = True
-        self._append_log(f"[batch] queued row {int(row_index) + 1}")
+        count = len(self._row_indices_for_group_action(row_index))
+        self._append_log(f"[batch] queued {count} row(s) from row {int(row_index) + 1}")
         self._start_next_batch_job()
 
     def _queue_all_rows(self):
         queued = 0
+        queued_indices = self._queued_row_indices()
         for row_index, row in enumerate(self._batchRows):
             if self._effective_row_action(row) != "Run":
                 continue
-            if row_index in self._queued_row_indices():
+            queued_for_row = 0
+            for child_index in self._row_indices_for_group_action(row_index):
+                if child_index in queued_indices:
+                    continue
+                self._batchQueue.append(self._batch_job_for_row(child_index))
+                self._set_row_status(child_index, "Queued")
+                queued_indices.add(child_index)
+                queued_for_row += 1
+            if queued_for_row == 0:
                 continue
-            self._batchQueue.append(self._batch_job_for_row(row_index))
             self._set_row_action(row_index, "Queued")
-            self._set_row_status(row_index, "Queued")
-            queued += 1
+            queued += queued_for_row
         self.cancelBatchButton.enabled = bool(self._batchQueue or self._batchProcess is not None)
         self._append_log(f"[batch] queued {queued} row(s)")
         self._start_next_batch_job()
@@ -2541,6 +3455,16 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             mpi=backend_key != "local" and str(job.get("tool") or "") == "fea",
         ) if backend_key != "local" else None
         if backend_key != "local" and remote_backend is not None:
+            if not self._remote_backend_available(remote_backend):
+                if self._job_matches_current_row(row_index, job):
+                    self._set_row_status(row_index, "Remote server is not reachable")
+                    self._set_row_action(row_index, "Run")
+                self._append_log("[batch] Remote server is not reachable. Check VPN/network connection or switch execution backend to Local.")
+                self._batchRunningRow = None
+                self.runAllButton.enabled = bool(self._batchRows)
+                self.cancelBatchButton.enabled = bool(self._batchQueue)
+                self._start_next_batch_job()
+                return
             remote_args = remote_backend.config.remote_args(args, dataset_root=job.get("local_root"))
             job_name = f"bone-{job.get('tool')}-{row_index + 1}"
             submit_argv = remote_backend.submit_argv(
@@ -2667,6 +3591,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
                 self._refresh_row_output_paths(row_index, tool_key=tool_key)
                 self._set_row_status(row_index, "Done")
                 self._set_row_action(row_index, "Load")
+                self._set_group_action_load_if_outputs_are_ready(row_index, tool_key)
             else:
                 self._append_log(f"[batch] finished {self._job_description(job)}")
             self._append_log("[batch] finished")
@@ -2676,6 +3601,44 @@ print(json.dumps({"cases": rows}, sort_keys=True))
                 self._set_row_action(row_index, "Run")
             self._append_log(f"[batch] failed with exit code {exit_code}")
         self._start_next_batch_job()
+
+    def _set_group_action_load_if_outputs_are_ready(self, row_index, tool_key):
+        if str(tool_key or "") != "voidspace":
+            return
+        if row_index < 0 or row_index >= len(self._batchRows):
+            return
+        row = self._batchRows[row_index]
+        group_id = row.get("group_id")
+        visible_index = row_index
+        if group_id:
+            for index in range(row_index, -1, -1):
+                candidate = self._batchRows[index]
+                if candidate.get("group_id") != group_id:
+                    break
+                if str(candidate.get("action") or ""):
+                    visible_index = index
+        visible_row = self._batchRows[visible_index]
+        if int(visible_row.get("action_row_span") or 0) <= 1:
+            return
+        dataset_root = self._current_local_dataset_root()
+        ready = True
+        grouped_paths = []
+        profile = str(visible_row.get("profile") or "").strip()
+        for index in self._row_indices_for_group_action(visible_index):
+            paths = self.logic.rediscover_row_output_paths(dataset_root, tool_key, self._batchRows[index])
+            if not paths:
+                ready = False
+                break
+            self._batchRows[index]["output_paths"] = paths
+            grouped_paths.extend(paths)
+        if not ready:
+            return
+        if profile != "registered":
+            self._batchRows[visible_index]["output_paths"] = [
+                str(path) for path in self._deduplicated_paths(Path(path) for path in grouped_paths)
+            ]
+        self._set_row_status(visible_index, "Done")
+        self._set_row_action(visible_index, "Load")
 
     def _mark_remote_job_submitted(self, row_index, job, process_output):
         backend = self._remote_backend(local_root=job.get("local_root"), remote_root=job.get("remote_root"))
@@ -2866,7 +3829,7 @@ print(str(csv_path))
 """
         try:
             result = subprocess.run(
-                [backend.config.ssh, backend.config.host, backend._login_shell(f"{shlex.quote(backend.config.python)} - <<'PY'\n{script}\nPY")],
+                backend.shell_argv(f"{shlex.quote(backend.config.python)} - <<'PY'\n{script}\nPY"),
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -2951,7 +3914,7 @@ print(str(csv_path))
         dataset_root = self._current_local_dataset_root()
         paths = []
         if (
-            tool_key in {"microarchitecture", "plate_rod"}
+            tool_key in {"microarchitecture", "plate_rod", "voidspace"}
             and bool(row.get("registered"))
             and int(row.get("action_row_span") or 0) > 1
         ):
@@ -2991,7 +3954,27 @@ print(str(csv_path))
         if self._selected_backend_key() == "server":
             row.pop("output_paths", None)
             self._refresh_row_output_paths(row_index)
-        output_paths = [Path(path) for path in row.get("output_paths", []) if str(path)]
+        if self._selected_tool_key() == "voidspace" and int(row.get("action_row_span") or 0) > 1:
+            if str(row.get("profile") or "").strip() == "registered":
+                dataset_root = self._current_local_dataset_root()
+                for child_index in self._row_indices_for_group_action(row_index):
+                    child_row = self._batchRows[child_index]
+                    child_paths = [
+                        Path(path)
+                        for path in self.logic.rediscover_row_output_paths(
+                            dataset_root,
+                            self._selected_tool_key(),
+                            child_row,
+                        )
+                    ]
+                    child_paths = self._deduplicated_paths(child_paths)
+                    child_row["output_paths"] = [str(path) for path in child_paths]
+                    if child_paths:
+                        self._load_voidspace_outputs(child_row, child_paths)
+                return
+            output_paths = [Path(path) for path in self._refresh_row_output_paths(row_index)]
+        else:
+            output_paths = [Path(path) for path in row.get("output_paths", []) if str(path)]
         if not output_paths:
             output_paths = [Path(path) for path in self._refresh_row_output_paths(row_index)]
         output_paths = self._deduplicated_paths(output_paths)
@@ -3013,6 +3996,13 @@ print(str(csv_path))
         if self._selected_tool_key() == "mechanoregulation":
             self._load_mechanoregulation_outputs(row, output_paths)
             return
+        if self._selected_tool_key() == "voidspace":
+            self._load_voidspace_outputs(row, output_paths)
+            return
+        functional_analysis_paths = []
+        if self._selected_tool_key() == "microarchitecture" and str(row.get("profile") or "").strip() == "functional-bone":
+            functional_analysis_paths = [path for path in output_paths if self._is_functional_bone_analysis_mask(path)]
+            output_paths = [path for path in output_paths if not self._is_functional_bone_analysis_mask(path)]
         loaded = 0
         for path in output_paths:
             if not path.exists():
@@ -3025,7 +4015,7 @@ print(str(csv_path))
                 elif self._selected_tool_key() == "plate_rod" and path.suffix.lower() == ".npy":
                     self._remove_existing_node_named(path.stem)
                     result = self._load_plate_rod_npy_map(path)
-                elif path.name.lower().endswith((".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd")):
+                elif path.name.lower().endswith((".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd")):
                     self._remove_existing_node_named(path.stem)
                     result = slicer.util.loadVolume(str(path), {"name": path.stem})
                 else:
@@ -3054,7 +4044,111 @@ print(str(csv_path))
                 self._append_log(f"[batch] Could not load {path.name}: {exc}")
         if self._selected_tool_key() in {"microarchitecture", "plate_rod"} and bool(row.get("registered")):
             self._load_registered_common_region_overlays(row_index)
+        if functional_analysis_paths:
+            if int(row.get("action_row_span") or 0) > 1:
+                loaded += self._load_functional_bone_analysis_overlays(row_index)
+            else:
+                loaded += self._load_functional_bone_analysis_outputs(row, functional_analysis_paths)
         self._append_log(f"[batch] loaded {loaded} output file(s)")
+
+    def _load_voidspace_outputs(self, row, output_paths):
+        voidspace_paths = [
+            Path(path)
+            for path in output_paths
+            if Path(path).exists() and self._is_mask_output(Path(path)) and "voidspace_" in Path(path).name.lower()
+        ]
+        segmentation_inputs = []
+        if str(row.get("baseline_seg_path") or "").strip() or str(row.get("followup_seg_path") or "").strip():
+            for key, role in (("baseline_seg_path", "baseline_seg"), ("followup_seg_path", "followup_seg")):
+                path_text = str(row.get(key) or "").strip()
+                path = Path(path_text) if path_text else None
+                if path is not None and path.exists():
+                    segmentation_inputs.append((path, role))
+        else:
+            seg_path_text = str(row.get("seg_path") or "").strip()
+            seg_path = Path(seg_path_text) if seg_path_text else None
+            segmentation_inputs = [(seg_path, "seg")] if seg_path is not None and seg_path.exists() else []
+        analysis_inputs = []
+        for key, role in (
+            ("baseline_output_dir", "baseline_analysis_mask"),
+            ("followup_output_dir", "followup_analysis_mask"),
+        ):
+            directory_text = str(row.get(key) or "").strip()
+            if not directory_text:
+                continue
+            for suffix in (".nii.gz", ".nrrd"):
+                path = Path(directory_text) / f"voidspace_analysis_mask{suffix}"
+                if path.exists():
+                    analysis_inputs.append((path, role))
+                    break
+        voidspace_inputs = [
+            (path, self._voidspace_role_from_path(path))
+            for path in sorted(voidspace_paths, key=self._voidspace_mask_sort_key)
+        ]
+        table_paths = [
+            Path(path)
+            for path in output_paths
+            if Path(path).exists() and Path(path).suffix.lower() == ".csv"
+        ]
+        loaded = 0
+        for path in sorted(table_paths):
+            try:
+                self._remove_existing_node_named(path.stem)
+                result = slicer.util.loadTable(str(path))
+                node = result[1] if isinstance(result, tuple) and len(result) > 1 else result
+                if node is not None:
+                    self._show_table_node(node)
+                    loaded += 1
+            except Exception as exc:
+                self._append_log(f"[batch] Could not load {path.name}: {exc}")
+        if not segmentation_inputs and not analysis_inputs and not voidspace_inputs:
+            self._append_log(f"[batch] loaded {loaded} voidspace output file(s)")
+            return
+
+        subject = str(row.get("subject") or "unknown")
+        session = str(row.get("session_value", row.get("session")) or "unknown")
+        voi = str(row.get("voi_value", row.get("voi")) or "unknown")
+        profile = str(row.get("profile") or "voidspace").replace("_", "-")
+        node_name = f"sub-{subject}_ses-{session}_voi-{voi}_{profile}_voidspace"
+        self._remove_existing_node_named(node_name)
+        segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", node_name)
+        segmentation_node.CreateDefaultDisplayNodes()
+        reference_node = self._ensure_loaded_source_volume(row.get("image_path"))
+        temporary_nodes = []
+        try:
+            if reference_node is not None:
+                segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)
+            for path, role in [*segmentation_inputs, *analysis_inputs, *voidspace_inputs]:
+                label_node = self._load_mask_as_labelmap(path, role, reference_node)
+                temporary_nodes.append(label_node)
+                if reference_node is None:
+                    reference_node = label_node
+                    segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)
+                before_count = segmentation_node.GetSegmentation().GetNumberOfSegments()
+                slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(label_node, segmentation_node)
+                after_count = segmentation_node.GetSegmentation().GetNumberOfSegments()
+                if after_count <= before_count:
+                    if role != "seg":
+                        self._append_log(f"[batch] Skipping empty voidspace mask: {path.name}")
+                    continue
+                self._name_last_segment(segmentation_node, self._segment_name_for_role(role), role)
+                loaded += 1
+            if reference_node is not None:
+                slicer.util.setSliceViewerLayers(background=reference_node, fit=False)
+            self._center_slices_on_node(segmentation_node)
+        except Exception as exc:
+            try:
+                slicer.mrmlScene.RemoveNode(segmentation_node)
+            except Exception:
+                pass
+            self._append_log(f"[batch] Could not load Voidspace segmentation: {exc}")
+        finally:
+            for node in temporary_nodes:
+                try:
+                    slicer.mrmlScene.RemoveNode(node)
+                except Exception:
+                    pass
+        self._append_log(f"[batch] loaded {loaded} voidspace output file(s)")
 
     def _load_fea_outputs(self, row, output_paths):
         loaded = 0
@@ -3879,6 +4973,82 @@ print(str(csv_path))
                 except Exception:
                     pass
 
+    @staticmethod
+    def _is_functional_bone_analysis_mask(path: Path) -> bool:
+        name = Path(path).name.lower()
+        return name.startswith("functional_bone_analysis_mask") and BatchProcessorWidget._is_mask_output(Path(path))
+
+    def _load_functional_bone_analysis_outputs(self, row, output_paths):
+        mask_paths = [
+            Path(path)
+            for path in output_paths
+            if self._is_functional_bone_analysis_mask(Path(path)) and Path(path).exists()
+        ]
+        if not mask_paths:
+            return 0
+        subject = str(row.get("subject") or "unknown")
+        session = str(row.get("session_value", row.get("session")) or "unknown")
+        voi = str(row.get("voi_value", row.get("voi")) or "unknown")
+        node_name = f"sub-{subject}_ses-{session}_voi-{voi}_functional-bone-analysis"
+        self._remove_existing_node_named(node_name)
+        segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLSegmentationNode",
+            node_name,
+        )
+        segmentation_node.CreateDefaultDisplayNodes()
+        reference_node = self._ensure_loaded_source_volume(row.get("image_path"))
+        temporary_nodes = []
+        try:
+            if reference_node is not None:
+                segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)
+            for path in sorted(mask_paths):
+                label_node = self._load_mask_as_labelmap(path, "functional_bone_analysis", reference_node)
+                temporary_nodes.append(label_node)
+                if reference_node is None:
+                    reference_node = label_node
+                    segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(reference_node)
+                slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(label_node, segmentation_node)
+                self._name_last_segment(
+                    segmentation_node,
+                    f"Functional bone analysis ses-{session}",
+                    "functional_bone_analysis",
+                )
+            segmentation_node.SetAttribute("BoneImaging.MaskRoles", "functional_bone_analysis")
+            self._put_node_in_subject_hierarchy_folder(
+                segmentation_node,
+                f"sub-{subject}_ses-{session}_voi-{voi}_xct_functional-bone_analysis",
+            )
+            self._center_slices_on_node(segmentation_node)
+            return 1
+        except Exception as exc:
+            try:
+                slicer.mrmlScene.RemoveNode(segmentation_node)
+            except Exception:
+                pass
+            self._append_log(f"[batch] Could not load functional bone analysis segmentation: {exc}")
+            return 0
+        finally:
+            for node in temporary_nodes:
+                try:
+                    slicer.mrmlScene.RemoveNode(node)
+                except Exception:
+                    pass
+
+    def _load_functional_bone_analysis_overlays(self, row_index):
+        rows = self._registered_group_rows(row_index)
+        if not rows:
+            return 0
+        dataset_root = self._current_local_dataset_root()
+        loaded = 0
+        for row in rows:
+            paths = [
+                Path(path)
+                for path in self.logic.rediscover_row_output_paths(dataset_root, "microarchitecture", row)
+                if self._is_functional_bone_analysis_mask(Path(path))
+            ]
+            loaded += self._load_functional_bone_analysis_outputs(row, self._deduplicated_paths(paths))
+        return loaded
+
     def _registered_common_region_folder_name(self, row):
         subject = str(row.get("subject") or "unknown")
         session = str(row.get("session_value", row.get("session")) or "unknown")
@@ -4014,7 +5184,47 @@ print(str(csv_path))
             "trab": "Trabecular mask",
             "cort": "Cortical mask",
             "seg": "Bone segmentation",
+            "baseline_seg": "Baseline bone segmentation",
+            "followup_seg": "Follow-up bone segmentation",
+            "voidspace_all": "All voidspace",
+            "voidspace_large": "Large voidspace",
+            "voidspace_quiescent": "Quiescent voidspace",
+            "voidspace_expanded": "Expanded voidspace",
+            "voidspace_contracted": "Contracted voidspace",
+            "voidspace_analysis": "Analysis mask",
+            "baseline_analysis_mask": "Baseline analysis mask",
+            "followup_analysis_mask": "Follow-up analysis mask",
         }.get(str(role), str(role).replace("_", " ").title())
+
+    @staticmethod
+    def _voidspace_role_from_path(path: Path) -> str:
+        name = path.name.lower()
+        if "voidspace_analysis_mask" in name:
+            return "voidspace_analysis"
+        if "voidspace_quiescent_mask" in name or "voidspace_stable_mask" in name:
+            return "voidspace_quiescent"
+        if "voidspace_expanded_mask" in name:
+            return "voidspace_expanded"
+        if "voidspace_contracted_mask" in name:
+            return "voidspace_contracted"
+        if "voidspace_large_mask" in name:
+            return "voidspace_large"
+        if "voidspace_all_mask" in name:
+            return "voidspace_all"
+        return "voidspace"
+
+    @staticmethod
+    def _voidspace_mask_sort_key(path: Path):
+        order = {
+            "voidspace_analysis": -1,
+            "voidspace_all": 0,
+            "voidspace_large": 1,
+            "voidspace_quiescent": 2,
+            "voidspace_expanded": 3,
+            "voidspace_contracted": 4,
+        }
+        role = BatchProcessorWidget._voidspace_role_from_path(path)
+        return order.get(role, 99), path.name
 
     def _load_mask_as_labelmap(self, path: Path, role: str, reference_node):
         with tempfile.TemporaryDirectory(prefix="hrpqct_batch_mask_") as temp_dir:

@@ -4,6 +4,19 @@ All notable changes to this extension are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added a Voidspace scene module for single-case and baseline/follow-up interactive analysis backed by the `voidspace` core package.
+- Added Batch Processor support for Voidspace, Registered voidspace, and Dynamic voidspace profiles.
+- Added Voidspace runtime package status, setup metadata, toolbox registry entries, and user documentation.
+
+### Changed
+
+- Registered voidspace now stays in native segmentation space and applies the matching native common region for restricted reporting.
+- Dynamic voidspace writes baseline/follow-up intermediate maps inside the dynamic pair output folder so Registered voidspace remains an independent profile.
+- Voidspace load-back imports source segmentations, analysis masks, and change maps into one Slicer segmentation node with distinct display colors.
+- Remote batch processing checks server availability before starting server-side work so missing VPN/server access fails quickly instead of hanging.
+
 ## [0.2.1] - 2026-09-08
 
 ### Changed

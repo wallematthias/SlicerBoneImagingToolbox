@@ -24,7 +24,7 @@ WORKFLOW_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "PlateRodMorphometry": (),
     "FEA": (),
     "Mechanoregulation": ("Registration", "CommonRegion", "FEA"),
-    "VoidSpace": (),
+    "Voidspace": (),
 }
 
 MASK_CONSUMING_WORKFLOWS = {
@@ -33,7 +33,7 @@ MASK_CONSUMING_WORKFLOWS = {
     "Timelapse",
     "FEA",
     "Mechanoregulation",
-    "VoidSpace",
+    "Voidspace",
 }
 
 

@@ -96,6 +96,14 @@ DEFAULT_RUNTIME_PACKAGES = (
         notes="Bone microarchitecture measurements from masks and calibrated grayscale images.",
     ),
     PackageSpec(
+        display_name="Voidspace",
+        package_name="voidspace",
+        import_name="voidspace",
+        minimum_version="0.1.3",
+        constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.2", "scipy>=1.10", "aimio-py>=0.1.8"),
+        notes="Spacing-aware voidspace analysis from segmentation and optional analysis-domain masks.",
+    ),
+    PackageSpec(
         display_name="Plate/Rod Morphometry",
         package_name="plate-rod-thinning",
         import_name="plate_rod_thinning",
@@ -340,6 +348,7 @@ def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
         "timelapsed-hrpqct",
         "bone-microarchitecture",
         "plate-rod-thinning",
+        "voidspace",
     }:
         upgrade = ["--upgrade"] if installed else []
         toolbox_root = Path(__file__).resolve().parents[1]

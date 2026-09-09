@@ -80,6 +80,13 @@
       "source": "built-in"
     },
     {
+      "path": "HRpQCTTools/VoidspaceHRpQCT",
+      "title": "Voidspace",
+      "section": "Microstructural Analysis",
+      "order": 115,
+      "source": "built-in"
+    },
+    {
       "path": "HRpQCTTools/ParOSolFEA",
       "title": "ParOsol-FEA",
       "section": "FE Analysis",

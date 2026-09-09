@@ -36,6 +36,7 @@ class RemoteBatchConfig:
     setup_command: str = ""
     environment: Mapping[str, str] = field(default_factory=dict)
     sbatch_options: tuple[str, ...] = ()
+    connect_timeout_seconds: int = 8
 
     def remote_dataset_root(self, dataset_root: str | Path) -> str:
         """Return the remote dataset root matching a local or remote input root."""
@@ -76,6 +77,17 @@ class RemoteBatchConfig:
                 mapped.append(value)
         return mapped
 
+    def ssh_options(self) -> list[str]:
+        timeout = max(1, int(self.connect_timeout_seconds or 8))
+        return [
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            f"ConnectTimeout={timeout}",
+            "-o",
+            "ConnectionAttempts=1",
+        ]
+
 
 class SshSlurmBatchBackend:
     """Build SSH commands that submit toolbox CLIs to SLURM."""
@@ -96,7 +108,7 @@ class SshSlurmBatchBackend:
             f"{shlex.quote(self.config.python)} -m bone_imaging_derivatives.remote_discovery "
             f"{shlex.quote(self.config.remote_root)} {family_args}"
         ).strip()
-        return [self.config.ssh, self.config.host, self._login_shell(command)]
+        return self._ssh_argv(self._login_shell(command))
 
     def submit_argv(self, args: Iterable[str], *, job_name: str) -> list[str]:
         """Return an SSH argv that submits one CLI command and prints the job id."""
@@ -132,7 +144,15 @@ class SshSlurmBatchBackend:
             f"sbatch --parsable --job-name={shlex.quote(job_token)} --output={shlex.quote(log_path)} --error={shlex.quote(log_path)} "
             f"{sbatch_options} {shlex.quote(script_path)}"
         )
-        return [self.config.ssh, self.config.host, self._login_shell(submit)]
+        return self._ssh_argv(self._login_shell(submit))
+
+    def availability_argv(self) -> list[str]:
+        """Return a fast SSH probe for checking whether the remote host is reachable."""
+        return self._ssh_argv("true")
+
+    def shell_argv(self, command: str) -> list[str]:
+        """Return timeout-aware SSH argv for an arbitrary remote login-shell command."""
+        return self._ssh_argv(self._login_shell(command))
 
     def status_argv(self, job_id: str) -> list[str]:
         """Return an SSH argv that prints a compact SLURM state for ``job_id``."""
@@ -142,13 +162,13 @@ class SshSlurmBatchBackend:
             'if [ -n "$state" ]; then echo "$state"; '
             f"else sacct -n -P -j {safe_job} --format=State,ExitCode 2>/dev/null | head -n 1; fi"
         )
-        return [self.config.ssh, self.config.host, self._login_shell(command)]
+        return self._ssh_argv(self._login_shell(command))
 
     def statuses_argv(self, job_ids: Iterable[str]) -> list[str]:
         """Return one SSH argv that prints ``job_id|state|exit_code`` rows."""
         safe_jobs = [shlex.quote(str(job_id).strip()) for job_id in job_ids if str(job_id).strip()]
         if not safe_jobs:
-            return [self.config.ssh, self.config.host, self._login_shell("true")]
+            return self._ssh_argv(self._login_shell("true"))
         jobs = " ".join(safe_jobs)
         command = (
             f"for job in {jobs}; do "
@@ -162,18 +182,18 @@ class SshSlurmBatchBackend:
             "fi; "
             "done"
         )
-        return [self.config.ssh, self.config.host, self._login_shell(command)]
+        return self._ssh_argv(self._login_shell(command))
 
     def cancel_argv(self, job_id: str) -> list[str]:
         """Return an SSH argv that cancels ``job_id``."""
-        return [self.config.ssh, self.config.host, f"scancel {shlex.quote(str(job_id).strip())}"]
+        return self._ssh_argv(f"scancel {shlex.quote(str(job_id).strip())}")
 
     def log_argv(self, job_name: str, *, lines: int = 80) -> list[str]:
         """Return an SSH argv that tails the saved SLURM log for ``job_name``."""
         job_token = _safe_job_token(job_name)
         log_path = _posix_join(self.config.work_dir, "jobs", job_token, "slurm.log")
         command = f"tail -n {int(lines)} {shlex.quote(log_path)} 2>/dev/null || true"
-        return [self.config.ssh, self.config.host, self._login_shell(command)]
+        return self._ssh_argv(self._login_shell(command))
 
     @staticmethod
     def parse_job_id(output: str) -> str | None:
@@ -192,7 +212,11 @@ class SshSlurmBatchBackend:
             raise ValueError("Remote batch config needs local_root before outputs can be loaded in Slicer.")
         source = f"{self.config.host}:{_posix_join(self.config.remote_root, 'derivatives', family)}/"
         target = local_root / "derivatives" / family
-        return [self.config.rsync, "-az", source, str(target) + os.sep]
+        ssh_command = " ".join([self.config.ssh, *self.config.ssh_options()])
+        return [self.config.rsync, "-e", ssh_command, "-az", source, str(target) + os.sep]
+
+    def _ssh_argv(self, command: str) -> list[str]:
+        return [self.config.ssh, *self.config.ssh_options(), self.config.host, command]
 
     @staticmethod
     def _login_shell(command: str) -> str:
@@ -238,6 +262,7 @@ def _config_from_mapping(payload: Mapping[str, object]) -> RemoteBatchConfig:
         setup_command=str(payload.get("setup_command") or ""),
         environment={str(key): str(value) for key, value in environment.items()},
         sbatch_options=tuple(str(option) for option in sbatch_options),
+        connect_timeout_seconds=int(payload.get("connect_timeout_seconds") or payload.get("connect_timeout") or 8),
     )
 
 

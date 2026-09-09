@@ -143,6 +143,7 @@ def test_default_runtime_packages_include_public_tool_cores() -> None:
     assert "bone-contouring" in package_names
     assert "spine-segment" in package_names
     assert "bone-microarchitecture" in package_names
+    assert "voidspace" in package_names
     assert "plate-rod-thinning" in package_names
     assert "parosol-py" in package_names
     assert "bone-mechanoregulation" in package_names
@@ -195,6 +196,16 @@ def test_plate_rod_runtime_package_requires_compiled_backend_and_binary_reinstal
         "--upgrade --force-reinstall --prefer-binary --only-binary :all: --no-deps "
         "plate-rod-thinning>=0.1.7"
     )
+
+
+def test_voidspace_runtime_package_has_user_facing_setup_name() -> None:
+    specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
+    spec = specs["voidspace"]
+
+    assert spec.display_name == "Voidspace"
+    assert spec.import_name == "voidspace"
+    assert spec.minimum_version == "0.1.3"
+    assert "analysis-domain masks" in spec.notes
 
 
 def test_plate_rod_install_commands_do_not_emit_empty_dependency_install() -> None:

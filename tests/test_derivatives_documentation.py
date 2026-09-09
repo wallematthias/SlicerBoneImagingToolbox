@@ -15,7 +15,7 @@ def test_derivatives_documentation_describes_shared_contract():
     assert "dependency generation" in text
     assert "FEA" in text
     assert "Mechanoregulation" in text
-    assert "VoidSpace" in text
+    assert "Voidspace" in text
 
 
 def test_readme_links_derivative_contract():

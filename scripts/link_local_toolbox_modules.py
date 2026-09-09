@@ -16,6 +16,7 @@ DEFAULT_BUILTIN_MODULE_DIRS = (
     "HRpQCTTools/MechanoregulationHRpQCT",
     "HRpQCTTools/BoneMicroarchitecture",
     "HRpQCTTools/PlateRodMorphometryHRpQCT",
+    "HRpQCTTools/VoidspaceHRpQCT",
     "HRpQCTTools/ParOSolFEA",
     "CTTools/SpineSegmentationCT",
 )
@@ -30,6 +31,7 @@ LEGACY_MODULE_DIR_NAMES = {
     "MicroarchitectureHRpQCT",
     "BoneMicroarchitecture",
     "PlateRodMorphometryHRpQCT",
+    "VoidspaceHRpQCT",
     "HRpQCTSegmentation",
     "SpineSegmentationCT",
     "BoneImagingToolboxSetup",

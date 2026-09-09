@@ -15,6 +15,7 @@ https://github.com/wallematthias/bone-microarchitecture
 | Bone segmentation | yes | binary bone mask |
 | Analysis ROI masks | yes | one or more reporting regions such as full, trabecular, or cortical |
 | Common region | registered profile only | native-space scan/FOV common region from Timelapsed |
+| Large voidspace mask | functional bone profile only | native-space registered voidspace mask to exclude from the common region |
 
 If a Slicer segmentation node contains multiple labels, select the exact segment in the adjacent segment dropdown.
 
@@ -33,14 +34,17 @@ Use scene mode for one loaded image and loaded masks.
 
 Use `Bone Imaging > I/O > Batch Processor`.
 
-Two common profiles are exposed:
+Three common profiles are exposed:
 
 | Profile | Behavior |
 | --- | --- |
 | Microarchitecture | measures each session in native space |
 | Registered Microarchitecture | applies each session's native common region during measurement |
+| Functional bone | applies each session's native common region after removing the registered large voidspace mask |
 
 Native maps are reusable. If native maps already exist, the registered profile can reuse them and only recompute the common-region-restricted measurement table.
+Functional bone follows the same map reuse model: it does not create functional-bone maps. It reuses or creates the native maps, then writes measurements over `common region AND NOT large voidspace`.
+For review/debugging, the functional bone profile also writes and loads the effective analysis-region mask.
 
 ## Outputs
 
@@ -55,6 +59,7 @@ derivatives/
           maps/
           measurements/
           registered_measurements/
+          functional_bone_measurements/
 ```
 
 The Slicer load action should load:
@@ -62,6 +67,7 @@ The Slicer load action should load:
 - measurement table,
 - available scalar maps,
 - common-region segmentation for registered outputs.
+- functional-bone analysis-region segmentation for functional bone outputs.
 
 ## Reported Measures
 

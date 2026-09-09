@@ -3,9 +3,14 @@ from __future__ import annotations
 import importlib.util
 import csv
 import json
+import numpy as np
+import os
 from pathlib import Path
+import subprocess
 import sys
 import types
+
+import pytest
 
 from bone_imaging_derivatives import DerivativeManifest, DerivativeRecord, read_manifest, write_manifest
 
@@ -138,6 +143,17 @@ def test_batch_processor_remote_jobs_are_submitted_and_loaded_lazily() -> None:
     assert 'row.pop("output_paths", None)' in source
     assert "self._refresh_row_output_paths(row_index)" in source
     assert "syncing remote outputs" in source
+
+
+def test_batch_processor_checks_remote_backend_availability_before_server_work() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "def _remote_backend_available(self, backend):" in source
+    assert "backend.availability_argv()" in source
+    assert "backend.shell_argv(command)" in source
+    assert "timeout=backend.config.connect_timeout_seconds + 2" in source
+    assert "Remote server is not reachable" in source
+    assert "if not self._remote_backend_available(remote_backend):" in source
 
 
 def test_batch_processor_matches_running_jobs_by_stable_row_identity() -> None:
@@ -292,7 +308,9 @@ def test_batch_processor_passes_named_bone_contouring_profiles_and_colors_segmen
     assert '"full": (0.2, 0.8, 0.25)' in source
     assert '"trab": (0.0, 0.75, 1.0)' in source
     assert '"cort": (1.0, 0.55, 0.1)' in source
-    assert '"seg": (1.0, 0.95, 0.3)' in source
+    assert '"seg": (0.45, 0.45, 0.45)' in source
+    assert '"baseline_seg": (0.40, 0.40, 0.40)' in source
+    assert '"followup_seg": (0.58, 0.58, 0.58)' in source
     assert "segment.SetColor(color[0], color[1], color[2])" in source
 
 
@@ -2138,6 +2156,7 @@ def test_batch_profiles_are_tool_specific_and_encode_registration() -> None:
     assert '"microarchitecture": (' in source
     assert '("XtremeCT II", "xtremectii", False)' in source
     assert '("XtremeCT II - registered", "xtremectii-registered", True)' in source
+    assert '("Functional bone", "functional-bone", True)' in source
     assert '"timelapse": (' in source
     assert '("Standard", "standard", True)' in source
     assert '("ETH-UofC", "eth-uofc", True)' in source
@@ -2151,12 +2170,812 @@ def test_batch_profiles_are_tool_specific_and_encode_registration() -> None:
     assert "eth-uofc-compatibility" not in source
     assert "shriners-compatibility" not in source
     assert '"bone_contouring": (' in source
+    assert '"voidspace": (' in source
+    assert '("Voidspace", "standard", False)' in source
+    assert '("Registered voidspace", "registered", True)' in source
+    assert '("Dynamic voidspace", "dynamic", True)' in source
+    assert '("Voidspace", "voidspace")' in source
+    assert '"voidspace": "Voidspace"' in source
+    assert '"voidspace.cli"' in source
+    assert "from voidspace import analyze_maps, run_case" in source
+    assert 'if tool == "voidspace":' in source
+    assert "def profile_groups_timepoints(tool: str, profile: str) -> bool:" in source
+    assert "def _row_indices_for_group_action(self, row_index):" in source
+    assert "for child_index in self._row_indices_for_group_action(row_index):" in source
     assert "self.profileCombo.clear()" in source
     assert 'for label, value, _registered in self._profiles_for_tool(tool):' in source
     assert "return self.logic.profile_requests_registration(" in source
     assert 'args.append("--no-common-region")' in source
     assert 'args.append("--require-common-region")' in source
     assert 'if tool == "timelapse" and profile_value:' in source
+
+
+def test_functional_bone_profile_uses_common_region_minus_voidspace(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    records = []
+    common_records = []
+    for session in ("001", "002"):
+        xct_dir = tmp_path / "sub-001" / f"ses-{session}" / "xct"
+        xct_dir.mkdir(parents=True)
+        image = xct_dir / f"sub-001_ses-{session}_voi-radiusleft_xct.AIM"
+        image.write_bytes(b"")
+        contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / f"ses-{session}" / "xct"
+        contour_dir.mkdir(parents=True)
+        for role, filename_role in (
+            ("bone_segmentation", "seg"),
+            ("periosteal_mask", "full"),
+            ("trabecular_mask", "trab"),
+            ("cortical_mask", "cort"),
+        ):
+            mask = contour_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-{filename_role}_mask.AIM"
+            mask.write_bytes(b"")
+            records.append(
+                DerivativeRecord(
+                    "BoneContours",
+                    role,
+                    "001",
+                    "radiusleft",
+                    session,
+                    None,
+                    "native",
+                    mask,
+                    "generated",
+                    content_type="mask",
+                )
+            )
+        common_mask = (
+            tmp_path
+            / "derivatives"
+            / "CommonRegion"
+            / "sub-001"
+            / f"ses-{session}"
+            / "xct"
+            / f"sub-001_ses-{session}_voi-radiusleft_desc-scan-region-native-common_mask.nii.gz"
+        )
+        common_mask.parent.mkdir(parents=True)
+        common_mask.write_bytes(b"")
+        common_records.append(
+            DerivativeRecord(
+                "CommonRegion",
+                "scan_region_native_common",
+                "001",
+                "radiusleft",
+                session,
+                None,
+                "native",
+                common_mask,
+                "generated",
+                content_type="mask",
+            )
+        )
+        voidspace_dir = (
+            tmp_path
+            / "derivatives"
+            / "Voidspace"
+            / "sub-001"
+            / f"ses-{session}"
+            / "xct"
+            / "registered"
+            / "voi-radiusleft"
+        )
+        voidspace_dir.mkdir(parents=True)
+        (voidspace_dir / "voidspace_large_mask.nii.gz").write_bytes(b"")
+    write_manifest(
+        DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=records),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create("CommonRegion", tmp_path, {"name": "test", "version": "1"}, records=common_records),
+        tmp_path / "derivatives" / "CommonRegion" / "manifest.json",
+    )
+
+    logic = module.BatchProcessorLogic()
+    rows, _message = logic.discover_rows(
+        tmp_path,
+        tool="microarchitecture",
+        profile="functional-bone",
+        registered=False,
+    )
+
+    assert [row["action"] for row in rows] == ["Run", ""]
+    assert rows[0]["profile"] == "functional-bone"
+    assert rows[0]["voidspace_mask_path"].endswith("voidspace_large_mask.nii.gz")
+    assert "voidspace=voidspace_large_mask.nii.gz" in rows[0]["input"]
+    assert all(row["registered"] for row in rows)
+    command = logic.command_for_row(tmp_path, tool="microarchitecture", profile="functional-bone", row=rows[0])
+    assert command[0] == "-c"
+    assert "functional_common = common & ~voidspace" in command[1]
+    assert command[command.index("--segmentation") + 1].endswith("_desc-seg_mask.AIM")
+    assert command[command.index("--full-mask") + 1].endswith("_desc-full_mask.AIM")
+    assert command[command.index("--trab-mask") + 1].endswith("_desc-trab_mask.AIM")
+    assert command[command.index("--cort-mask") + 1].endswith("_desc-cort_mask.AIM")
+    assert command[command.index("--common-region") + 1].endswith("native-common_mask.nii.gz")
+    assert command[command.index("--voidspace-mask") + 1].endswith("voidspace_large_mask.nii.gz")
+    assert command[command.index("--dataset-root") + 1] == str(tmp_path)
+    assert command[command.index("--output-dir") + 1].endswith("/functional_bone_measurements")
+    assert "functional_bone_analysis_mask{analysis_extension}" in command[1]
+    assert "functional bone inputs must match image geometry" in command[1]
+    row_without_cort = dict(rows[0])
+    row_without_cort.pop("cort_mask_path")
+    with pytest.raises(ValueError, match="cortical mask"):
+        logic.command_for_row(tmp_path, tool="microarchitecture", profile="functional-bone", row=row_without_cort)
+
+
+def test_functional_bone_requires_registered_voidspace_mask(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    records = []
+    common_records = []
+    for session in ("001", "002"):
+        xct_dir = tmp_path / "sub-001" / f"ses-{session}" / "xct"
+        xct_dir.mkdir(parents=True)
+        (xct_dir / f"sub-001_ses-{session}_voi-radiusleft_xct.AIM").write_bytes(b"")
+        contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / f"ses-{session}" / "xct"
+        contour_dir.mkdir(parents=True)
+        for role, filename_role in (
+            ("bone_segmentation", "seg"),
+            ("periosteal_mask", "full"),
+            ("trabecular_mask", "trab"),
+            ("cortical_mask", "cort"),
+        ):
+            mask = contour_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-{filename_role}_mask.AIM"
+            mask.write_bytes(b"")
+            records.append(
+                DerivativeRecord(
+                    "BoneContours",
+                    role,
+                    "001",
+                    "radiusleft",
+                    session,
+                    None,
+                    "native",
+                    mask,
+                    "generated",
+                    content_type="mask",
+                )
+            )
+        common_mask = tmp_path / "derivatives" / "CommonRegion" / "sub-001" / f"ses-{session}" / "xct" / "common.nii.gz"
+        common_mask.parent.mkdir(parents=True)
+        common_mask.write_bytes(b"")
+        common_records.append(
+            DerivativeRecord(
+                "CommonRegion",
+                "scan_region_native_common",
+                "001",
+                "radiusleft",
+                session,
+                None,
+                "native",
+                common_mask,
+                "generated",
+                content_type="mask",
+            )
+        )
+    write_manifest(
+        DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=records),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create(
+            "CommonRegion",
+            tmp_path,
+            {"name": "test", "version": "1"},
+            records=common_records,
+        ),
+        tmp_path / "derivatives" / "CommonRegion" / "manifest.json",
+    )
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="microarchitecture",
+        profile="functional-bone",
+        registered=False,
+    )
+
+    assert rows[0]["action"] == "Missing"
+    assert rows[0]["status"] == "Missing voidspace"
+
+
+def test_functional_bone_existing_outputs_include_analysis_mask(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    records = []
+    common_records = []
+    for session in ("001", "002"):
+        xct_dir = tmp_path / "sub-001" / f"ses-{session}" / "xct"
+        xct_dir.mkdir(parents=True)
+        (xct_dir / f"sub-001_ses-{session}_voi-radiusleft_xct.AIM").write_bytes(b"")
+        contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / f"ses-{session}" / "xct"
+        contour_dir.mkdir(parents=True)
+        for role, filename_role in (
+            ("bone_segmentation", "seg"),
+            ("periosteal_mask", "full"),
+            ("trabecular_mask", "trab"),
+            ("cortical_mask", "cort"),
+        ):
+            mask = contour_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-{filename_role}_mask.AIM"
+            mask.write_bytes(b"")
+            records.append(
+                DerivativeRecord(
+                    "BoneContours",
+                    role,
+                    "001",
+                    "radiusleft",
+                    session,
+                    None,
+                    "native",
+                    mask,
+                    "generated",
+                    content_type="mask",
+                )
+            )
+        common_mask = tmp_path / "derivatives" / "CommonRegion" / "sub-001" / f"ses-{session}" / "xct" / "common.nii.gz"
+        common_mask.parent.mkdir(parents=True)
+        common_mask.write_bytes(b"")
+        common_records.append(
+            DerivativeRecord(
+                "CommonRegion",
+                "scan_region_native_common",
+                "001",
+                "radiusleft",
+                session,
+                None,
+                "native",
+                common_mask,
+                "generated",
+                content_type="mask",
+            )
+        )
+        voidspace_dir = tmp_path / "derivatives" / "Voidspace" / "sub-001" / f"ses-{session}" / "xct" / "registered" / "voi-radiusleft"
+        voidspace_dir.mkdir(parents=True)
+        (voidspace_dir / "voidspace_large_mask.nii.gz").write_bytes(b"")
+        functional_dir = (
+            tmp_path
+            / "derivatives"
+            / "Microarchitecture"
+            / "sub-001"
+            / f"ses-{session}"
+            / "xct"
+            / "functional_bone_measurements"
+        )
+        functional_dir.mkdir(parents=True)
+        (functional_dir / f"sub-001_ses-{session}_voi-radiusleft_measurements.csv").write_text("Parameter,Mean\nTb.N,1.0\n")
+        (functional_dir / "functional_bone_analysis_mask.nii.gz").write_bytes(b"")
+    write_manifest(
+        DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=records),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create("CommonRegion", tmp_path, {"name": "test", "version": "1"}, records=common_records),
+        tmp_path / "derivatives" / "CommonRegion" / "manifest.json",
+    )
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="microarchitecture",
+        profile="functional-bone",
+        registered=False,
+    )
+
+    assert rows[0]["action"] == "Load"
+    assert any(path.endswith("functional_bone_analysis_mask.nii.gz") for path in rows[0]["output_paths"])
+
+
+def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("scipy")
+    sitk = pytest.importorskip("SimpleITK")
+    module = _import_batch_processor_module(monkeypatch)
+    image = np.full((3, 3, 3), 100.0, dtype=np.float32)
+    full = np.ones((3, 3, 3), dtype=np.uint8)
+    trab = np.ones((3, 3, 3), dtype=np.uint8)
+    cort = np.zeros((3, 3, 3), dtype=np.uint8)
+    cort[:, :, 0] = 1
+    seg = np.ones((3, 3, 3), dtype=np.uint8)
+    common = np.ones((3, 3, 3), dtype=np.uint8)
+    voidspace = np.zeros((3, 3, 3), dtype=np.uint8)
+    voidspace[1, 1, 1] = 1
+    xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
+    xct_dir.mkdir(parents=True)
+    image_path = xct_dir / "sub-001_ses-001_voi-radiusleft_xct.nii.gz"
+    sitk.WriteImage(sitk.GetImageFromArray(image), str(image_path))
+    contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / "ses-001" / "xct"
+    contour_dir.mkdir(parents=True)
+    contour_paths = {}
+    for filename_role, array in {"seg": seg, "full": full, "trab": trab, "cort": cort}.items():
+        path = contour_dir / f"sub-001_ses-001_voi-radiusleft_desc-{filename_role}_mask.nii.gz"
+        sitk.WriteImage(sitk.GetImageFromArray(array), str(path))
+        contour_paths[filename_role] = path
+    common_path = tmp_path / "common.nii.gz"
+    voidspace_path = tmp_path / "voidspace_large_mask.nii.gz"
+    sitk.WriteImage(sitk.GetImageFromArray(common), str(common_path))
+    sitk.WriteImage(sitk.GetImageFromArray(voidspace), str(voidspace_path))
+    maps_dir = tmp_path / "derivatives" / "Microarchitecture" / "sub-001" / "ses-001" / "xct" / "maps"
+    row = {
+        "subject": "001",
+        "session": "001",
+        "session_value": "001",
+        "voi": "radiusleft",
+        "voi_value": "radiusleft",
+        "image_path": str(image_path),
+        "seg_path": str(contour_paths["seg"]),
+        "full_mask_path": str(contour_paths["full"]),
+        "trab_mask_path": str(contour_paths["trab"]),
+        "cort_mask_path": str(contour_paths["cort"]),
+        "common_region_path": str(common_path),
+        "voidspace_mask_path": str(voidspace_path),
+    }
+
+    command = module.BatchProcessorLogic().command_for_row(
+        tmp_path,
+        tool="microarchitecture",
+        profile="functional-bone",
+        row=row,
+    )
+    subprocess.run(
+        [sys.executable, *command, "--thickness-method", "edt", "--thickness-backend", "cpu"],
+        check=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                [
+                    str(ROOT.parent / "bone-microarchitecture" / "src"),
+                    str(ROOT.parent / "bone-imaging-derivatives" / "src"),
+                ]
+            ),
+        },
+    )
+
+    output = (
+        tmp_path
+        / "derivatives"
+        / "Microarchitecture"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "functional_bone_measurements"
+        / "sub-001_ses-001_voi-radiusleft_measurements.csv"
+    )
+    with output.open(newline="", encoding="utf-8") as handle:
+        rows = {row["Parameter"]: row for row in csv.DictReader(handle)}
+    assert float(rows["Tt.TV"]["Mean"]) == 26.0
+    assert (output.parent / "functional_bone_analysis_mask.nii.gz").exists()
+    assert not (maps_dir / "sub-001_ses-001_voi-radiusleft_map-functional-bone.npy").exists()
+    assert any(maps_dir.glob("sub-001_ses-001_voi-radiusleft_map-*.nii.gz"))
+
+
+def test_functional_bone_load_routes_analysis_region_as_segmentation() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    load_outputs = source.split("    def _load_row_outputs", 1)[1].split("\n    def _load_voidspace_outputs", 1)[0]
+    assert "functional_analysis_paths = [path for path in output_paths if self._is_functional_bone_analysis_mask(path)]" in load_outputs
+    assert "output_paths = [path for path in output_paths if not self._is_functional_bone_analysis_mask(path)]" in load_outputs
+    assert "self._load_functional_bone_analysis_overlays(row_index)" in load_outputs
+    assert "self._load_functional_bone_analysis_outputs(row, functional_analysis_paths)" in load_outputs
+    assert "def _load_functional_bone_analysis_overlays(self, row_index):" in source
+    assert 'name.startswith("functional_bone_analysis_mask")' in source
+    assert '"functional_bone_analysis": (0.30, 0.72, 0.55)' in source
+
+
+def test_voidspace_batch_command_uses_explicit_segmentation_and_optional_mask(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    row = {
+        "subject": "001",
+        "session": "001",
+        "session_value": "001",
+        "voi": "radiusleft",
+        "voi_value": "radiusleft",
+        "seg_path": str(tmp_path / "seg.AIM"),
+        "full_mask_path": str(tmp_path / "full.AIM"),
+        "common_region_path": str(tmp_path / "mask.nii.gz"),
+    }
+
+    native = logic.command_for_row(tmp_path, tool="voidspace", profile="standard", row=row, force=True)
+    registered = logic.command_for_row(tmp_path, tool="voidspace", profile="registered", row=row)
+
+    assert native == [
+        "-m",
+        "voidspace.cli",
+        "run-case",
+        "--segmentation",
+        str(tmp_path / "seg.AIM"),
+        "--output-dir",
+        str(tmp_path / "derivatives" / "Voidspace" / "sub-001" / "ses-001" / "xct" / "native" / "voi-radiusleft"),
+        "--force",
+    ]
+    assert registered[0] == "-c"
+    assert "from voidspace.io import read_mask, write_mask_like" in registered[1]
+    assert registered[registered.index("--segmentation") + 1] == str(tmp_path / "seg.AIM")
+    assert registered[registered.index("--full-mask") + 1] == str(tmp_path / "full.AIM")
+    assert registered[registered.index("--common-region") + 1] == str(tmp_path / "mask.nii.gz")
+    assert registered[registered.index("--native-output-dir") + 1] == str(
+        tmp_path / "derivatives" / "Voidspace" / "sub-001" / "ses-001" / "xct" / "native" / "voi-radiusleft"
+    )
+    assert "/registered/" in registered[registered.index("--output-dir") + 1]
+
+
+def test_dynamic_voidspace_command_runs_registered_voidspace_before_compare(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    row = {
+        "subject": "001",
+        "session": "001-002",
+        "session_value": "001-002",
+        "voi": "radiusleft",
+        "voi_value": "radiusleft",
+        "baseline_seg_path": str(tmp_path / "ses-001" / "seg.nii.gz"),
+        "baseline_full_mask_path": str(tmp_path / "ses-001" / "full.nii.gz"),
+        "baseline_output_dir": str(tmp_path / "dynamic" / "baseline"),
+        "followup_seg_path": str(tmp_path / "ses-002" / "seg.nii.gz"),
+        "followup_full_mask_path": str(tmp_path / "ses-002" / "full.nii.gz"),
+        "followup_output_dir": str(tmp_path / "dynamic" / "followup"),
+        "common_region_path": str(tmp_path / "common.nii.gz"),
+    }
+
+    command = logic.command_for_row(tmp_path, tool="voidspace", profile="dynamic", row=row, force=True)
+
+    assert command[0] == "-c"
+    assert "from voidspace import compare, run_case" in command[1]
+    assert "from voidspace.io import read_mask, write_mask_like" in command[1]
+    assert 'mask_path=Path(args.baseline_output_dir) / "voidspace_analysis_mask.nii.gz"' in command[1]
+    assert command[command.index("--baseline-seg") + 1] == str(tmp_path / "ses-001" / "seg.nii.gz")
+    assert command[command.index("--baseline-full-mask") + 1] == str(tmp_path / "ses-001" / "full.nii.gz")
+    assert command[command.index("--followup-seg") + 1] == str(tmp_path / "ses-002" / "seg.nii.gz")
+    assert command[command.index("--followup-full-mask") + 1] == str(tmp_path / "ses-002" / "full.nii.gz")
+    assert command[command.index("--common-region") + 1] == str(tmp_path / "common.nii.gz")
+    assert command[command.index("--baseline-output-dir") + 1] == str(tmp_path / "dynamic" / "baseline")
+    assert command[command.index("--followup-output-dir") + 1] == str(tmp_path / "dynamic" / "followup")
+    assert command[-1] == "--force"
+
+
+def test_masked_voidspace_profiles_group_timepoints_with_one_visible_run_button(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    contour_records = []
+    common_records = []
+    for session in ("001", "002"):
+        xct_dir = tmp_path / "sub-001" / f"ses-{session}" / "xct"
+        xct_dir.mkdir(parents=True)
+        (xct_dir / f"sub-001_ses-{session}_voi-radiusleft_xct.AIM").write_bytes(b"")
+        contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / f"ses-{session}" / "xct"
+        contour_dir.mkdir(parents=True)
+        for role, filename_role in (("bone_segmentation", "seg"), ("periosteal_mask", "full")):
+            mask = contour_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-{filename_role}_mask.AIM"
+            mask.write_bytes(b"")
+            contour_records.append(
+                DerivativeRecord(
+                    "BoneContours",
+                    role,
+                    "001",
+                    "radiusleft",
+                    session,
+                    None,
+                    "native",
+                    mask,
+                    "generated",
+                    content_type="mask",
+                )
+            )
+        common = (
+            tmp_path
+            / "derivatives"
+            / "CommonRegion"
+            / "sub-001"
+            / f"ses-{session}"
+            / "xct"
+            / f"sub-001_ses-{session}_voi-radiusleft_desc-scan-region-native-common_mask.nii.gz"
+        )
+        common.parent.mkdir(parents=True)
+        common.write_bytes(b"")
+        common_records.append(
+            DerivativeRecord(
+                "CommonRegion",
+                "scan_region_native_common",
+                "001",
+                "radiusleft",
+                session,
+                None,
+                "native",
+                common,
+                "generated",
+                content_type="mask",
+            )
+        )
+        transformed_dir = (
+            tmp_path
+            / "derivatives"
+            / "Timelapse"
+            / "sub-001"
+            / f"ses-{session}"
+            / "xct"
+            / "transformed"
+        )
+        transformed_dir.mkdir(parents=True)
+        (transformed_dir / f"sub-001_ses-{session}_voi-radiusleft_image-fused.nii.gz").write_bytes(b"")
+        (transformed_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-seg_mask-fused.nii.gz").write_bytes(b"")
+        (transformed_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-full_mask-fused.nii.gz").write_bytes(b"")
+    write_manifest(
+        DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=contour_records),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create("CommonRegion", tmp_path, {"name": "test", "version": "1"}, records=common_records),
+        tmp_path / "derivatives" / "CommonRegion" / "manifest.json",
+    )
+
+    logic = module.BatchProcessorLogic()
+    rows, _message = logic.discover_rows(
+        tmp_path,
+        tool="voidspace",
+        profile="registered",
+        registered=True,
+    )
+
+    assert [row["action"] for row in rows] == ["Run", ""]
+    assert rows[0]["action_row_span"] == 2
+    assert rows[1]["action_row_span"] == 0
+    assert all(row["registered"] for row in rows)
+    assert "mask=sub-001_ses-001_voi-radiusleft_desc-scan-region-native-common_mask.nii.gz" in rows[0]["input"]
+    assert "registration=" not in rows[0]["input"]
+    command = logic.command_for_row(tmp_path, tool="voidspace", profile="registered", row=rows[1])
+    assert command[0] == "-c"
+    assert command[command.index("--common-region") + 1] == str(
+        tmp_path
+        / "derivatives"
+        / "CommonRegion"
+        / "sub-001"
+        / "ses-002"
+        / "xct"
+        / "sub-001_ses-002_voi-radiusleft_desc-scan-region-native-common_mask.nii.gz"
+    )
+
+    assert command[command.index("--segmentation") + 1].endswith("BoneContours/sub-001/ses-002/xct/sub-001_ses-002_voi-radiusleft_desc-seg_mask.AIM")
+    assert command[command.index("--full-mask") + 1].endswith("BoneContours/sub-001/ses-002/xct/sub-001_ses-002_voi-radiusleft_desc-full_mask.AIM")
+    assert command[command.index("--native-output-dir") + 1].endswith("Voidspace/sub-001/ses-002/xct/native/voi-radiusleft")
+    assert "/registered/" in command[command.index("--output-dir") + 1]
+
+
+def test_dynamic_voidspace_discovers_adjacent_registered_pairs(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    contour_records = []
+    common_records = []
+    pair_common = (
+        tmp_path
+        / "derivatives"
+        / "Timelapse"
+        / "sub-001"
+        / "xct"
+        / "analysis"
+        / "common_regions"
+        / "sub-001_voi-radiusleft_desc-full_common-alltimepoints.nii.gz"
+    )
+    pair_common.parent.mkdir(parents=True)
+    pair_common.write_bytes(b"")
+    pairwise_csv = pair_common.parent.parent / "sub-001_voi-radiusleft_pairwise_remodelling.csv"
+    pairwise_csv.write_text(
+        "subject_id,compartment,t0,t1,common_region_path,site\n"
+        f"001,full,001,002,{pair_common},radiusleft\n"
+        f"001,full,002,003,{pair_common},radiusleft\n",
+        encoding="utf-8",
+    )
+    for session in ("001", "002", "003"):
+        xct_dir = tmp_path / "sub-001" / f"ses-{session}" / "xct"
+        xct_dir.mkdir(parents=True)
+        (xct_dir / f"sub-001_ses-{session}_voi-radiusleft_xct.AIM").write_bytes(b"")
+        contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / f"ses-{session}" / "xct"
+        contour_dir.mkdir(parents=True)
+        for role, filename_role in (("bone_segmentation", "seg"), ("periosteal_mask", "full")):
+            mask = contour_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-{filename_role}_mask.AIM"
+            mask.write_bytes(b"")
+            contour_records.append(
+                DerivativeRecord(
+                    "BoneContours",
+                    role,
+                    "001",
+                    "radiusleft",
+                    session,
+                    None,
+                    "native",
+                    mask,
+                    "generated",
+                    content_type="mask",
+                )
+            )
+        native_common = (
+            tmp_path
+            / "derivatives"
+            / "CommonRegion"
+            / "sub-001"
+            / f"ses-{session}"
+            / "xct"
+            / f"sub-001_ses-{session}_voi-radiusleft_desc-scan-region-native-common_mask.nii.gz"
+        )
+        native_common.parent.mkdir(parents=True)
+        native_common.write_bytes(b"")
+        common_records.append(
+            DerivativeRecord(
+                "CommonRegion",
+                "scan_region_native_common",
+                "001",
+                "radiusleft",
+                session,
+                None,
+                "native",
+                native_common,
+                "generated",
+                content_type="mask",
+            )
+        )
+        transformed_dir = (
+            tmp_path
+            / "derivatives"
+            / "Timelapse"
+            / "sub-001"
+            / f"ses-{session}"
+            / "xct"
+            / "transformed"
+        )
+        transformed_dir.mkdir(parents=True)
+        (transformed_dir / f"sub-001_ses-{session}_voi-radiusleft_image-fused.nii.gz").write_bytes(b"")
+        (transformed_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-seg_mask-fused.nii.gz").write_bytes(b"")
+        (transformed_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-full_mask-fused.nii.gz").write_bytes(b"")
+    write_manifest(
+        DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=contour_records),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+    write_manifest(
+        DerivativeManifest.create("CommonRegion", tmp_path, {"name": "test", "version": "1"}, records=common_records),
+        tmp_path / "derivatives" / "CommonRegion" / "manifest.json",
+    )
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="voidspace",
+        profile="dynamic",
+        registered=True,
+    )
+
+    assert [row["session"] for row in rows] == ["001-002", "002-003"]
+    assert [row["action"] for row in rows] == ["Run", ""]
+    assert rows[0]["baseline_seg_path"].endswith("ses-001/xct/transformed/sub-001_ses-001_voi-radiusleft_desc-seg_mask-fused.nii.gz")
+    assert rows[0]["followup_seg_path"].endswith("ses-002/xct/transformed/sub-001_ses-002_voi-radiusleft_desc-seg_mask-fused.nii.gz")
+    assert rows[1]["baseline_seg_path"].endswith("ses-002/xct/transformed/sub-001_ses-002_voi-radiusleft_desc-seg_mask-fused.nii.gz")
+    assert rows[1]["followup_seg_path"].endswith("ses-003/xct/transformed/sub-001_ses-003_voi-radiusleft_desc-seg_mask-fused.nii.gz")
+    assert rows[0]["baseline_output_dir"].endswith("Voidspace/sub-001/ses-001-002/xct/dynamic/voi-radiusleft/baseline")
+    assert rows[0]["followup_output_dir"].endswith("Voidspace/sub-001/ses-001-002/xct/dynamic/voi-radiusleft/followup")
+    assert rows[1]["baseline_output_dir"].endswith("Voidspace/sub-001/ses-002-003/xct/dynamic/voi-radiusleft/baseline")
+    assert rows[1]["followup_output_dir"].endswith("Voidspace/sub-001/ses-002-003/xct/dynamic/voi-radiusleft/followup")
+    assert "/registered/" not in rows[0]["baseline_output_dir"]
+    assert "/registered/" not in rows[0]["followup_output_dir"]
+    assert rows[0]["common_region_path"] == str(pair_common)
+    assert rows[1]["common_region_path"] == str(pair_common)
+
+
+def test_voidspace_batch_output_paths_are_deterministic_without_manifest(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    row = {
+        "subject": "001",
+        "session_value": "001",
+        "voi_value": "radiusleft",
+        "profile": "registered",
+        "common_region_path": str(tmp_path / "mask.nii.gz"),
+    }
+    output_dir = (
+        tmp_path
+        / "derivatives"
+        / "Voidspace"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "registered"
+        / "voi-radiusleft"
+    )
+    output_dir.mkdir(parents=True)
+    for name in ("voidspace_measurements.csv", "voidspace_large_mask.AIM", "voidspace_all_mask.AIM"):
+        (output_dir / name).write_bytes(b"")
+
+    paths = module.BatchProcessorLogic().rediscover_row_output_paths(tmp_path, "voidspace", row)
+
+    assert paths == [
+        str(output_dir / "voidspace_measurements.csv"),
+        str(output_dir / "voidspace_all_mask.AIM"),
+        str(output_dir / "voidspace_large_mask.AIM"),
+    ]
+
+
+def test_dynamic_voidspace_output_paths_are_deterministic_without_manifest(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    row = {
+        "subject": "001",
+        "session_value": "001-002",
+        "voi_value": "radiusleft",
+        "profile": "dynamic",
+    }
+    output_dir = (
+        tmp_path
+        / "derivatives"
+        / "Voidspace"
+        / "sub-001"
+        / "ses-001-002"
+        / "xct"
+        / "dynamic"
+        / "voi-radiusleft"
+    )
+    output_dir.mkdir(parents=True)
+    for name in (
+        "voidspace_change_measurements.csv",
+        "voidspace_stable_mask.nii.gz",
+        "voidspace_expanded_mask.nii.gz",
+        "voidspace_contracted_mask.nii.gz",
+    ):
+        (output_dir / name).write_bytes(b"")
+
+    paths = module.BatchProcessorLogic().rediscover_row_output_paths(tmp_path, "voidspace", row)
+
+    assert paths == [
+        str(output_dir / "voidspace_change_measurements.csv"),
+        str(output_dir / "voidspace_stable_mask.nii.gz"),
+        str(output_dir / "voidspace_expanded_mask.nii.gz"),
+        str(output_dir / "voidspace_contracted_mask.nii.gz"),
+    ]
+
+
+def test_voidspace_discovery_marks_existing_outputs_loadable_without_manifest(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
+    xct_dir.mkdir(parents=True)
+    (xct_dir / "sub-001_ses-001_voi-radiusleft_xct.AIM").write_bytes(b"")
+    contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / "ses-001" / "xct"
+    contour_dir.mkdir(parents=True)
+    seg = contour_dir / "sub-001_ses-001_voi-radiusleft_desc-seg_mask.AIM"
+    seg.write_bytes(b"")
+    write_manifest(
+        DerivativeManifest.create(
+            "BoneContours",
+            tmp_path,
+            {"name": "test", "version": "1"},
+            records=[
+                DerivativeRecord(
+                    "BoneContours",
+                    "bone_segmentation",
+                    "001",
+                    "radiusleft",
+                    "001",
+                    None,
+                    "native",
+                    seg,
+                    "generated",
+                    content_type="mask",
+                )
+            ],
+        ),
+        tmp_path / "derivatives" / "BoneContours" / "manifest.json",
+    )
+    output_dir = (
+        tmp_path
+        / "derivatives"
+        / "Voidspace"
+        / "sub-001"
+        / "ses-001"
+        / "xct"
+        / "native"
+        / "voi-radiusleft"
+    )
+    output_dir.mkdir(parents=True)
+    for name in ("voidspace_measurements.csv", "voidspace_large_mask.AIM", "voidspace_all_mask.AIM"):
+        (output_dir / name).write_bytes(b"")
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="voidspace",
+        profile="standard",
+        registered=False,
+    )
+
+    assert rows[0]["action"] == "Load"
+    assert rows[0]["status"] == "Done"
+    assert rows[0]["output_paths"] == [
+        str(output_dir / "voidspace_measurements.csv"),
+        str(output_dir / "voidspace_all_mask.AIM"),
+        str(output_dir / "voidspace_large_mask.AIM"),
+    ]
 
 
 def test_batch_processor_excludes_motion_scoring_from_shared_batch_selector() -> None:
@@ -2224,7 +3043,7 @@ def test_queued_batch_jobs_snapshot_tool_profile_and_row() -> None:
     assert '"tool": self._selected_tool_key()' in source
     assert '"profile": str(self.profileCombo.currentData or "")' in source
     assert '"row": dict(self._batchRows[row_index])' in source
-    assert "self._batchQueue.append(self._batch_job_for_row(row_index))" in source
+    assert "self._batchQueue.append(self._batch_job_for_row(child_index))" in source
     assert "job = self._batchQueue.pop(0)" in source
     assert 'tool=str(job.get("tool") or "")' in source
     assert 'profile=str(job.get("profile") or "")' in source
@@ -2235,6 +3054,19 @@ def test_queued_batch_jobs_snapshot_tool_profile_and_row() -> None:
         source.index("    def _batch_process_finished(") : source.index("    def _refresh_row_output_paths(", source.index("    def _batch_process_finished("))
     ]
     assert 'if self._selected_tool_key() == "fea"' not in finish_handler
+
+
+def test_grouped_voidspace_finish_updates_visible_group_action() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    finish_handler = source[
+        source.index("    def _batch_process_finished(") : source.index("    def _mark_remote_job_submitted(", source.index("    def _batch_process_finished("))
+    ]
+
+    assert "self._set_group_action_load_if_outputs_are_ready(row_index, tool_key)" in finish_handler
+    assert "def _set_group_action_load_if_outputs_are_ready(self, row_index, tool_key):" in source
+    assert 'if str(tool_key or "") != "voidspace":' in source
+    assert "for index in self._row_indices_for_group_action(visible_index):" in source
+    assert 'self._set_row_action(visible_index, "Load")' in source
 
 
 def test_active_batches_allow_selector_changes_but_jobs_keep_snapshots() -> None:
@@ -2309,6 +3141,7 @@ def test_timelapse_group_loads_when_pairwise_outputs_exist(tmp_path: Path, monke
     image_records = module.discover_raw_xct_images(tmp_path)
     existing = logic._discover_existing_outputs(tmp_path, "Timelapse")
     rows = logic._table_rows_for_tool(
+        tmp_path,
         image_records,
         contour_artifacts=(),
         registration_records=(),
@@ -2394,7 +3227,7 @@ def test_microarchitecture_batch_load_groups_tables_and_maps_in_scene_folder() -
     refresh_outputs = source.split("    def _refresh_row_output_paths", 1)[1].split("\n    def _load_row_outputs", 1)[0]
 
     assert 'self._selected_tool_key() == "microarchitecture"' in load_outputs
-    assert 'tool_key in {"microarchitecture", "plate_rod"}' in refresh_outputs
+    assert 'tool_key in {"microarchitecture", "plate_rod", "voidspace"}' in refresh_outputs
     assert 'int(row.get("action_row_span") or 0) > 1' in refresh_outputs
     assert "for offset in range(int(row.get(\"action_row_span\") or 0)):" in refresh_outputs
     assert "if is_table and node is not None:" in load_outputs
@@ -2424,6 +3257,57 @@ def test_plate_rod_batch_loads_npy_maps_and_groups_outputs_in_scene_folder() -> 
     assert "def _load_registered_common_region_overlays(self, row_index):" in source
     assert "def _load_common_region_outputs_as_segmentation(self, row, output_paths):" in source
     assert '"common_region": (0.72, 0.42, 1.0)' in source
+
+
+def test_voidspace_batch_loads_maps_through_aim_safe_mask_loader() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    load_outputs = source.split("    def _load_row_outputs", 1)[1].split("\n    def _load_fea_outputs", 1)[0]
+
+    assert 'if self._selected_tool_key() == "voidspace":' in load_outputs
+    assert 'if self._selected_tool_key() == "voidspace" and int(row.get("action_row_span") or 0) > 1:' in load_outputs
+    assert 'if str(row.get("profile") or "").strip() == "registered":' in load_outputs
+    assert "dataset_root = self._current_local_dataset_root()" in load_outputs
+    assert "for child_index in self._row_indices_for_group_action(row_index):" in load_outputs
+    assert "self.logic.rediscover_row_output_paths(" in load_outputs
+    assert "self._refresh_row_output_paths(child_index)" not in load_outputs
+    assert 'child_row["output_paths"] = [str(path) for path in child_paths]' in load_outputs
+    assert "self._load_voidspace_outputs(child_row, child_paths)" in load_outputs
+    assert "output_paths = [Path(path) for path in self._refresh_row_output_paths(row_index)]" in load_outputs
+    assert "self._load_voidspace_outputs(row, output_paths)" in load_outputs
+    assert "def _load_voidspace_outputs(self, row, output_paths):" in source
+    assert 'seg_path_text = str(row.get("seg_path") or "").strip()' in source
+    assert 'segmentation_inputs = [(seg_path, "seg")] if seg_path is not None and seg_path.exists() else []' in source
+    assert '("baseline_seg_path", "baseline_seg")' in source
+    assert '("followup_seg_path", "followup_seg")' in source
+    assert '("baseline_output_dir", "baseline_analysis_mask")' in source
+    assert '("followup_output_dir", "followup_analysis_mask")' in source
+    assert "if not segmentation_inputs and not analysis_inputs and not voidspace_inputs:" in source
+    assert "for path, role in [*segmentation_inputs, *analysis_inputs, *voidspace_inputs]:" in source
+    assert "self._load_mask_as_labelmap(path, role, reference_node)" in source
+    assert '"seg": "Bone segmentation"' in source
+    assert '"baseline_seg": "Baseline bone segmentation"' in source
+    assert '"followup_seg": "Follow-up bone segmentation"' in source
+    assert '"baseline_analysis_mask": "Baseline analysis mask"' in source
+    assert '"followup_analysis_mask": "Follow-up analysis mask"' in source
+    assert '"voidspace_quiescent": "Quiescent voidspace"' in source
+    assert '"voidspace_expanded": "Expanded voidspace"' in source
+    assert '"voidspace_contracted": "Contracted voidspace"' in source
+    assert '"seg": (0.45, 0.45, 0.45)' in source
+    assert '"voidspace_quiescent": (0.78, 0.78, 0.78)' in source
+    assert '"voidspace_expanded": (0.0, 0.68, 0.78)' in source
+    assert '"voidspace_contracted": (0.92, 0.78, 0.18)' in source
+    assert '"voidspace_analysis": (0.45, 0.70, 0.65)' in source
+    assert '"baseline_analysis_mask": (0.50, 0.72, 0.68)' in source
+    assert '"followup_analysis_mask": (0.35, 0.62, 0.74)' in source
+    assert '"voidspace_stable_mask" in name' in source
+    assert '"voidspace_analysis_mask" in name' in source
+    assert "before_count = segmentation_node.GetSegmentation().GetNumberOfSegments()" in source
+    assert "after_count = segmentation_node.GetSegmentation().GetNumberOfSegments()" in source
+    assert "if after_count <= before_count:" in source
+    assert "Skipping empty voidspace mask" in source
+    assert "voidspace_large_mask" in source
+    assert "voidspace_all_mask" in source
+    assert 'if profile != "registered":' in source
 
 
 def test_batch_processor_finds_common_region_paths_for_registered_load(tmp_path: Path, monkeypatch) -> None:

@@ -41,6 +41,16 @@ Typical fixes:
 - Run Timelapsed Remodelling if registered/common-region outputs are missing.
 - Check that left and right scans have distinct `voi-*` names such as `radiusleft` and `radiusright`.
 
+## Voidspace Rows Show Unexpected Load Buttons
+
+Voidspace, Registered voidspace, and Dynamic voidspace are independent Batch Processor profiles.
+
+- Native Voidspace outputs live under `derivatives/Voidspace/sub-*/ses-*/xct/native/`.
+- Registered Voidspace outputs live under `derivatives/Voidspace/sub-*/ses-*/xct/registered/`.
+- Dynamic Voidspace outputs live under `derivatives/Voidspace/sub-*/ses-*-*/xct/dynamic/`.
+
+Dynamic runs keep their intermediate baseline and follow-up voidspace maps inside the dynamic pair folder. If Registered voidspace rows unexpectedly switch to `Load` after a dynamic run, remove older test outputs from the registered folders or rerun the registered profile explicitly.
+
 ## Files With `;1` Suffixes
 
 Some systems preserve versioned AIM names such as `scan.AIM;1`. Dataset Naming Helper strips that suffix during normalization and records the change in the rename manifest.

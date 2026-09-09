@@ -109,6 +109,7 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/DeriveLabelsHRpQCT/DeriveLabelsHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
         "HRpQCTTools/BoneMicroarchitecture/BoneMicroarchitecture.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
         "HRpQCTTools/PlateRodMorphometryHRpQCT/PlateRodMorphometryHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
+        "HRpQCTTools/VoidspaceHRpQCT/VoidspaceHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
         "HRpQCTTools/ParOSolFEA/ParOSolFEA.py": 'parent.categories = ["Bone Imaging.FE Analysis"]',
         "HRpQCTTools/MechanoregulationHRpQCT/MechanoregulationHRpQCT.py": 'parent.categories = ["Bone Imaging.Microstructural Analysis"]',
         "IOTools/ScancoIO/ScancoIO.py": 'parent.categories = ["Bone Imaging.I/O"]',
@@ -147,6 +148,7 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/MechanoregulationHRpQCT": "Microstructural Analysis",
         "IOTools/ScancoIO": "I/O",
         "IOTools/DatasetNamingHelper": "I/O",
+        "HRpQCTTools/VoidspaceHRpQCT": "Microstructural Analysis",
         "CTTools/SpineSegmentationCT": "CT Analysis",
         "Setup/BoneImagingToolboxSetup": "Setup",
     }
@@ -170,10 +172,11 @@ def test_public_tool_manifest_locks_human_workflow_order() -> None:
         "HRpQCTTools/MechanoregulationHRpQCT",
         "HRpQCTTools/BoneMicroarchitecture",
         "HRpQCTTools/PlateRodMorphometryHRpQCT",
+        "HRpQCTTools/VoidspaceHRpQCT",
         "HRpQCTTools/ParOSolFEA",
         "CTTools/SpineSegmentationCT",
     ]
-    assert [module["order"] for module in modules] == list(range(10, 10 * (len(modules) + 1), 10))
+    assert [module["order"] for module in modules] == [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 115, 120, 130]
 
 
 def test_registry_orders_manifest_modules_by_explicit_order(tmp_path: Path) -> None:
@@ -197,11 +200,15 @@ def test_registry_orders_manifest_modules_by_explicit_order(tmp_path: Path) -> N
 
 def test_local_link_helper_fallback_includes_all_builtin_modules() -> None:
     helper = (REPO_ROOT / "scripts" / "link_local_toolbox_modules.py").read_text(encoding="utf-8")
+    fallback = (REPO_ROOT / "SlicerBoneImagingToolboxLib" / "registry.py").read_text(encoding="utf-8")
 
     assert '"CTTools/SpineSegmentationCT"' in helper
     assert '"HRpQCTTools/DeriveLabelsHRpQCT"' in helper
     assert '"HRpQCTTools/PlateRodMorphometryHRpQCT"' in helper
+    assert '"HRpQCTTools/VoidspaceHRpQCT"' in helper
+    assert '"HRpQCTTools/VoidspaceHRpQCT"' in fallback
     assert '"Setup/BoneImagingToolboxSetup"' in helper
     assert '"PlateRodMorphometryHRpQCT"' in helper
+    assert '"VoidspaceHRpQCT"' in helper
     assert '"DeriveLabelsHRpQCT"' in helper
     assert '"BoneImagingToolboxSetup"' in helper

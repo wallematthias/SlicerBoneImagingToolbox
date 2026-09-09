@@ -153,8 +153,10 @@ def test_slurm_backend_builds_async_sbatch_submission_without_partition() -> Non
 
     argv = backend.submit_argv(["-m", "bone_microarchitecture.cli", "run-batch", "/remote/data"], job_name="micro_001")
 
-    assert argv[:2] == ["ssh", "arc.ucalgary.ca"]
-    script = argv[2]
+    assert argv[0] == "ssh"
+    assert "arc.ucalgary.ca" in argv
+    assert "ConnectTimeout=8" in argv
+    script = argv[-1]
     assert "sbatch --parsable" in script
     assert "--wait" not in script
     assert "--partition" not in script
@@ -183,15 +185,54 @@ def test_slurm_backend_builds_status_cancel_and_log_commands() -> None:
     statuses = backend.statuses_argv(["47742177", "47742178"])
     cancel = backend.cancel_argv("47742177")
     log = backend.log_argv("bone-job")
+    shell = backend.shell_argv("echo ok")
 
-    assert status[:2] == ["ssh", "arc.ucalgary.ca"]
-    assert "squeue" in status[2]
-    assert "sacct" in status[2]
-    assert statuses[:2] == ["ssh", "arc.ucalgary.ca"]
-    assert "for job in 47742177 47742178" in statuses[2]
-    assert 'printf "%s|%s|' in statuses[2]
-    assert cancel == ["ssh", "arc.ucalgary.ca", "scancel 47742177"]
-    assert "tail -n 80 /remote/work/jobs/bone-job/slurm.log" in log[2]
+    assert status[0] == "ssh"
+    assert "-o" in status
+    assert "BatchMode=yes" in status
+    assert "ConnectTimeout=8" in status
+    assert "ConnectionAttempts=1" in status
+    assert "arc.ucalgary.ca" in status
+    assert "squeue" in status[-1]
+    assert "sacct" in status[-1]
+    assert statuses[0] == "ssh"
+    assert "arc.ucalgary.ca" in statuses
+    assert "for job in 47742177 47742178" in statuses[-1]
+    assert 'printf "%s|%s|' in statuses[-1]
+    assert cancel[0] == "ssh"
+    assert "arc.ucalgary.ca" in cancel
+    assert cancel[-1] == "scancel 47742177"
+    assert "tail -n 80 /remote/work/jobs/bone-job/slurm.log" in log[-1]
+    assert shell[0] == "ssh"
+    assert "ConnectTimeout=8" in shell
+    assert shell[-1] == "bash -lc 'echo ok'"
+
+
+def test_slurm_backend_uses_fast_ssh_probe_and_configurable_connect_timeout() -> None:
+    backend = SshSlurmBatchBackend(
+        RemoteBatchConfig(
+            name="arc",
+            host="arc.ucalgary.ca",
+            remote_root="/remote/data",
+            python="/env/bin/python",
+            work_dir="/remote/work",
+            connect_timeout_seconds=3,
+        )
+    )
+
+    argv = backend.availability_argv()
+
+    assert argv == [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=3",
+        "-o",
+        "ConnectionAttempts=1",
+        "arc.ucalgary.ca",
+        "true",
+    ]
 
 
 def test_slurm_backend_syncs_output_family_to_local_dataset_root() -> None:
@@ -210,6 +251,8 @@ def test_slurm_backend_syncs_output_family_to_local_dataset_root() -> None:
 
     assert argv == [
         "rsync",
+        "-e",
+        "ssh -o BatchMode=yes -o ConnectTimeout=8 -o ConnectionAttempts=1",
         "-az",
         "arc.ucalgary.ca:/remote/data/derivatives/Microarchitecture/",
         "/local/data/derivatives/Microarchitecture/",

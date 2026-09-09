@@ -4,7 +4,7 @@
 
 # Bone Imaging Toolbox
 
-Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, longitudinal remodelling, microarchitecture, plate/rod morphometry, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
+Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, longitudinal remodelling, microarchitecture, voidspace analysis, plate/rod morphometry, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
 
 The Slicer extension is the user-facing layer. Reusable scientific logic lives in focused Python packages such as `bone-contouring`, `timelapsed-hrpqct`, `bone-microarchitecture`, `plate-rod-thinning`, `parosol-py`, and `bone-mechanoregulation`.
 
@@ -28,6 +28,7 @@ Bone Imaging
     Timelapsed Remodelling
     Mechanoregulation
     Microarchitecture
+    Voidspace
     Plate/Rod Morphometry
   FE Analysis
     ParOsol-FEA
@@ -53,6 +54,8 @@ Use the citation that matches the workflow and results you report. See each tool
 - Multistack registration: Whittier DE et al. *Bone*. 2023;176:116893. doi: [10.1016/j.bone.2023.116893](https://doi.org/10.1016/j.bone.2023.116893).
 - Motion grading: Walle M et al. *Bone*. 2023;166:116607. doi: [10.1016/j.bone.2022.116607](https://doi.org/10.1016/j.bone.2022.116607).
 - Plate/rod network morphometry: Walle M et al. *Front Bioeng Biotechnol*. 2024;12:1384280. doi: [10.3389/fbioe.2024.1384280](https://doi.org/10.3389/fbioe.2024.1384280).
+- Voidspace: Whittier DE, Burt LA, Boyd SK. *Bone*. 2021;143:115785. doi: [10.1016/j.bone.2020.115785](https://doi.org/10.1016/j.bone.2020.115785).
+- Dynamic voidspace: Whittier DE et al. *Journal of Bone and Mineral Research*. 2025;40(6):791-798. doi: [10.1093/jbmr/zjaf046](https://doi.org/10.1093/jbmr/zjaf046).
 - Spine vertebral localization: Payer C et al. VISAPP 2020. doi: [10.5220/0008975201240133](https://doi.org/10.5220/0008975201240133).
 - Spine compartment workflow: Walle M and Matheson BE et al. *GigaScience*. 2025;14:giaf094. doi: [10.1093/gigascience/giaf094](https://doi.org/10.1093/gigascience/giaf094).
 

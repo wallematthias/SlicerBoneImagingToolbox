@@ -24,10 +24,10 @@ creating scientific inputs in another tool's namespace.
 - `CommonRegion`: scan/FOV common-region masks derived from registered scan support.
 - `Microarchitecture`: native maps, native measurements, and common-region-restricted measurements.
 - `PlateRodMorphometry`: native plate/rod maps and native or common-region-restricted summaries.
+- `Voidspace`: native and registered voidspace masks, measurements, dynamic expansion/contraction/quiescent masks, and change tables.
 - `Timelapse`: remodelling maps, longitudinal change tables, and remodelling review outputs.
 - `FEA`: material maps, solver outputs, SED fields, load-history outputs, and mechanical summaries.
 - `Mechanoregulation`: combined remodelling and mechanical-field outputs.
-- `VoidSpace`: future void-space masks, maps, and measurements.
 
 ## Common Region
 
