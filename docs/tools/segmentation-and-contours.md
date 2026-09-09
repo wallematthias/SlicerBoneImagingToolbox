@@ -79,13 +79,6 @@ To reuse edited settings, enter a workflow display name and export a custom prof
 | `cort` | cortical ROI mask |
 | `fea-materials` | material label map for ParOsol-FEA |
 
-## Screenshot To Add
-
-Add two generic screenshots:
-
-- profile and expert-settings panel,
-- loaded segmentation with full/trab/cort masks visible.
-
 ## Citation
 
 Credit Bone Imaging Toolbox and `bone-contouring` for generated masks. Cite study-specific segmentation or contouring definitions required by the analysis protocol or target journal.

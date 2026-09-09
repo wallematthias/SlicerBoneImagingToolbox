@@ -89,7 +89,3 @@ For plate/rod network connectivity and morphometry, cite:
 Walle M, Yeritsyan D, Abbasian M, Oftadeh R, Müller R, Nazarian A. A graph model to describe the network connectivity of trabecular plates and rods. *Front Bioeng Biotechnol*. 2024;12:1384280. doi: 10.3389/fbioe.2024.1384280. PMID: 38770275; PMCID: PMC11103010.
 
 The central toolbox citation table in the main README lists citations across modules.
-
-## Screenshot To Add
-
-Add one generic screenshot showing full-thickness plate/rod labels and the compact summary table.

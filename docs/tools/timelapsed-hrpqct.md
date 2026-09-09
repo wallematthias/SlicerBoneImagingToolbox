@@ -95,13 +95,6 @@ sample020_KN_BL.AIM
 sample020_KN_FL1_REGMASK.AIM
 ```
 
-## Screenshot To Add
-
-Add two generic screenshots:
-
-- scene role mapping with three timepoints,
-- loaded remodelling map plus current comparison table.
-
 ## Citation
 
 For Timelapsed remodelling, cite:

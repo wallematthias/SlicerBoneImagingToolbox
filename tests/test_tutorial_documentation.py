@@ -89,3 +89,10 @@ def test_transcript_workflow_details_are_documented():
         text = (ROOT / page).read_text(encoding="utf-8")
         for term in terms:
             assert term in text
+
+
+def test_published_tool_pages_do_not_contain_screenshot_todos():
+    for page in (ROOT / "docs" / "tools").glob("*.md"):
+        text = page.read_text(encoding="utf-8")
+        assert "## Screenshot To Add" not in text
+        assert "Add one generic screenshot" not in text

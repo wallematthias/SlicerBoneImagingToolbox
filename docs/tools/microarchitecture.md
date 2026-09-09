@@ -82,13 +82,6 @@ Common outputs include:
 
 Fractions are reported as fractions, not percentages.
 
-## Screenshot To Add
-
-Add two generic screenshots:
-
-- selected image and segmentation inputs,
-- loaded maps and measurement table.
-
 ## Citation
 
 Credit Bone Imaging Toolbox and `bone-microarchitecture`. Cite field-specific HR-pQCT reporting guidelines or study-specific analysis definitions where required.

@@ -63,10 +63,6 @@ The loaded Slicer table focuses on:
 | `ORR` | odds ratio per normalized SED unit |
 | `ORF` | odds ratio per normalized SED unit |
 
-## Screenshot To Add
-
-Add one generic screenshot showing the selected remodelling map, SED field, and compact summary table.
-
 ## Citation
 
 For mechanoregulation outputs, cite:

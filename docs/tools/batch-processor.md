@@ -53,10 +53,6 @@ The queued jobs keep the tool and profile that were active when they were added 
 
 Outputs are written as derivative artifacts with manifest records. Loaded outputs should appear in Slicer with readable names, compact result tables, and predictable display settings.
 
-## Screenshot To Add
-
-Add one screenshot of a discovered table with generic `sub-001`, `ses-001`, and `voi-radiusleft` rows.
-
 ## Citation
 
 Cite the analysis workflow selected in the Batch Processor. For Timelapsed remodelling and mechanoregulation, cite [Walle et al., Bone 2023](https://doi.org/10.1016/j.bone.2023.116780). For multistack registration, cite [Whittier et al., Bone 2023](https://doi.org/10.1016/j.bone.2023.116893).

@@ -107,7 +107,3 @@ https://github.com/wallematthias/MotionScoreHRpQCT/releases/latest/download/mode
 For Motion Scoring, cite:
 
 Walle M, Eggemann D, Atkins PR, Kendall JJ, Stock K, Müller R, Collins CJ. Motion grading of high-resolution quantitative computed tomography supported by deep convolutional neural networks. *Bone*. 2023;166:116607. doi: 10.1016/j.bone.2022.116607.
-
-## Screenshot To Add
-
-Add one generic screenshot showing the review table and one motion-grading preview image without identifying overlays.

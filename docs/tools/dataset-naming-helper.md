@@ -89,10 +89,6 @@ Common recognized roles include:
 | `REGMASK` | `regmask` |
 | `ROI1`, `ROI2`, `MASK1` | generic analysis ROI |
 
-## Screenshot To Add
-
-Add one screenshot of the review table after `Analyze`, with only generic sample IDs visible.
-
 ## Citation
 
 Credit Bone Imaging Toolbox when the helper is used for dataset preparation.

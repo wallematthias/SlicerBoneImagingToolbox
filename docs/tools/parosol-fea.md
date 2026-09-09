@@ -61,10 +61,6 @@ Outputs are written under `derivatives/FEA/`:
 
 The loaded Slicer table should focus on study-facing values such as stiffness and failure load.
 
-## Screenshot To Add
-
-Add one generic screenshot showing a material label map row in the Batch Processor and a loaded SED field.
-
 ## Citation
 
 Credit Bone Imaging Toolbox and `parosol-py`. Cite the study-specific FEA method and validation source used for the selected profile.
