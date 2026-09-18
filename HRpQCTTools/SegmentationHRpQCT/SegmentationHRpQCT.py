@@ -1184,16 +1184,16 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         if not compartment_split_generated:
             output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
         generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
-        generated.metadata["emitted_label_roles"] = ["fea-materials"]
+        generated.metadata["emitted_label_roles"] = ["fea-input"]
         for role, image_out, segment_name in output_specs:
             self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node, role)
             if create_labelmaps:
                 label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
                 outputs[role] = label_node
         if create_labelmaps:
-            outputs["fea-materials"] = self._sitk_to_labelmap(
+            outputs["fea-input"] = self._sitk_to_labelmap(
                 generated.material,
-                f"{prefix}_fea-materials",
+                f"{prefix}_fea-input",
                 volume_node,
                 binary=False,
             )
@@ -1557,16 +1557,16 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         if not compartment_split_generated:
             output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
         generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
-        generated.metadata["emitted_label_roles"] = ["fea-materials"]
+        generated.metadata["emitted_label_roles"] = ["fea-input"]
         for role, image_out, segment_name in output_specs:
             self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node, role)
             if create_labelmaps:
                 label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
                 outputs[role] = label_node
         if create_labelmaps:
-            outputs["fea-materials"] = self._sitk_to_labelmap(
+            outputs["fea-input"] = self._sitk_to_labelmap(
                 generated.material,
-                f"{prefix}_fea-materials",
+                f"{prefix}_fea-input",
                 volume_node,
                 binary=False,
             )

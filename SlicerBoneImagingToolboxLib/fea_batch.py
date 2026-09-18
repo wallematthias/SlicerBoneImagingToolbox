@@ -439,7 +439,9 @@ def _normalize_artifact_role(role: str, path: str, *, derivative: str = "") -> s
     if "mask" in role_text or (("mask" in name_text) and "seg" not in name_text):
         return "mask"
     if (
-        "hom_ls" in text
+        "fea_input" in text
+        or "fea-input" in text
+        or "hom_ls" in text
         or "hom-ls" in text
         or "modellabel" in text
         or "model_label" in text

@@ -77,7 +77,7 @@ To reuse edited settings, enter a workflow display name and export a custom prof
 | `full` | periosteal/full ROI mask |
 | `trab` | trabecular ROI mask |
 | `cort` | cortical ROI mask |
-| `fea-materials` | material label map for ParOsol-FEA |
+| `fea-input` | material label map for ParOsol-FEA |
 
 ## Attribution
 

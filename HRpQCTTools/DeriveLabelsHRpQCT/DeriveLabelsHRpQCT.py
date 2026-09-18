@@ -509,7 +509,7 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         full_segment_id=None,
         trab_label=100,
         cort_label=127,
-        output_name="HRpQCT_HOM_material_labels",
+        output_name="HRpQCT_fea_input",
     ):
         if bone_segmentation_node is None:
             raise ValueError("Select a bone segmentation labelmap.")
@@ -594,7 +594,7 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
             node = self._labelmap_from_array(
                 material,
                 output_reference_node,
-                output_name or "HRpQCT_HOM_material_labels",
+                output_name or "HRpQCT_fea_input",
                 attributes={
                     "HRpQCT.MaterialLabels": "HOM",
                     "HRpQCT.TrabLabel": int(trab_label),
@@ -732,7 +732,7 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
         missing_form.addRow(self.generateMissingMaskButton)
         self.layout.addWidget(missing_box)
 
-        hom_box = qt.QGroupBox("HOM Material Labels")
+        hom_box = qt.QGroupBox("FEA Input Labels")
         hom_form = qt.QFormLayout(hom_box)
         self.materialTrabLabelSpin = qt.QSpinBox()
         self.materialTrabLabelSpin.minimum = 1
@@ -742,8 +742,8 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.materialCortLabelSpin.minimum = 1
         self.materialCortLabelSpin.maximum = 255
         self.materialCortLabelSpin.value = 127
-        self.materialOutputNameEdit = qt.QLineEdit("HRpQCT_HOM_material_labels")
-        self.createMaterialLabelsButton = qt.QPushButton("Create HOM Material Labels")
+        self.materialOutputNameEdit = qt.QLineEdit("HRpQCT_fea_input")
+        self.createMaterialLabelsButton = qt.QPushButton("Create FEA Input Labels")
         self.createMaterialLabelsButton.clicked.connect(self._create_material_labels)
         hom_form.addRow("Trab label", self.materialTrabLabelSpin)
         hom_form.addRow("Cort label", self.materialCortLabelSpin)
@@ -838,7 +838,7 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
                 full_segment_id=self._selected_segment_id(self.materialFullSegmentCombo),
                 trab_label=int(self.materialTrabLabelSpin.value),
                 cort_label=int(self.materialCortLabelSpin.value),
-                output_name=self.materialOutputNameEdit.text.strip() or "HRpQCT_HOM_material_labels",
+                output_name=self.materialOutputNameEdit.text.strip() or "HRpQCT_fea_input",
             )
             self._log(
                 f"Created {node.GetName()}. Material voxels: "

@@ -537,8 +537,8 @@ def test_contour_generation_writes_fea_material_labelmap_from_scene_batch_path()
         ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
     ).read_text(encoding="utf-8")
 
-    assert 'generated.metadata["emitted_label_roles"] = ["fea-materials"]' in source
-    assert 'outputs["fea-materials"] = self._sitk_to_labelmap(' in source
+    assert 'generated.metadata["emitted_label_roles"] = ["fea-input"]' in source
+    assert 'outputs["fea-input"] = self._sitk_to_labelmap(' in source
     assert "binary=False" in source
     assert 'output_dir / f"{stem}_desc-{role}_label.AIM"' in source
     assert 'output_dir / f"{stem}_desc-{role}_label.nii.gz"' in source

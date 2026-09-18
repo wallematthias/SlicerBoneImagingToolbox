@@ -114,7 +114,7 @@ def test_discover_fea_batch_cases_supports_normalized_voi_layout_and_bone_contou
 
 
 def test_parosol_command_does_not_use_model_image_as_its_own_mask(tmp_path: Path) -> None:
-    model = tmp_path / "sub-001" / "ses-001" / "xct" / "sub-001_ses-001_voi-radiusleft_desc-fea-materials_label.AIM"
+    model = tmp_path / "sub-001" / "ses-001" / "xct" / "sub-001_ses-001_voi-radiusleft_desc-fea-input_label.AIM"
     model.parent.mkdir(parents=True)
     model.write_bytes(b"")
 

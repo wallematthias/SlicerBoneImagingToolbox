@@ -164,6 +164,7 @@ _SEGMENT_COLORS = {
     "seg": (0.45, 0.45, 0.45),
     "baseline_seg": (0.40, 0.40, 0.40),
     "followup_seg": (0.58, 0.58, 0.58),
+    "fea-input": (0.92, 0.62, 0.15),
     "fea-materials": (0.92, 0.62, 0.15),
     "common_region": (0.72, 0.42, 1.0),
     "resorption": (1.0, 0.05, 0.70),
@@ -748,7 +749,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 missing = tuple(preferred_roles)
             else:
                 ok, missing = case_readiness(case, profile)
-            status = "Ready" if ok else "Missing HOM_LS"
+            status = "Ready" if ok else "Missing FEA input"
             action = "Run" if ok else "Missing"
             output_paths = BatchProcessorLogic._fea_output_paths_for_case(root, case, profile)
             if ok and output_paths:
@@ -762,8 +763,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 "voi": case.site,
                 "voi_value": case.site,
                 "registered": False,
-                "status": status if not missing else "Missing HOM_LS",
-                "input": f"source={Path(source.path).name}" if source is not None else "source=missing HOM_LS",
+                "status": status if not missing else "Missing FEA input",
+                "input": f"source={Path(source.path).name}" if source is not None else "source=missing FEA input",
                 "image_path": str(source.path) if source is not None else "",
                 "fea_case": case,
                 "profile": str(profile or "").strip(),
@@ -802,7 +803,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if case is None:
             source = str(row.get("image_path") or "").strip()
             if not source:
-                raise ValueError("FEA row is missing a HOM_LS/material label map.")
+                raise ValueError("FEA row is missing an FEA input/material label map.")
             case = SimpleNamespace(
                 subject_id=str(row.get("subject") or ""),
                 site=str(row.get("voi_value", row.get("voi")) or ""),
@@ -817,7 +818,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             dry_run=False,
         )
         if not commands:
-            raise ValueError("FEA row is missing a HOM_LS/material label map.")
+            raise ValueError("FEA row is missing an FEA input/material label map.")
         return ["-m", "parosol_py.cli", *commands[0]]
 
     @staticmethod
@@ -5164,7 +5165,7 @@ print(str(csv_path))
     @staticmethod
     def _is_fea_material_role(role: str) -> bool:
         role_text = str(role or "").lower().replace("-", "_")
-        return any(token in role_text for token in ("fea_material", "material", "hom_ls", "model_label"))
+        return any(token in role_text for token in ("fea_input", "fea_material", "material", "hom_ls", "model_label"))
 
     @staticmethod
     def _mask_role_from_path(path: Path) -> str:

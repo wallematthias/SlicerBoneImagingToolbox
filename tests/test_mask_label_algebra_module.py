@@ -8,7 +8,7 @@ def test_label_algebra_module_owns_derive_label_tools():
     source = MODULE.read_text()
 
     assert 'parent.title = "Mask and Label Algebra"' in source
-    assert "Create HOM Material Labels" in source
+    assert "Create FEA Input Labels" in source
     assert "Generate Missing Mask" in source
     assert "Mask Operations" in source
     assert "Union" in source

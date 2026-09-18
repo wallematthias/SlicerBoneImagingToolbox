@@ -177,7 +177,7 @@ def test_fea_discovery_keeps_rows_with_missing_material_labelmap() -> None:
 
     assert "source = case.first_artifact(preferred_roles)" in source
     assert "if source is None:\n                ok = False" in source
-    assert "source=missing HOM_LS" in source
+    assert "source=missing FEA input" in source
 
 
 def test_batch_processor_remote_mechanoregulation_uses_core_case_discovery() -> None:
@@ -355,14 +355,14 @@ def test_batch_processor_mechanoregulation_loads_events_as_sed_linked_segmentati
     assert "slicer.util.setSliceViewerLayers(background=sed_node, fit=False)" in source
 
 
-def test_batch_processor_fea_rows_use_hom_ls_material_sources(tmp_path: Path, monkeypatch) -> None:
+def test_batch_processor_fea_rows_use_fea_input_material_sources(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
     xct_dir.mkdir(parents=True)
     raw = xct_dir / "sub-001_ses-001_voi-radiusleft_xct.AIM"
-    hom_ls = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-HOM_LS_map.AIM"
+    fea_input = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-fea-input_label.AIM"
     raw.write_bytes(b"")
-    hom_ls.write_bytes(b"")
+    fea_input.write_bytes(b"")
 
     rows, _message = module.BatchProcessorLogic().discover_rows(
         tmp_path,
@@ -374,8 +374,8 @@ def test_batch_processor_fea_rows_use_hom_ls_material_sources(tmp_path: Path, mo
     assert len(rows) == 1
     assert rows[0]["action"] == "Run"
     assert rows[0]["status"] == "Ready"
-    assert rows[0]["image_path"] == str(hom_ls)
-    assert rows[0]["input"] == f"source={hom_ls.name}"
+    assert rows[0]["image_path"] == str(fea_input)
+    assert rows[0]["input"] == f"source={fea_input.name}"
     assert raw.name not in rows[0]["input"]
 
     command = module.BatchProcessorLogic().command_for_row(
@@ -386,7 +386,7 @@ def test_batch_processor_fea_rows_use_hom_ls_material_sources(tmp_path: Path, mo
         force=False,
     )
 
-    assert command[:3] == ["-m", "parosol_py.cli", str(hom_ls)]
+    assert command[:3] == ["-m", "parosol_py.cli", str(fea_input)]
     assert command[3:5] == ["--profile", "XtremeCTII"]
     assert "--session" not in command
     assert "--site" in command
@@ -405,7 +405,7 @@ def test_batch_processor_remote_fea_rows_choose_material_labelmap_over_raw_image
         {},
     )
     material = module.BatchArtifact(
-        Path("/home/mwalle/data/derivatives/BoneContours/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_desc-fea-materials_label.AIM"),
+        Path("/home/mwalle/data/derivatives/BoneContours/sub-001/ses-001/xct/sub-001_ses-001_voi-radiusleft_desc-fea-input_label.AIM"),
         key,
         "material_labelmap",
         "BoneContours",
@@ -429,8 +429,8 @@ def test_batch_processor_fea_publishes_canonical_sed_and_summary(tmp_path: Path,
     module = _import_batch_processor_module(monkeypatch)
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
     xct_dir.mkdir(parents=True)
-    hom_ls = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-HOM_LS_map.AIM"
-    hom_ls.write_bytes(b"")
+    fea_input = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-fea-input_label.AIM"
+    fea_input.write_bytes(b"")
     rows, _message = module.BatchProcessorLogic().discover_rows(
         tmp_path,
         tool="fea",
@@ -504,8 +504,8 @@ def test_batch_processor_fea_rows_load_from_canonical_derivatives(tmp_path: Path
     module = _import_batch_processor_module(monkeypatch)
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
     xct_dir.mkdir(parents=True)
-    hom_ls = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-HOM_LS_map.AIM"
-    hom_ls.write_bytes(b"")
+    fea_input = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-fea-input_label.AIM"
+    fea_input.write_bytes(b"")
     map_path = (
         tmp_path
         / "derivatives"
@@ -547,8 +547,8 @@ def test_batch_processor_fea_outputs_are_scoped_by_profile(tmp_path: Path, monke
     module = _import_batch_processor_module(monkeypatch)
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
     xct_dir.mkdir(parents=True)
-    hom_ls = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-HOM_LS_map.AIM"
-    hom_ls.write_bytes(b"")
+    fea_input = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-fea-input_label.AIM"
+    fea_input.write_bytes(b"")
     xtreme_table = (
         tmp_path
         / "derivatives"
@@ -577,8 +577,8 @@ def test_batch_processor_fea_summary_includes_load_history_scale_factors(tmp_pat
     module = _import_batch_processor_module(monkeypatch)
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
     xct_dir.mkdir(parents=True)
-    hom_ls = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-HOM_LS_map.AIM"
-    hom_ls.write_bytes(b"")
+    fea_input = xct_dir / "sub-001_ses-001_voi-radiusleft_desc-fea-input_label.AIM"
+    fea_input.write_bytes(b"")
     rows, _message = module.BatchProcessorLogic().discover_rows(
         tmp_path,
         tool="fea",
@@ -629,7 +629,7 @@ def test_batch_processor_regular_fea_summary_hides_load_history_columns(tmp_path
         subject_id="001",
         session_id="001",
         site="radiusleft",
-        first_artifact=lambda roles: types.SimpleNamespace(path=tmp_path / "hom_ls.AIM"),
+        first_artifact=lambda roles: types.SimpleNamespace(path=tmp_path / "fea_input.AIM"),
     )
     table_path = tmp_path / "summary.csv"
 
@@ -3417,14 +3417,14 @@ def test_bone_contour_loader_skips_material_label_outputs(monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     widget = module.BatchProcessorWidget
 
-    label_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-fea-materials_label.AIM")
+    label_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-fea-input_label.AIM")
     mask_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-full_mask.AIM")
-    hom_ls_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-hom-ls-model_label.AIM")
+    fea_input_path = Path("sub-SAMPLE341_ses-001_voi-tibia_desc-hom-ls-model_label.AIM")
 
     assert not widget._is_bone_contour_segmentation_output(label_path)
-    assert not widget._is_bone_contour_segmentation_output(hom_ls_path)
+    assert not widget._is_bone_contour_segmentation_output(fea_input_path)
     assert widget._is_bone_contour_segmentation_output(mask_path)
-    assert widget._mask_role_from_path(label_path) == "fea-materials"
+    assert widget._mask_role_from_path(label_path) == "fea-input"
 
     source = MODULE_PATH.read_text(encoding="utf-8")
     assert "No BoneContours mask/label outputs were discovered for this row." in source
@@ -3440,7 +3440,7 @@ def test_mask_label_algebra_loads_imported_contours_not_generated_label(tmp_path
     generated_dir.mkdir(parents=True)
     imported_full = imported_dir / "sub-SAMPLE341_ses-001_voi-tibia_desc-full_mask.AIM"
     imported_trab = imported_dir / "sub-SAMPLE341_ses-001_voi-tibia_desc-trab_mask.AIM"
-    generated_label = generated_dir / "sub-SAMPLE341_ses-001_voi-tibia_desc-fea-materials_label.AIM"
+    generated_label = generated_dir / "sub-SAMPLE341_ses-001_voi-tibia_desc-fea-input_label.AIM"
     for path in (imported_full, imported_trab, generated_label):
         path.write_bytes(b"")
 
@@ -3473,7 +3473,7 @@ def test_mask_label_algebra_loads_imported_contours_not_generated_label(tmp_path
             "native",
             generated_label,
             "derived",
-            metadata={"short_role": "fea-materials", "workflow": "mask_label_algebra"},
+            metadata={"short_role": "fea-input", "workflow": "mask_label_algebra"},
             content_type="label",
         )
     ]
