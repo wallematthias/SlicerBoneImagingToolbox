@@ -142,22 +142,32 @@ class DeriveLabelsHRpQCT(ScriptedLoadableModule):
 
 
 class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
-    def _mask_array_from_node(self, node, role=None, *, reference_node=None):
+    def _mask_array_from_node(self, node, role=None, *, reference_node=None, selected_segment_id=None):
         if node is None:
             return None
         if node.IsA("vtkMRMLSegmentationNode"):
-            labelmap_node = self._segmentation_node_to_labelmap(node, role, reference_node=reference_node)
+            labelmap_node = self._segmentation_node_to_labelmap(
+                node,
+                role,
+                reference_node=reference_node,
+                selected_segment_id=selected_segment_id,
+            )
             try:
                 return np.asarray(slicer.util.arrayFromVolume(labelmap_node)) > 0
             finally:
                 slicer.mrmlScene.RemoveNode(labelmap_node)
         return np.asarray(slicer.util.arrayFromVolume(node)) > 0
 
-    def _array_from_node(self, node, role=None, *, reference_node=None):
+    def _array_from_node(self, node, role=None, *, reference_node=None, selected_segment_id=None):
         if node is None:
             return None
         if node.IsA("vtkMRMLSegmentationNode"):
-            labelmap_node = self._segmentation_node_to_labelmap(node, role, reference_node=reference_node)
+            labelmap_node = self._segmentation_node_to_labelmap(
+                node,
+                role,
+                reference_node=reference_node,
+                selected_segment_id=selected_segment_id,
+            )
             try:
                 return np.asarray(slicer.util.arrayFromVolume(labelmap_node))
             finally:
@@ -177,9 +187,16 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         except TypeError:
             return str(segment.GetTag(str(tag_name)) or "")
 
-    def _segment_id_for_role(self, segmentation_node, role):
+    def _segment_id_for_role(self, segmentation_node, role, selected_segment_id=None):
         if segmentation_node is None or not segmentation_node.IsA("vtkMRMLSegmentationNode"):
             raise ValueError("Select a segmentation node.")
+        if selected_segment_id:
+            segment = segmentation_node.GetSegmentation().GetSegment(str(selected_segment_id))
+            if segment is None:
+                raise ValueError(
+                    f"Selected segment ID {selected_segment_id} was not found in {segmentation_node.GetName()}."
+                )
+            return str(selected_segment_id)
         requested_role = str(role or "").strip()
         segmentation = segmentation_node.GetSegmentation()
         if segmentation.GetNumberOfSegments() == 1:
@@ -195,8 +212,12 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
             f"Could not find a {requested_role or 'matching'} segment in {segmentation_node.GetName()}."
         )
 
-    def _segmentation_node_to_labelmap(self, segmentation_node, role, *, reference_node=None):
-        segment_id = self._segment_id_for_role(segmentation_node, role)
+    def _segmentation_node_to_labelmap(self, segmentation_node, role, *, reference_node=None, selected_segment_id=None):
+        segment_id = self._segment_id_for_role(
+            segmentation_node,
+            role,
+            selected_segment_id=selected_segment_id,
+        )
         labelmap_node = slicer.mrmlScene.AddNewNodeByClass(
             "vtkMRMLLabelMapVolumeNode",
             f"{segmentation_node.GetName()}_{str(role or 'segment').replace(' ', '_')}",
@@ -254,14 +275,32 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         full_mask_node=None,
         trab_mask_node=None,
         cort_mask_node=None,
+        full_segment_id=None,
+        trab_segment_id=None,
+        cort_segment_id=None,
         output_role="auto",
         output_name="HRpQCT_derived_mask",
     ):
         reference_node = self._first_available_reference_node(full_mask_node, trab_mask_node, cort_mask_node)
         masks = derive_compartment_mask_arrays(
-            full=self._mask_array_from_node(full_mask_node, "full", reference_node=reference_node),
-            trab=self._mask_array_from_node(trab_mask_node, "trab", reference_node=reference_node),
-            cort=self._mask_array_from_node(cort_mask_node, "cort", reference_node=reference_node),
+            full=self._mask_array_from_node(
+                full_mask_node,
+                "full",
+                reference_node=reference_node,
+                selected_segment_id=full_segment_id,
+            ),
+            trab=self._mask_array_from_node(
+                trab_mask_node,
+                "trab",
+                reference_node=reference_node,
+                selected_segment_id=trab_segment_id,
+            ),
+            cort=self._mask_array_from_node(
+                cort_mask_node,
+                "cort",
+                reference_node=reference_node,
+                selected_segment_id=cort_segment_id,
+            ),
             output_role=output_role,
         )
         role = masks["derived_role"]
@@ -279,20 +318,63 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         )
         return node, {"role": role, "voxels": int(np.count_nonzero(masks[role]))}
 
-    def validate_compartment_masks(self, *, full_mask_node=None, trab_mask_node=None, cort_mask_node=None):
+    def validate_compartment_masks(
+        self,
+        *,
+        full_mask_node=None,
+        trab_mask_node=None,
+        cort_mask_node=None,
+        full_segment_id=None,
+        trab_segment_id=None,
+        cort_segment_id=None,
+    ):
         reference_node = self._first_available_reference_node(full_mask_node, trab_mask_node, cort_mask_node)
         return validate_compartment_mask_arrays(
-            full=self._mask_array_from_node(full_mask_node, "full", reference_node=reference_node),
-            trab=self._mask_array_from_node(trab_mask_node, "trab", reference_node=reference_node),
-            cort=self._mask_array_from_node(cort_mask_node, "cort", reference_node=reference_node),
+            full=self._mask_array_from_node(
+                full_mask_node,
+                "full",
+                reference_node=reference_node,
+                selected_segment_id=full_segment_id,
+            ),
+            trab=self._mask_array_from_node(
+                trab_mask_node,
+                "trab",
+                reference_node=reference_node,
+                selected_segment_id=trab_segment_id,
+            ),
+            cort=self._mask_array_from_node(
+                cort_mask_node,
+                "cort",
+                reference_node=reference_node,
+                selected_segment_id=cort_segment_id,
+            ),
         )
 
-    def create_boolean_mask_volume(self, mask_a_node, mask_b_node, operation, output_name="HRpQCT_mask_operation"):
+    def create_boolean_mask_volume(
+        self,
+        mask_a_node,
+        mask_b_node,
+        operation,
+        output_name="HRpQCT_mask_operation",
+        *,
+        mask_a_segment_id=None,
+        mask_b_segment_id=None,
+    ):
         if mask_a_node is None or mask_b_node is None:
             raise ValueError("Select both input masks.")
         result = binary_mask_operation_arrays(
-            self._mask_array_from_node(mask_a_node, "full", reference_node=mask_b_node),
-            self._mask_array_from_node(mask_b_node, "full", reference_node=mask_a_node),
+            self._mask_array_from_node(
+                mask_a_node,
+                "full",
+                reference_node=mask_b_node,
+                selected_segment_id=mask_a_segment_id,
+            ),
+            self._mask_array_from_node(
+                mask_b_node,
+                "full",
+                reference_node=mask_a_node,
+                selected_segment_id=mask_b_segment_id,
+            ),
             operation,
         )
         node = self._labelmap_from_array(
@@ -303,10 +385,13 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         )
         return node, {"voxels": int(np.count_nonzero(result)), "operation": str(operation)}
 
-    def relabel_mask_volume(self, source_node, label, output_name="HRpQCT_relabelled"):
+    def relabel_mask_volume(self, source_node, label, output_name="HRpQCT_relabelled", *, source_segment_id=None):
         if source_node is None:
             raise ValueError("Select a source mask.")
-        result = relabel_nonzero_array(self._array_from_node(source_node, "full"), int(label))
+        result = relabel_nonzero_array(
+            self._array_from_node(source_node, "full", selected_segment_id=source_segment_id),
+            int(label),
+        )
         node = self._labelmap_from_array(
             result,
             source_node,
@@ -315,11 +400,16 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         )
         return node, {"voxels": int(np.count_nonzero(result)), "label": int(label)}
 
-    def mask_voxel_counts(self, **nodes):
+    def mask_voxel_counts(self, segment_ids=None, **nodes):
         counts = {}
+        segment_ids = segment_ids or {}
         for role, node in nodes.items():
             if node is not None:
-                counts[role] = int(np.count_nonzero(self._array_from_node(node, role)))
+                counts[role] = int(
+                    np.count_nonzero(
+                        self._array_from_node(node, role, selected_segment_id=segment_ids.get(role))
+                    )
+                )
         if not counts:
             raise ValueError("Select at least one mask.")
         return counts
@@ -331,6 +421,10 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         cort_mask_node=None,
         full_mask_node=None,
         *,
+        seg_segment_id=None,
+        trab_segment_id=None,
+        cort_segment_id=None,
+        full_segment_id=None,
         trab_label=100,
         cort_label=127,
         output_name="HRpQCT_HOM_material_labels",
@@ -349,11 +443,31 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         trab_source = trab_mask_node or segmentation_source
         cort_source_node = cort_mask_node or segmentation_source
 
-        seg = self._mask_array_from_node(bone_segmentation_node, "seg", reference_node=reference_node)
+        seg = self._mask_array_from_node(
+            bone_segmentation_node,
+            "seg",
+            reference_node=reference_node,
+            selected_segment_id=seg_segment_id,
+        )
         masks = derive_compartment_mask_arrays(
-            full=self._mask_array_from_node(full_source, "full", reference_node=reference_node),
-            trab=self._mask_array_from_node(trab_source, "trab", reference_node=reference_node),
-            cort=self._mask_array_from_node(cort_source_node, "cort", reference_node=reference_node),
+            full=self._mask_array_from_node(
+                full_source,
+                "full",
+                reference_node=reference_node,
+                selected_segment_id=full_segment_id,
+            ),
+            trab=self._mask_array_from_node(
+                trab_source,
+                "trab",
+                reference_node=reference_node,
+                selected_segment_id=trab_segment_id,
+            ),
+            cort=self._mask_array_from_node(
+                cort_source_node,
+                "cort",
+                reference_node=reference_node,
+                selected_segment_id=cort_segment_id,
+            ),
             output_role="auto",
         )
         if seg.shape != masks["trab"].shape:
@@ -416,6 +530,62 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
         selector.setMRMLScene(slicer.mrmlScene)
         return selector
 
+    def _segment_combo(self):
+        combo = qt.QComboBox()
+        combo.addItem("Auto", "")
+        combo.enabled = False
+        self._tip(combo, "Segment to use when the selected node is a Slicer segmentation.")
+        return combo
+
+    def _mask_selector_row(self, form, label, role, tooltip):
+        selector = self._labelmap_selector()
+        segment_combo = self._segment_combo()
+        self._tip(selector, tooltip)
+
+        row_widget = qt.QWidget()
+        row_layout = qt.QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.addWidget(selector, 2)
+        row_layout.addWidget(qt.QLabel("Segment"))
+        row_layout.addWidget(segment_combo, 1)
+        form.addRow(label, row_widget)
+
+        selector.currentNodeChanged.connect(
+            lambda _node, active_selector=selector, active_combo=segment_combo, active_role=role: self._refresh_segment_combo(
+                active_selector,
+                active_combo,
+                active_role,
+            )
+        )
+        return selector, segment_combo
+
+    def _refresh_segment_combo(self, selector, segment_combo, role):
+        segment_combo.blockSignals(True)
+        segment_combo.clear()
+        segment_combo.addItem("Auto", "")
+        node = selector.currentNode()
+        is_segmentation = bool(node is not None and node.IsA("vtkMRMLSegmentationNode"))
+        segment_combo.enabled = is_segmentation
+        if is_segmentation:
+            try:
+                auto_id = self.logic._segment_id_for_role(node, role)
+            except Exception:
+                auto_id = None
+            segmentation = node.GetSegmentation()
+            for index in range(segmentation.GetNumberOfSegments()):
+                segment_id = segmentation.GetNthSegmentID(index)
+                segment = segmentation.GetSegment(segment_id)
+                segment_name = str(segment.GetName() if segment is not None else segment_id)
+                label = segment_name
+                if auto_id and segment_id == auto_id:
+                    label = f"{segment_name} (auto)"
+                segment_combo.addItem(label, segment_id)
+        segment_combo.blockSignals(False)
+
+    def _selected_segment_id(self, segment_combo):
+        selected_segment_id = str(segment_combo.currentData or "").strip()
+        return selected_segment_id or None
+
     def _build_ui(self):
         self.messageLabel = qt.QLabel()
         self.messageLabel.wordWrap = True
@@ -423,18 +593,30 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         form = qt.QFormLayout()
         self.layout.addLayout(form)
-        self.materialSegSelector = self._labelmap_selector()
-        self.materialTrabSelector = self._labelmap_selector()
-        self.materialCortSelector = self._labelmap_selector()
-        self.materialFullSelector = self._labelmap_selector()
-        self._tip(self.materialSegSelector, "Bone segmentation labelmap used to restrict material labels to segmented bone voxels.")
-        self._tip(self.materialTrabSelector, "Trabecular ROI mask.")
-        self._tip(self.materialCortSelector, "Cortical ROI mask.")
-        self._tip(self.materialFullSelector, "Full/periosteal ROI mask.")
-        form.addRow("Bone segmentation", self.materialSegSelector)
-        form.addRow("Trabecular mask", self.materialTrabSelector)
-        form.addRow("Cortical mask", self.materialCortSelector)
-        form.addRow("Full mask", self.materialFullSelector)
+        self.materialSegSelector, self.materialSegSegmentCombo = self._mask_selector_row(
+            form,
+            "Bone segmentation",
+            "seg",
+            "Bone segmentation labelmap used to restrict material labels to segmented bone voxels.",
+        )
+        self.materialTrabSelector, self.materialTrabSegmentCombo = self._mask_selector_row(
+            form,
+            "Trabecular mask",
+            "trab",
+            "Trabecular ROI mask.",
+        )
+        self.materialCortSelector, self.materialCortSegmentCombo = self._mask_selector_row(
+            form,
+            "Cortical mask",
+            "cort",
+            "Cortical ROI mask.",
+        )
+        self.materialFullSelector, self.materialFullSegmentCombo = self._mask_selector_row(
+            form,
+            "Full mask",
+            "full",
+            "Full/periosteal ROI mask.",
+        )
 
         missing_box = qt.QGroupBox("Derive Missing Compartment Mask")
         missing_form = qt.QFormLayout(missing_box)
@@ -470,16 +652,24 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         operations_box = qt.QGroupBox("Mask Operations")
         operations_form = qt.QFormLayout(operations_box)
-        self.maskASelector = self._labelmap_selector()
-        self.maskBSelector = self._labelmap_selector()
+        self.maskASelector, self.maskASegmentCombo = self._mask_selector_row(
+            operations_form,
+            "Mask A",
+            "full",
+            "First mask for the boolean operation.",
+        )
+        self.maskBSelector, self.maskBSegmentCombo = self._mask_selector_row(
+            operations_form,
+            "Mask B",
+            "full",
+            "Second mask for the boolean operation.",
+        )
         self.maskOperationCombo = qt.QComboBox()
         for label, value in [("Union", "union"), ("Intersection", "intersection"), ("A minus B", "difference"), ("XOR", "xor")]:
             self.maskOperationCombo.addItem(label, value)
         self.maskOperationOutputNameEdit = qt.QLineEdit("HRpQCT_mask_operation")
         self.createMaskOperationButton = qt.QPushButton("Create Mask Operation")
         self.createMaskOperationButton.clicked.connect(self._create_mask_operation)
-        operations_form.addRow("Mask A", self.maskASelector)
-        operations_form.addRow("Mask B", self.maskBSelector)
         operations_form.addRow("Operation", self.maskOperationCombo)
         operations_form.addRow("Output name", self.maskOperationOutputNameEdit)
         operations_form.addRow(self.createMaskOperationButton)
@@ -487,7 +677,12 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         relabel_box = qt.QGroupBox("Relabel And Validate")
         relabel_form = qt.QFormLayout(relabel_box)
-        self.relabelSourceSelector = self._labelmap_selector()
+        self.relabelSourceSelector, self.relabelSourceSegmentCombo = self._mask_selector_row(
+            relabel_form,
+            "Source",
+            "full",
+            "Source mask to relabel or count.",
+        )
         self.relabelValueSpin = qt.QSpinBox()
         self.relabelValueSpin.minimum = 1
         self.relabelValueSpin.maximum = 65535
@@ -499,7 +694,6 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.validateMasksButton.clicked.connect(self._validate_mask_set)
         self.countMasksButton = qt.QPushButton("Count Selected Masks")
         self.countMasksButton.clicked.connect(self._count_selected_masks)
-        relabel_form.addRow("Source", self.relabelSourceSelector)
         relabel_form.addRow("Label", self.relabelValueSpin)
         relabel_form.addRow("Output name", self.relabelOutputNameEdit)
         relabel_form.addRow(self.relabelButton)
@@ -520,6 +714,9 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
                 full_mask_node=self.materialFullSelector.currentNode(),
                 trab_mask_node=self.materialTrabSelector.currentNode(),
                 cort_mask_node=self.materialCortSelector.currentNode(),
+                full_segment_id=self._selected_segment_id(self.materialFullSegmentCombo),
+                trab_segment_id=self._selected_segment_id(self.materialTrabSegmentCombo),
+                cort_segment_id=self._selected_segment_id(self.materialCortSegmentCombo),
                 output_role=str(self.missingMaskRoleCombo.currentData),
                 output_name=self.missingMaskOutputNameEdit.text.strip() or "HRpQCT_derived_mask",
             )
@@ -534,6 +731,10 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self.materialTrabSelector.currentNode(),
                 self.materialCortSelector.currentNode(),
                 self.materialFullSelector.currentNode(),
+                seg_segment_id=self._selected_segment_id(self.materialSegSegmentCombo),
+                trab_segment_id=self._selected_segment_id(self.materialTrabSegmentCombo),
+                cort_segment_id=self._selected_segment_id(self.materialCortSegmentCombo),
+                full_segment_id=self._selected_segment_id(self.materialFullSegmentCombo),
                 trab_label=int(self.materialTrabLabelSpin.value),
                 cort_label=int(self.materialCortLabelSpin.value),
                 output_name=self.materialOutputNameEdit.text.strip() or "HRpQCT_HOM_material_labels",
@@ -552,6 +753,8 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self.maskBSelector.currentNode(),
                 str(self.maskOperationCombo.currentData),
                 output_name=self.maskOperationOutputNameEdit.text.strip() or "HRpQCT_mask_operation",
+                mask_a_segment_id=self._selected_segment_id(self.maskASegmentCombo),
+                mask_b_segment_id=self._selected_segment_id(self.maskBSegmentCombo),
             )
             self._log(f"Created {node.GetName()}. Operation={counts['operation']}, voxels={counts['voxels']}.")
         except Exception as exc:
@@ -563,6 +766,7 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
                 self.relabelSourceSelector.currentNode(),
                 int(self.relabelValueSpin.value),
                 output_name=self.relabelOutputNameEdit.text.strip() or "HRpQCT_relabelled",
+                source_segment_id=self._selected_segment_id(self.relabelSourceSegmentCombo),
             )
             self._log(f"Created {node.GetName()}. Label={counts['label']}, voxels={counts['voxels']}.")
         except Exception as exc:
@@ -574,6 +778,9 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
                 full_mask_node=self.materialFullSelector.currentNode(),
                 trab_mask_node=self.materialTrabSelector.currentNode(),
                 cort_mask_node=self.materialCortSelector.currentNode(),
+                full_segment_id=self._selected_segment_id(self.materialFullSegmentCombo),
+                trab_segment_id=self._selected_segment_id(self.materialTrabSegmentCombo),
+                cort_segment_id=self._selected_segment_id(self.materialCortSegmentCombo),
             )
             status = "valid" if counts["valid"] else "not valid"
             self._log(
@@ -587,6 +794,12 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _count_selected_masks(self):
         try:
             counts = self.logic.mask_voxel_counts(
+                segment_ids={
+                    "seg": self._selected_segment_id(self.materialSegSegmentCombo),
+                    "full": self._selected_segment_id(self.materialFullSegmentCombo),
+                    "trab": self._selected_segment_id(self.materialTrabSegmentCombo),
+                    "cort": self._selected_segment_id(self.materialCortSegmentCombo),
+                },
                 seg=self.materialSegSelector.currentNode(),
                 full=self.materialFullSelector.currentNode(),
                 trab=self.materialTrabSelector.currentNode(),

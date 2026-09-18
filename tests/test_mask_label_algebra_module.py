@@ -34,3 +34,21 @@ def test_label_algebra_accepts_contouring_segmentation_nodes():
     assert "full_source = full_mask_node or segmentation_source" in source
     assert "trab_source = trab_mask_node or segmentation_source" in source
     assert "cort_source_node = cort_mask_node or segmentation_source" in source
+
+
+def test_label_algebra_exposes_segment_role_overrides_for_segmentation_nodes():
+    source = MODULE.read_text()
+
+    assert "def _segment_combo(self):" in source
+    assert "def _mask_selector_row(self, form, label, role, tooltip):" in source
+    assert "def _refresh_segment_combo(self, selector, segment_combo, role):" in source
+    assert "def _selected_segment_id(self, segment_combo):" in source
+    assert "self.materialSegSelector, self.materialSegSegmentCombo = self._mask_selector_row(" in source
+    assert "self.materialTrabSelector, self.materialTrabSegmentCombo = self._mask_selector_row(" in source
+    assert "self.materialCortSelector, self.materialCortSegmentCombo = self._mask_selector_row(" in source
+    assert "self.materialFullSelector, self.materialFullSegmentCombo = self._mask_selector_row(" in source
+    assert "selected_segment_id=selected_segment_id" in source
+    assert "seg_segment_id=" in source
+    assert "trab_segment_id=" in source
+    assert "cort_segment_id=" in source
+    assert "full_segment_id=" in source
