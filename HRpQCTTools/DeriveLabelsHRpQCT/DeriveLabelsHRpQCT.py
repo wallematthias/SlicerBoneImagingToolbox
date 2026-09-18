@@ -405,7 +405,10 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _labelmap_selector(self):
         selector = slicer.qMRMLNodeComboBox()
-        selector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode", "vtkMRMLSegmentationNode"]
+        node_types = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode", "vtkMRMLSegmentationNode"]
+        selector.nodeTypes = node_types
+        if hasattr(selector, "setNodeTypes"):
+            selector.setNodeTypes(node_types)
         selector.selectNodeUponCreation = False
         selector.addEnabled = False
         selector.removeEnabled = False

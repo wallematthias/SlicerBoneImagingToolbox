@@ -207,6 +207,7 @@ def test_label_algebra_accepts_contouring_segmentation_nodes():
 
     assert '"vtkMRMLSegmentationNode"' in source
     assert "ExportSegmentsToLabelmapNode" in source
+    assert "selector.setNodeTypes(node_types)" in source
     assert "_segment_id_for_role" in source
     assert "_segment_tag_value(segment, \"HRpQCT.Role\")" in source
     assert "scene_segment_matches_role" in source
