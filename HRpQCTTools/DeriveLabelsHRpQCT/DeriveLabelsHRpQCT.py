@@ -239,6 +239,51 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
             slicer.mrmlScene.RemoveNode(labelmap_node)
             raise
 
+    def _segmentation_reference_node(self, segmentation_node, roles_and_segment_ids):
+        segment_ids = vtk.vtkStringArray()
+        seen = set()
+        for role, selected_segment_id in roles_and_segment_ids:
+            segment_id = self._segment_id_for_role(
+                segmentation_node,
+                role,
+                selected_segment_id=selected_segment_id,
+            )
+            if segment_id not in seen:
+                segment_ids.InsertNextValue(segment_id)
+                seen.add(segment_id)
+        if segment_ids.GetNumberOfValues() == 0:
+            return None
+        labelmap_node = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLLabelMapVolumeNode",
+            f"{segmentation_node.GetName()}_label_algebra_reference_geometry",
+        )
+        try:
+            slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(
+                segmentation_node,
+                segment_ids,
+                labelmap_node,
+            )
+            return labelmap_node
+        except Exception:
+            slicer.mrmlScene.RemoveNode(labelmap_node)
+            raise
+
+    def _shared_segmentation_reference_node(self, *nodes_and_roles):
+        grouped: dict[str, tuple[object, list[tuple[str, str | None]]]] = {}
+        for node, role, selected_segment_id in nodes_and_roles:
+            if node is None or not node.IsA("vtkMRMLSegmentationNode"):
+                continue
+            node_id = node.GetID() or node.GetName()
+            if node_id not in grouped:
+                grouped[node_id] = (node, [])
+            grouped[node_id][1].append((role, selected_segment_id))
+        if len(grouped) != 1:
+            return None
+        segmentation_node, roles_and_segment_ids = next(iter(grouped.values()))
+        if len(roles_and_segment_ids) < 2:
+            return None
+        return self._segmentation_reference_node(segmentation_node, roles_and_segment_ids)
+
     def _labelmap_from_array(self, array, reference_node, name, *, attributes=None):
         if reference_node is None:
             raise ValueError("Select a reference labelmap.")
@@ -282,40 +327,52 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         output_name="HRpQCT_derived_mask",
     ):
         reference_node = self._first_available_reference_node(full_mask_node, trab_mask_node, cort_mask_node)
-        masks = derive_compartment_mask_arrays(
-            full=self._mask_array_from_node(
-                full_mask_node,
-                "full",
-                reference_node=reference_node,
-                selected_segment_id=full_segment_id,
-            ),
-            trab=self._mask_array_from_node(
-                trab_mask_node,
-                "trab",
-                reference_node=reference_node,
-                selected_segment_id=trab_segment_id,
-            ),
-            cort=self._mask_array_from_node(
-                cort_mask_node,
-                "cort",
-                reference_node=reference_node,
-                selected_segment_id=cort_segment_id,
-            ),
-            output_role=output_role,
-        )
-        role = masks["derived_role"]
-        if role == "none":
-            raise ValueError("Choose which mask to generate when all three compartment masks are selected.")
-        reference = self._first_selected_node(full_mask_node, trab_mask_node, cort_mask_node)
-        node = self._labelmap_from_array(
-            masks[role].astype(np.uint8),
-            reference,
-            output_name or f"HRpQCT_{role}_derived",
-            attributes={
-                "HRpQCT.MaskRole": role,
-                "HRpQCT.MaskDerived": "1",
-            },
-        )
+        shared_reference_node = None
+        if reference_node is None:
+            shared_reference_node = self._shared_segmentation_reference_node(
+                (full_mask_node, "full", full_segment_id),
+                (trab_mask_node, "trab", trab_segment_id),
+                (cort_mask_node, "cort", cort_segment_id),
+            )
+            reference_node = shared_reference_node
+        output_reference_node = reference_node or self._first_selected_node(full_mask_node, trab_mask_node, cort_mask_node)
+        try:
+            masks = derive_compartment_mask_arrays(
+                full=self._mask_array_from_node(
+                    full_mask_node,
+                    "full",
+                    reference_node=reference_node,
+                    selected_segment_id=full_segment_id,
+                ),
+                trab=self._mask_array_from_node(
+                    trab_mask_node,
+                    "trab",
+                    reference_node=reference_node,
+                    selected_segment_id=trab_segment_id,
+                ),
+                cort=self._mask_array_from_node(
+                    cort_mask_node,
+                    "cort",
+                    reference_node=reference_node,
+                    selected_segment_id=cort_segment_id,
+                ),
+                output_role=output_role,
+            )
+            role = masks["derived_role"]
+            if role == "none":
+                raise ValueError("Choose which mask to generate when all three compartment masks are selected.")
+            node = self._labelmap_from_array(
+                masks[role].astype(np.uint8),
+                output_reference_node,
+                output_name or f"HRpQCT_{role}_derived",
+                attributes={
+                    "HRpQCT.MaskRole": role,
+                    "HRpQCT.MaskDerived": "1",
+                },
+            )
+        finally:
+            if shared_reference_node is not None:
+                slicer.mrmlScene.RemoveNode(shared_reference_node)
         return node, {"role": role, "voxels": int(np.count_nonzero(masks[role]))}
 
     def validate_compartment_masks(
@@ -329,26 +386,38 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         cort_segment_id=None,
     ):
         reference_node = self._first_available_reference_node(full_mask_node, trab_mask_node, cort_mask_node)
-        return validate_compartment_mask_arrays(
-            full=self._mask_array_from_node(
-                full_mask_node,
-                "full",
-                reference_node=reference_node,
-                selected_segment_id=full_segment_id,
-            ),
-            trab=self._mask_array_from_node(
-                trab_mask_node,
-                "trab",
-                reference_node=reference_node,
-                selected_segment_id=trab_segment_id,
-            ),
-            cort=self._mask_array_from_node(
-                cort_mask_node,
-                "cort",
-                reference_node=reference_node,
-                selected_segment_id=cort_segment_id,
-            ),
-        )
+        shared_reference_node = None
+        if reference_node is None:
+            shared_reference_node = self._shared_segmentation_reference_node(
+                (full_mask_node, "full", full_segment_id),
+                (trab_mask_node, "trab", trab_segment_id),
+                (cort_mask_node, "cort", cort_segment_id),
+            )
+            reference_node = shared_reference_node
+        try:
+            return validate_compartment_mask_arrays(
+                full=self._mask_array_from_node(
+                    full_mask_node,
+                    "full",
+                    reference_node=reference_node,
+                    selected_segment_id=full_segment_id,
+                ),
+                trab=self._mask_array_from_node(
+                    trab_mask_node,
+                    "trab",
+                    reference_node=reference_node,
+                    selected_segment_id=trab_segment_id,
+                ),
+                cort=self._mask_array_from_node(
+                    cort_mask_node,
+                    "cort",
+                    reference_node=reference_node,
+                    selected_segment_id=cort_segment_id,
+                ),
+            )
+        finally:
+            if shared_reference_node is not None:
+                slicer.mrmlScene.RemoveNode(shared_reference_node)
 
     def create_boolean_mask_volume(
         self,
@@ -362,27 +431,40 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
     ):
         if mask_a_node is None or mask_b_node is None:
             raise ValueError("Select both input masks.")
-        result = binary_mask_operation_arrays(
-            self._mask_array_from_node(
-                mask_a_node,
-                "full",
-                reference_node=mask_b_node,
-                selected_segment_id=mask_a_segment_id,
-            ),
-            self._mask_array_from_node(
-                mask_b_node,
-                "full",
-                reference_node=mask_a_node,
-                selected_segment_id=mask_b_segment_id,
-            ),
-            operation,
-        )
-        node = self._labelmap_from_array(
-            result.astype(np.uint8),
-            mask_a_node,
-            output_name or f"HRpQCT_{operation}",
-            attributes={"HRpQCT.MaskOperation": str(operation)},
-        )
+        reference_node = self._first_available_reference_node(mask_a_node, mask_b_node)
+        shared_reference_node = None
+        if reference_node is None:
+            shared_reference_node = self._shared_segmentation_reference_node(
+                (mask_a_node, "full", mask_a_segment_id),
+                (mask_b_node, "full", mask_b_segment_id),
+            )
+            reference_node = shared_reference_node
+        output_reference_node = reference_node or mask_a_node
+        try:
+            result = binary_mask_operation_arrays(
+                self._mask_array_from_node(
+                    mask_a_node,
+                    "full",
+                    reference_node=reference_node,
+                    selected_segment_id=mask_a_segment_id,
+                ),
+                self._mask_array_from_node(
+                    mask_b_node,
+                    "full",
+                    reference_node=reference_node,
+                    selected_segment_id=mask_b_segment_id,
+                ),
+                operation,
+            )
+            node = self._labelmap_from_array(
+                result.astype(np.uint8),
+                output_reference_node,
+                output_name or f"HRpQCT_{operation}",
+                attributes={"HRpQCT.MaskOperation": str(operation)},
+            )
+        finally:
+            if shared_reference_node is not None:
+                slicer.mrmlScene.RemoveNode(shared_reference_node)
         return node, {"voxels": int(np.count_nonzero(result)), "operation": str(operation)}
 
     def relabel_mask_volume(self, source_node, label, output_name="HRpQCT_relabelled", *, source_segment_id=None):
@@ -443,66 +525,85 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         trab_source = trab_mask_node or segmentation_source
         cort_source_node = cort_mask_node or segmentation_source
 
-        seg = self._mask_array_from_node(
-            bone_segmentation_node,
-            "seg",
-            reference_node=reference_node,
-            selected_segment_id=seg_segment_id,
-        )
-        masks = derive_compartment_mask_arrays(
-            full=self._mask_array_from_node(
-                full_source,
-                "full",
-                reference_node=reference_node,
-                selected_segment_id=full_segment_id,
-            ),
-            trab=self._mask_array_from_node(
-                trab_source,
-                "trab",
-                reference_node=reference_node,
-                selected_segment_id=trab_segment_id,
-            ),
-            cort=self._mask_array_from_node(
-                cort_source_node,
-                "cort",
-                reference_node=reference_node,
-                selected_segment_id=cort_segment_id,
-            ),
-            output_role="auto",
-        )
-        if seg.shape != masks["trab"].shape:
-            raise ValueError(
-                f"Bone segmentation shape {seg.shape} does not match compartment mask shape {masks['trab'].shape}."
+        shared_reference_node = None
+        if reference_node is None:
+            shared_reference_node = self._shared_segmentation_reference_node(
+                (bone_segmentation_node, "seg", seg_segment_id),
+                (full_source, "full", full_segment_id),
+                (trab_source, "trab", trab_segment_id),
+                (cort_source_node, "cort", cort_segment_id),
             )
-        cort_source = (
-            "cort_mask"
-            if cort_source_node is not None
-            else "derived_from_full_minus_trab"
-            if full_source is not None and trab_source is not None
-            else "derived_from_full_minus_trab"
+            reference_node = shared_reference_node
+        output_reference_node = reference_node or self._first_selected_node(
+            bone_segmentation_node,
+            trab_mask_node,
+            cort_mask_node,
+            full_mask_node,
         )
+        try:
+            seg = self._mask_array_from_node(
+                bone_segmentation_node,
+                "seg",
+                reference_node=reference_node,
+                selected_segment_id=seg_segment_id,
+            )
+            masks = derive_compartment_mask_arrays(
+                full=self._mask_array_from_node(
+                    full_source,
+                    "full",
+                    reference_node=reference_node,
+                    selected_segment_id=full_segment_id,
+                ),
+                trab=self._mask_array_from_node(
+                    trab_source,
+                    "trab",
+                    reference_node=reference_node,
+                    selected_segment_id=trab_segment_id,
+                ),
+                cort=self._mask_array_from_node(
+                    cort_source_node,
+                    "cort",
+                    reference_node=reference_node,
+                    selected_segment_id=cort_segment_id,
+                ),
+                output_role="auto",
+            )
+            if seg.shape != masks["trab"].shape:
+                raise ValueError(
+                    f"Bone segmentation shape {seg.shape} does not match compartment mask shape {masks['trab'].shape}."
+                )
+            cort_source = (
+                "cort_mask"
+                if cort_source_node is not None
+                else "derived_from_full_minus_trab"
+                if full_source is not None and trab_source is not None
+                else "derived_from_full_minus_trab"
+            )
 
-        material, counts = material_labels_from_arrays(
-            seg,
-            masks["trab"],
-            masks["cort"],
-            trab_label=int(trab_label),
-            cort_label=int(cort_label),
-            cort_source=cort_source,
-        )
-        if not np.any(material):
-            raise ValueError("The selected segmentation and compartment masks do not overlap.")
+            material, counts = material_labels_from_arrays(
+                seg,
+                masks["trab"],
+                masks["cort"],
+                trab_label=int(trab_label),
+                cort_label=int(cort_label),
+                cort_source=cort_source,
+            )
+            if not np.any(material):
+                raise ValueError("The selected segmentation and compartment masks do not overlap.")
 
-        node = self._labelmap_from_array(
-            material,
-            self._first_selected_node(bone_segmentation_node, trab_mask_node, cort_mask_node, full_mask_node),
-            output_name or "HRpQCT_HOM_material_labels",
-            attributes={
-                "HRpQCT.MaterialLabels": "HOM",
-                "HRpQCT.TrabLabel": int(trab_label),
-                "HRpQCT.CortLabel": int(cort_label),
-            },
-        )
+            node = self._labelmap_from_array(
+                material,
+                output_reference_node,
+                output_name or "HRpQCT_HOM_material_labels",
+                attributes={
+                    "HRpQCT.MaterialLabels": "HOM",
+                    "HRpQCT.TrabLabel": int(trab_label),
+                    "HRpQCT.CortLabel": int(cort_label),
+                },
+            )
+        finally:
+            if shared_reference_node is not None:
+                slicer.mrmlScene.RemoveNode(shared_reference_node)
         return node, counts
 
 

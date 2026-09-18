@@ -52,3 +52,14 @@ def test_label_algebra_exposes_segment_role_overrides_for_segmentation_nodes():
     assert "trab_segment_id=" in source
     assert "cort_segment_id=" in source
     assert "full_segment_id=" in source
+
+
+def test_label_algebra_uses_shared_geometry_when_exporting_multiple_segments():
+    source = MODULE.read_text()
+
+    assert "def _segmentation_reference_node(self, segmentation_node, roles_and_segment_ids):" in source
+    assert "reference_node = self._shared_segmentation_reference_node(" in source
+    assert "shared_reference_node = None" in source
+    assert "slicer.mrmlScene.RemoveNode(shared_reference_node)" in source
+    assert "segment_id = self._segment_id_for_role(" in source
+    assert "segment_ids.InsertNextValue(segment_id)" in source
