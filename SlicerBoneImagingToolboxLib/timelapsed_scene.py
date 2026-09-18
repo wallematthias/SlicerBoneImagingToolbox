@@ -7,6 +7,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class TimelapsedSceneNodeCandidate:
@@ -74,6 +76,32 @@ class TimelapsedSceneDiscovery:
     image_count: int = 0
     mask_count: int = 0
     matched_mask_count: int = 0
+
+
+def cropped_lps_geometry_to_scene_ijk_to_ras(
+    *,
+    fixed_scene_ijk_to_ras: Iterable[Iterable[float]],
+    fixed_lps_origin: Iterable[float],
+    cropped_lps_origin: Iterable[float],
+    spacing: Iterable[float],
+    direction_lps: Iterable[float],
+) -> list[list[float]]:
+    """Place a cropped LPS image inside a fixed scene node's RAS geometry."""
+    matrix = np.asarray([[float(v) for v in row] for row in fixed_scene_ijk_to_ras], dtype=float)
+    if matrix.shape != (4, 4):
+        raise ValueError("fixed_scene_ijk_to_ras must be a 4x4 matrix")
+
+    fixed_origin = np.asarray(tuple(float(v) for v in fixed_lps_origin), dtype=float)
+    cropped_origin = np.asarray(tuple(float(v) for v in cropped_lps_origin), dtype=float)
+    spacing_xyz = np.asarray(tuple(float(v) for v in spacing), dtype=float)
+    direction = np.asarray(tuple(float(v) for v in direction_lps), dtype=float).reshape(3, 3)
+
+    lps_step_matrix = direction @ np.diag(spacing_xyz)
+    cropped_offset_ijk = np.linalg.solve(lps_step_matrix, cropped_origin - fixed_origin)
+
+    cropped_matrix = matrix.copy()
+    cropped_matrix[:3, 3] = matrix[:3, 3] + matrix[:3, :3] @ cropped_offset_ijk
+    return [[float(value) for value in row] for row in cropped_matrix]
 
 
 def discover_timelapsed_scene_timepoints(

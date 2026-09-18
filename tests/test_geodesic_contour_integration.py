@@ -201,12 +201,28 @@ def test_label_algebra_module_owns_derive_label_tools():
     assert "create_boolean_mask_volume" in source
 
 
+def test_label_algebra_accepts_contouring_segmentation_nodes():
+    module = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "DeriveLabelsHRpQCT" / "DeriveLabelsHRpQCT.py"
+    source = module.read_text()
+
+    assert '"vtkMRMLSegmentationNode"' in source
+    assert "ExportSegmentsToLabelmapNode" in source
+    assert "_segment_id_for_role" in source
+    assert "_segment_tag_value(segment, \"HRpQCT.Role\")" in source
+    assert "scene_segment_matches_role" in source
+    assert "reference_node=reference_node" in source
+    assert "if node.IsA(\"vtkMRMLSegmentationNode\")" in source
+    assert "full_source = full_mask_node or segmentation_source" in source
+    assert "trab_source = trab_mask_node or segmentation_source" in source
+    assert "cort_source_node = cort_mask_node or segmentation_source" in source
+
+
 def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     source = PIPELINE_MODULE.read_text()
 
     assert "self.maskPeriostealContour = qt.QComboBox()" in source
     assert "self.maskPeriostealContour.addItem(\"geodesic_fracture\", \"geodesic_fracture\")" in source
-    assert "self.studyProfileCombo.currentIndexChanged.connect(self._on_apply_study_profile)" in source
+    assert "self.sceneProfileCombo.currentIndexChanged.connect(self._on_scene_profile_changed)" in source
     assert "Full/periosteal contour" in source
     assert "self.maskGeodesicThreshold" in source
     assert "self.maskGeodesicFillHoles" in source

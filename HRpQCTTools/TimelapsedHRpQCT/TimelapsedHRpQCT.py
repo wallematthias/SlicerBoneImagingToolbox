@@ -118,6 +118,7 @@ TimelapsedSceneNodeCandidate = _timelapsed_scene.TimelapsedSceneNodeCandidate
 TimelapsedSceneRoiSelection = _timelapsed_scene.TimelapsedSceneRoiSelection
 TimelapsedSceneTimepoint = _timelapsed_scene.TimelapsedSceneTimepoint
 build_timelapsed_scene_plan = _timelapsed_scene.build_timelapsed_scene_plan
+cropped_lps_geometry_to_scene_ijk_to_ras = _timelapsed_scene.cropped_lps_geometry_to_scene_ijk_to_ras
 discover_timelapsed_scene_timepoints = _timelapsed_scene.discover_timelapsed_scene_timepoints
 scene_segment_matches_role = _timelapsed_scene.scene_segment_matches_role
 timelapsed_scene_run_args = _timelapsed_scene.timelapsed_scene_run_args
@@ -7976,6 +7977,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         folder_item_id=None,
         create_full=True,
         activate_display=True,
+        scene_plan=None,
     ):
         try:
             ok, remodelling_node = self._load_volume_node(labelmap_path)
@@ -7988,12 +7990,57 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         remodelling_node.SetName(f"{segmentation_name}_full" if create_full else str(segmentation_name))
         remodelling_node.SetAttribute("TimelapsedHRpQCT.RemodellingFull", "1")
         remodelling_node.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(labelmap_path).resolve()))
+        if scene_plan is not None:
+            self._align_scene_remodelling_to_fixed_timepoint(remodelling_node, labelmap_path, scene_plan)
         self._style_remodelling_scalar_volume(remodelling_node, activate_display=activate_display)
         if folder_item_id is not None:
             self._place_node_in_folder(remodelling_node, folder_item_id)
         if remodelling_node is not None and activate_display:
             self._center_slices_on_node(remodelling_node, fit_to_bounds=True)
         return True
+
+    def _align_scene_remodelling_to_fixed_timepoint(self, remodelling_node, labelmap_path, plan):
+        ctx = self._parse_remodelling_source_context(str(labelmap_path))
+        fixed_session = str((ctx or {}).get("t0") or "").strip()
+        if not fixed_session:
+            return False
+        fixed_timepoint = None
+        for timepoint in getattr(plan, "timepoints", ()) or ():
+            if str(getattr(timepoint, "session_id", "")) == fixed_session:
+                fixed_timepoint = timepoint
+                break
+        if fixed_timepoint is None:
+            return False
+        fixed_scene_node = slicer.mrmlScene.GetNodeByID(str(getattr(fixed_timepoint, "image_node_id", "") or ""))
+        fixed_export_path = getattr(fixed_timepoint, "image_path", None)
+        if fixed_scene_node is None or fixed_export_path is None:
+            return False
+        try:
+            fixed_img = sitk.ReadImage(str(fixed_export_path))
+            cropped_img = sitk.ReadImage(str(labelmap_path))
+            fixed_matrix_vtk = vtk.vtkMatrix4x4()
+            fixed_scene_node.GetIJKToRASMatrix(fixed_matrix_vtk)
+            fixed_matrix = [
+                [fixed_matrix_vtk.GetElement(row, col) for col in range(4)]
+                for row in range(4)
+            ]
+            cropped_matrix = cropped_lps_geometry_to_scene_ijk_to_ras(
+                fixed_scene_ijk_to_ras=fixed_matrix,
+                fixed_lps_origin=fixed_img.GetOrigin(),
+                cropped_lps_origin=cropped_img.GetOrigin(),
+                spacing=fixed_img.GetSpacing(),
+                direction_lps=fixed_img.GetDirection(),
+            )
+            output_matrix = vtk.vtkMatrix4x4()
+            for row in range(4):
+                for col in range(4):
+                    output_matrix.SetElement(row, col, float(cropped_matrix[row][col]))
+            remodelling_node.SetIJKToRASMatrix(output_matrix)
+            remodelling_node.SetAttribute("TimelapsedHRpQCT.GeometryReferenceNodeID", fixed_scene_node.GetID())
+            return True
+        except Exception as exc:
+            self._show(f"[scene] could not align remodelling output to fixed scene geometry: {exc}")
+            return False
 
     def _center_slices_on_segmentation(self, seg_node):
         self._center_slices_on_node(seg_node, fit_to_bounds=True)
@@ -9023,6 +9070,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     folder_item_id=folder_item_id,
                     create_full=True,
                     activate_display=False,
+                    scene_plan=plan,
                 ):
                     loaded_remodelling += 1
             except Exception as exc:

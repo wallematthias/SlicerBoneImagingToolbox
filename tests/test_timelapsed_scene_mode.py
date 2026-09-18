@@ -9,6 +9,7 @@ from SlicerBoneImagingToolboxLib.timelapsed_scene import (
     TimelapsedSceneRoiSelection,
     TimelapsedSceneTimepoint,
     build_timelapsed_scene_plan,
+    cropped_lps_geometry_to_scene_ijk_to_ras,
     discover_timelapsed_scene_timepoints,
     scene_segment_matches_role,
     timelapsed_scene_run_args,
@@ -27,6 +28,32 @@ def _timelapsed_widget_method(method_name: str):
     namespace = {"Path": Path, "re": re}
     exec(f"def {method_name}" + textwrap.dedent(method_source), namespace)
     return namespace[method_name]
+
+
+def test_cropped_lps_geometry_is_placed_relative_to_scene_ras_matrix() -> None:
+    fixed_ijk_to_ras = [
+        [-0.082, 0.0, 0.0, -46.412],
+        [0.0, -0.082, 0.0, -38.130],
+        [0.0, 0.0, 0.082, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+    cropped = cropped_lps_geometry_to_scene_ijk_to_ras(
+        fixed_scene_ijk_to_ras=fixed_ijk_to_ras,
+        fixed_lps_origin=(46.412, 38.130, 0.0),
+        cropped_lps_origin=(46.822, 38.376, 0.164),
+        spacing=(0.082, 0.082, 0.082),
+        direction_lps=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+    )
+
+    assert cropped[0][3] == pytest.approx(-46.822)
+    assert cropped[1][3] == pytest.approx(-38.376)
+    assert cropped[2][3] == pytest.approx(0.164)
+    assert cropped[:3] != [
+        [-0.082, 0.0, 0.0, 46.822],
+        [0.0, -0.082, 0.0, 38.376],
+        [0.0, 0.0, 0.082, 0.164],
+    ]
 
 
 def test_timelapsed_module_exposes_scene_only_ui() -> None:
@@ -1281,6 +1308,27 @@ def test_remodelling_loadback_uses_slicer_loader_to_preserve_geometry() -> None:
     assert "sitk.GetArrayFromImage(remodelling_img)" not in load_remodelling
     assert "self._style_remodelling_scalar_volume(remodelling_node" in load_remodelling
     assert "remodelling_node.SetAttribute(\"TimelapsedHRpQCT.RemodellingSourcePath\"" in load_remodelling
+    assert "scene_plan=None" in load_remodelling
+    assert "self._align_scene_remodelling_to_fixed_timepoint(remodelling_node, labelmap_path, scene_plan)" in load_remodelling
+
+
+def test_scene_remodelling_loadback_aligns_to_fixed_scene_timepoint() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    align_helper = source.split("    def _align_scene_remodelling_to_fixed_timepoint", 1)[1].split("\n    def ", 1)[0]
+    load_outputs = source.split("    def _load_scene_run_outputs", 1)[1].split("\n    def ", 1)[0]
+
+    assert "cropped_lps_geometry_to_scene_ijk_to_ras" in source
+    assert "fixed_scene_node.GetIJKToRASMatrix" in align_helper
+    assert "fixed_lps_origin=fixed_img.GetOrigin()" in align_helper
+    assert "cropped_lps_origin=cropped_img.GetOrigin()" in align_helper
+    assert "remodelling_node.SetIJKToRASMatrix(output_matrix)" in align_helper
+    assert "scene_plan=plan" in load_outputs
 
 
 def test_interactive_preview_reuses_display_node_geometry() -> None:

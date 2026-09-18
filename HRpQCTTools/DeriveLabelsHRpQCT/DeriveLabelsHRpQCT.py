@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import qt
 import slicer
+import vtk
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -10,6 +11,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleLogic,
     ScriptedLoadableModuleTest,
 )
+from SlicerBoneImagingToolboxLib.timelapsed_scene import scene_segment_matches_role
 
 
 MODULE_VERSION = "0.1.0"
@@ -140,17 +142,95 @@ class DeriveLabelsHRpQCT(ScriptedLoadableModule):
 
 
 class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
-    def _mask_array_from_node(self, node):
+    def _mask_array_from_node(self, node, role=None, *, reference_node=None):
         if node is None:
             return None
+        if node.IsA("vtkMRMLSegmentationNode"):
+            labelmap_node = self._segmentation_node_to_labelmap(node, role, reference_node=reference_node)
+            try:
+                return np.asarray(slicer.util.arrayFromVolume(labelmap_node)) > 0
+            finally:
+                slicer.mrmlScene.RemoveNode(labelmap_node)
         return np.asarray(slicer.util.arrayFromVolume(node)) > 0
+
+    def _array_from_node(self, node, role=None, *, reference_node=None):
+        if node is None:
+            return None
+        if node.IsA("vtkMRMLSegmentationNode"):
+            labelmap_node = self._segmentation_node_to_labelmap(node, role, reference_node=reference_node)
+            try:
+                return np.asarray(slicer.util.arrayFromVolume(labelmap_node))
+            finally:
+                slicer.mrmlScene.RemoveNode(labelmap_node)
+        return np.asarray(slicer.util.arrayFromVolume(node))
+
+    def _segment_tag_value(self, segment, tag_name):
+        if segment is None or not hasattr(segment, "GetTag"):
+            return ""
+        try:
+            tag_value = vtk.mutable("")
+            if segment.GetTag(str(tag_name), tag_value):
+                if hasattr(tag_value, "get"):
+                    return str(tag_value.get())
+                return str(tag_value)
+            return ""
+        except TypeError:
+            return str(segment.GetTag(str(tag_name)) or "")
+
+    def _segment_id_for_role(self, segmentation_node, role):
+        if segmentation_node is None or not segmentation_node.IsA("vtkMRMLSegmentationNode"):
+            raise ValueError("Select a segmentation node.")
+        requested_role = str(role or "").strip()
+        segmentation = segmentation_node.GetSegmentation()
+        if segmentation.GetNumberOfSegments() == 1:
+            return segmentation.GetNthSegmentID(0)
+        for index in range(segmentation.GetNumberOfSegments()):
+            segment_id = segmentation.GetNthSegmentID(index)
+            segment = segmentation.GetSegment(segment_id)
+            segment_name = str(segment.GetName() if segment is not None else "")
+            segment_role = self._segment_tag_value(segment, "HRpQCT.Role")
+            if scene_segment_matches_role(segment_name, segment_role, requested_role):
+                return segment_id
+        raise ValueError(
+            f"Could not find a {requested_role or 'matching'} segment in {segmentation_node.GetName()}."
+        )
+
+    def _segmentation_node_to_labelmap(self, segmentation_node, role, *, reference_node=None):
+        segment_id = self._segment_id_for_role(segmentation_node, role)
+        labelmap_node = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLLabelMapVolumeNode",
+            f"{segmentation_node.GetName()}_{str(role or 'segment').replace(' ', '_')}",
+        )
+        segment_ids = vtk.vtkStringArray()
+        segment_ids.InsertNextValue(segment_id)
+        try:
+            if reference_node is not None and reference_node.IsA("vtkMRMLSegmentationNode"):
+                reference_node = None
+            extent_mode = getattr(slicer.vtkSlicerSegmentationsModuleLogic, "EXTENT_REFERENCE_GEOMETRY", None)
+            export_args = [segmentation_node, segment_ids, labelmap_node]
+            if reference_node is not None:
+                export_args.append(reference_node)
+            if reference_node is not None and extent_mode is not None:
+                export_args.append(extent_mode)
+            slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(*export_args)
+            return labelmap_node
+        except Exception:
+            slicer.mrmlScene.RemoveNode(labelmap_node)
+            raise
 
     def _labelmap_from_array(self, array, reference_node, name, *, attributes=None):
         if reference_node is None:
             raise ValueError("Select a reference labelmap.")
         node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", str(name).strip() or "HRpQCT_mask")
         slicer.util.updateVolumeFromArray(node, np.asarray(array))
-        node.CopyOrientation(reference_node)
+        if reference_node.IsA("vtkMRMLSegmentationNode"):
+            reference_labelmap = self._segmentation_node_to_labelmap(reference_node, "full")
+            try:
+                node.CopyOrientation(reference_labelmap)
+            finally:
+                slicer.mrmlScene.RemoveNode(reference_labelmap)
+        else:
+            node.CopyOrientation(reference_node)
         node.CreateDefaultDisplayNodes()
         for key, value in (attributes or {}).items():
             node.SetAttribute(str(key), str(value))
@@ -159,6 +239,12 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
     def _first_selected_node(self, *nodes):
         for node in nodes:
             if node is not None:
+                return node
+        return None
+
+    def _first_available_reference_node(self, *nodes):
+        for node in nodes:
+            if node is not None and not node.IsA("vtkMRMLSegmentationNode"):
                 return node
         return None
 
@@ -171,10 +257,11 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         output_role="auto",
         output_name="HRpQCT_derived_mask",
     ):
+        reference_node = self._first_available_reference_node(full_mask_node, trab_mask_node, cort_mask_node)
         masks = derive_compartment_mask_arrays(
-            full=self._mask_array_from_node(full_mask_node),
-            trab=self._mask_array_from_node(trab_mask_node),
-            cort=self._mask_array_from_node(cort_mask_node),
+            full=self._mask_array_from_node(full_mask_node, "full", reference_node=reference_node),
+            trab=self._mask_array_from_node(trab_mask_node, "trab", reference_node=reference_node),
+            cort=self._mask_array_from_node(cort_mask_node, "cort", reference_node=reference_node),
             output_role=output_role,
         )
         role = masks["derived_role"]
@@ -193,18 +280,19 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         return node, {"role": role, "voxels": int(np.count_nonzero(masks[role]))}
 
     def validate_compartment_masks(self, *, full_mask_node=None, trab_mask_node=None, cort_mask_node=None):
+        reference_node = self._first_available_reference_node(full_mask_node, trab_mask_node, cort_mask_node)
         return validate_compartment_mask_arrays(
-            full=self._mask_array_from_node(full_mask_node),
-            trab=self._mask_array_from_node(trab_mask_node),
-            cort=self._mask_array_from_node(cort_mask_node),
+            full=self._mask_array_from_node(full_mask_node, "full", reference_node=reference_node),
+            trab=self._mask_array_from_node(trab_mask_node, "trab", reference_node=reference_node),
+            cort=self._mask_array_from_node(cort_mask_node, "cort", reference_node=reference_node),
         )
 
     def create_boolean_mask_volume(self, mask_a_node, mask_b_node, operation, output_name="HRpQCT_mask_operation"):
         if mask_a_node is None or mask_b_node is None:
             raise ValueError("Select both input masks.")
         result = binary_mask_operation_arrays(
-            self._mask_array_from_node(mask_a_node),
-            self._mask_array_from_node(mask_b_node),
+            self._mask_array_from_node(mask_a_node, "full", reference_node=mask_b_node),
+            self._mask_array_from_node(mask_b_node, "full", reference_node=mask_a_node),
             operation,
         )
         node = self._labelmap_from_array(
@@ -218,7 +306,7 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
     def relabel_mask_volume(self, source_node, label, output_name="HRpQCT_relabelled"):
         if source_node is None:
             raise ValueError("Select a source mask.")
-        result = relabel_nonzero_array(slicer.util.arrayFromVolume(source_node), int(label))
+        result = relabel_nonzero_array(self._array_from_node(source_node, "full"), int(label))
         node = self._labelmap_from_array(
             result,
             source_node,
@@ -231,7 +319,7 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         counts = {}
         for role, node in nodes.items():
             if node is not None:
-                counts[role] = int(np.count_nonzero(slicer.util.arrayFromVolume(node)))
+                counts[role] = int(np.count_nonzero(self._array_from_node(node, role)))
         if not counts:
             raise ValueError("Select at least one mask.")
         return counts
@@ -250,11 +338,22 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
         if bone_segmentation_node is None:
             raise ValueError("Select a bone segmentation labelmap.")
 
-        seg = self._mask_array_from_node(bone_segmentation_node)
+        reference_node = self._first_available_reference_node(
+            bone_segmentation_node,
+            trab_mask_node,
+            cort_mask_node,
+            full_mask_node,
+        )
+        segmentation_source = bone_segmentation_node if bone_segmentation_node.IsA("vtkMRMLSegmentationNode") else None
+        full_source = full_mask_node or segmentation_source
+        trab_source = trab_mask_node or segmentation_source
+        cort_source_node = cort_mask_node or segmentation_source
+
+        seg = self._mask_array_from_node(bone_segmentation_node, "seg", reference_node=reference_node)
         masks = derive_compartment_mask_arrays(
-            full=self._mask_array_from_node(full_mask_node),
-            trab=self._mask_array_from_node(trab_mask_node),
-            cort=self._mask_array_from_node(cort_mask_node),
+            full=self._mask_array_from_node(full_source, "full", reference_node=reference_node),
+            trab=self._mask_array_from_node(trab_source, "trab", reference_node=reference_node),
+            cort=self._mask_array_from_node(cort_source_node, "cort", reference_node=reference_node),
             output_role="auto",
         )
         if seg.shape != masks["trab"].shape:
@@ -263,9 +362,9 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
             )
         cort_source = (
             "cort_mask"
-            if cort_mask_node is not None
+            if cort_source_node is not None
             else "derived_from_full_minus_trab"
-            if full_mask_node is not None and trab_mask_node is not None
+            if full_source is not None and trab_source is not None
             else "derived_from_full_minus_trab"
         )
 
@@ -306,7 +405,7 @@ class DeriveLabelsHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _labelmap_selector(self):
         selector = slicer.qMRMLNodeComboBox()
-        selector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode"]
+        selector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLScalarVolumeNode", "vtkMRMLSegmentationNode"]
         selector.selectNodeUponCreation = False
         selector.addEnabled = False
         selector.removeEnabled = False
