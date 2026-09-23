@@ -872,6 +872,7 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         return path
 
     def _resample_saved_scene_image_to_reference_node(self, path, reference_node, *, nearest=False):
+        """Align a saved scene image to a reference node, preserving values when only orientation differs."""
         if path is None or reference_node is None:
             return path
         path = Path(path)
@@ -889,6 +890,11 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 and np.allclose(image.GetDirection(), reference.GetDirection())
             ):
                 return path
+            if image.GetSize() == reference.GetSize() and np.allclose(image.GetSpacing(), reference.GetSpacing()):
+                aligned = sitk.GetImageFromArray(sitk.GetArrayFromImage(image))
+                aligned.CopyInformation(reference)
+                sitk.WriteImage(aligned, str(path))
+                return path
             interpolator = sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear
             resampled = sitk.Resample(
                 image,
@@ -904,6 +910,7 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
         return path
 
     def _align_saved_scene_image_to_reference_image(self, path, reference_path, *, nearest=False):
+        """Align a saved scene image to a reference image, preserving values when only orientation differs."""
         if path is None or reference_path is None:
             return path
         path = Path(path)
@@ -939,6 +946,24 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _align_saved_scene_scalar_to_reference_image(self, path, reference_path):
         return self._align_saved_scene_image_to_reference_image(path, reference_path, nearest=False)
+
+    def _save_scene_scalar_array_on_reference_image(self, node, path, reference_path):
+        """Save a scalar node's voxel array with reference geometry, without storage-layer resampling."""
+        if node is None:
+            return None
+        path = Path(path)
+        reference_path = Path(reference_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        array = np.asarray(slicer.util.arrayFromVolume(node))
+        image = sitk.GetImageFromArray(array.astype(np.float32, copy=False))
+        reference = sitk.ReadImage(str(reference_path))
+        if image.GetSize() != reference.GetSize():
+            raise RuntimeError(
+                f"Scene scalar {node.GetName()} has size {image.GetSize()} but reference has size {reference.GetSize()}."
+            )
+        image.CopyInformation(reference)
+        sitk.WriteImage(image, str(path))
+        return path
 
     def _refresh_scene_remodelling_role_controls(self):
         node = self.sceneRemodellingSelector.currentNode() if hasattr(self, "sceneRemodellingSelector") else None
@@ -1155,9 +1180,9 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             remodelling_node,
             input_dir / f"scene-row-{row + 1:02d}_remodelling.nii.gz",
         )
-        baseline_sed_path = self._save_scene_node(sed_node, input_dir / f"scene-row-{row + 1:02d}_sed.nii.gz")
-        baseline_sed_path = self._align_saved_scene_scalar_to_reference_image(
-            baseline_sed_path,
+        baseline_sed_path = self._save_scene_scalar_array_on_reference_image(
+            sed_node,
+            input_dir / f"scene-row-{row + 1:02d}_sed.nii.gz",
             remodelling_path,
         )
         analysis_mask_path = self._save_scene_analysis_mask(
@@ -1182,6 +1207,8 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             "full_mask_path": str(analysis_mask_path) if analysis_mask_path is not None else None,
             "baseline_sed_path": str(baseline_sed_path) if baseline_sed_path is not None else None,
             "run_root": str(run_root),
+            "remodelling_node_name": str(remodelling_node.GetName()),
+            "sed_node_name": str(sed_node.GetName()),
         }
 
     def run_scene(self):

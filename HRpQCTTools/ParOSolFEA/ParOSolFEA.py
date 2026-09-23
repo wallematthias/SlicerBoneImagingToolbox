@@ -3187,6 +3187,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         self._preprocessPreviewImageNode = None
         self._preprocessPreviewMaskNode = None
         self._preprocessPreviewMaterialNode = None
+        self._sceneResultReferenceNodeID = None
         super().__init__(parent)
 
     def _workflow_tab_page(self, title):
@@ -4427,6 +4428,29 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
 
     def _volume(self):
         return self.imageSelector.currentNode()
+
+    def _remember_scene_result_reference_node(self, node):
+        if node is None or _is_generated_parosol_node(node):
+            return
+        self._sceneResultReferenceNodeID = node.GetID()
+
+    def _scene_result_reference_node(self):
+        node_id = getattr(self, "_sceneResultReferenceNodeID", None)
+        if node_id:
+            node = slicer.mrmlScene.GetNodeByID(node_id)
+            if node is not None and node.GetImageData() is not None:
+                return node, None
+
+        stored = getattr(self, "_workflowReplaySourceInputs", None)
+        source_path = stored.get("image") if isinstance(stored, dict) else None
+        if source_path and Path(source_path).exists():
+            node = _load_volume_node(
+                str(source_path),
+                {"name": "ParOSol_scene_result_reference", "show": False},
+            )
+            if node is not None:
+                return node, node
+        return self._volume(), None
 
     def _current_input_storage_paths(self):
         return {
@@ -6664,6 +6688,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             return
         image_node = self.imageSelector.currentNode()
         if image_node is not None and not _is_generated_parosol_node(image_node):
+            self._remember_scene_result_reference_node(image_node)
             paths = self._current_input_storage_paths()
             if paths.get("image"):
                 self._workflowReplaySourceInputs = paths
@@ -12451,6 +12476,9 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
 
     def _load_selected_result_fields(self, output_dir):
         output_dir = Path(output_dir)
+        reference_node, temporary_reference_node = (
+            self._scene_result_reference_node()
+        )
         exported_field_names = _result_exported_field_names(output_dir)
         if exported_field_names:
             fields_to_load = _result_fields_from_filenames(exported_field_names)
@@ -12477,16 +12505,15 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             if not path.exists():
                 self._append_log(f"Selected output field not found: {path}\n")
                 continue
-            reference_node = self._volume()
-            path_to_load = _restore_cropped_field_to_reference_grid(path, reference_node)
+            path_to_load = _restore_field_to_reference_grid(path, reference_node)
             display_name = _result_field_display_name(field)
-            node = _load_volume_node(
-                str(path_to_load),
-                {"name": _result_field_node_name(field)},
+            node = _load_scalar_field_node_on_reference_geometry(
+                path_to_load,
+                reference_node,
+                _result_field_node_name(field),
             )
             if node is None:
                 continue
-            _copy_geometry_if_compatible(node, reference_node)
             _apply_result_scalar_display(node)
             if field in {"sed", "load_history_estimated_sed", "load_history_final_sed"}:
                 finite_positive = _positive_finite_volume_values(node)
@@ -12522,6 +12549,8 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             _activate_parosol_result_volume(preferred_nonlinear_node)
         elif preferred_load_history_node is not None:
             _activate_parosol_result_volume(preferred_load_history_node)
+        if temporary_reference_node is not None:
+            self.logic.remove_node(temporary_reference_node)
 
     def export_results_csv(self):
         output_dir = Path(self.outputDirectory.directory)
@@ -13448,6 +13477,7 @@ def _volume_file_shape(path):
 
 
 def _copy_geometry_if_compatible(node, reference_node):
+    """Put result fields in the reference orientation without resampling values."""
     if node is None or reference_node is None:
         return False
     node_image = node.GetImageData()
@@ -13466,66 +13496,63 @@ def _copy_geometry_if_compatible(node, reference_node):
     return True
 
 
-def _reference_grid_image(reference_node):
-    if reference_node is None:
-        return None
-    path_text = ""
+def _load_scalar_field_node_on_reference_geometry(path, reference_node, name):
+    """Load a scalar result field from its raw array, then copy reference geometry for display."""
     try:
-        fd, path_text = tempfile.mkstemp(suffix=".nii.gz", prefix="parosol_reference_grid_")
-        os.close(fd)
-        path = Path(path_text)
-        if not slicer.util.saveNode(reference_node, str(path)):
-            return None
-        return sitk.ReadImage(str(path))
+        image = sitk.ReadImage(str(path))
+        array = sitk.GetArrayFromImage(image).astype(np.float32, copy=False)
     except Exception:
-        return None
+        node = _load_volume_node(str(path), {"name": str(name)})
+        if node is not None:
+            _copy_geometry_if_compatible(node, reference_node)
+        return node
+
+    node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", str(name))
+    slicer.util.updateVolumeFromArray(node, array)
+    if reference_node is not None and _copy_geometry_if_compatible(node, reference_node):
+        pass
+    else:
+        spacing = image.GetSpacing()
+        node.SetSpacing(float(spacing[0]), float(spacing[1]), float(spacing[2]))
+        origin = image.GetOrigin()
+        node.SetOrigin(float(origin[0]), float(origin[1]), float(origin[2]))
+    node.Modified()
+    return node
+
+
+def _restore_field_to_reference_grid(field_path, reference_node):
+    """Restore a saved ParOSol field using its physical position on the input grid."""
+    if reference_node is None:
+        return Path(field_path)
+    reference_path_text = ""
+    try:
+        _prepare_parosol_py_runtime_import()
+        from parosol_py.images import restore_scalar_image_to_reference_grid
+
+        fd, reference_path_text = tempfile.mkstemp(
+            suffix=".nii.gz",
+            prefix="parosol_reference_grid_",
+        )
+        os.close(fd)
+        reference_path = Path(reference_path_text)
+        if not slicer.util.saveNode(reference_node, str(reference_path)):
+            return Path(field_path)
+
+        out_dir = Path(field_path).parent / "reference_grid"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return restore_scalar_image_to_reference_grid(
+            field_path,
+            reference_path,
+            output_path=out_dir / Path(field_path).name,
+        )
+    except Exception:
+        return Path(field_path)
     finally:
         try:
-            if path_text:
-                Path(path_text).unlink(missing_ok=True)
+            if reference_path_text:
+                Path(reference_path_text).unlink(missing_ok=True)
         except Exception:
             pass
-
-
-def _restore_cropped_field_to_reference_grid(field_path, reference_node):
-    """Return a full-grid copy when a ParOSol field was exported as a tight crop."""
-    if reference_node is None:
-        return Path(field_path)
-    try:
-        reference_array = np.asarray(slicer.util.arrayFromVolume(reference_node))
-        field_image = sitk.ReadImage(str(field_path))
-        field_array = sitk.GetArrayFromImage(field_image)
-    except Exception:
-        return Path(field_path)
-    if tuple(field_array.shape) == tuple(reference_array.shape):
-        return Path(field_path)
-    active = np.argwhere(reference_array != 0)
-    if active.size == 0:
-        return Path(field_path)
-    lower = active.min(axis=0)
-    upper = active.max(axis=0) + 1
-    bbox_shape = tuple(int(v) for v in (upper - lower))
-    if tuple(field_array.shape) != bbox_shape:
-        return Path(field_path)
-
-    restored = np.zeros(reference_array.shape, dtype=field_array.dtype)
-    z0, y0, x0 = (int(v) for v in lower)
-    z1, y1, x1 = (int(v) for v in upper)
-    restored[z0:z1, y0:y1, x0:x1] = field_array
-    restored_image = sitk.GetImageFromArray(restored)
-    reference_image = _reference_grid_image(reference_node)
-    if reference_image is not None and tuple(reference_image.GetSize()) == tuple(reversed(reference_array.shape)):
-        restored_image.CopyInformation(reference_image)
-    else:
-        restored_image.SetSpacing(field_image.GetSpacing())
-        restored_image.SetOrigin(field_image.GetOrigin())
-        restored_image.SetDirection(field_image.GetDirection())
-
-    out_dir = Path(field_path).parent / "reference_grid"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / Path(field_path).name
-    sitk.WriteImage(restored_image, str(out_path))
-    return out_path
 
 
 def _decode_process_output(raw):

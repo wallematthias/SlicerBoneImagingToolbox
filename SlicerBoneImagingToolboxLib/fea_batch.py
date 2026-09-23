@@ -87,6 +87,8 @@ def discover_fea_batch_cases(
     artifacts_by_key: dict[tuple[str, str, str], list[FEAArtifact]] = {}
 
     def add_artifact(key: tuple[str, str, str], artifact: FEAArtifact) -> None:
+        if not all(key):
+            return
         requested_subject = normalize_subject_id(subject_id) or ""
         requested_site = normalize_site(site) or ""
         requested_session = normalize_session_id(session_id) or ""
@@ -172,8 +174,33 @@ def discover_fea_batch_cases(
             artifacts=tuple(_sort_artifacts(artifacts)),
         )
         for key, artifacts in artifacts_by_key.items()
+        if _has_fea_case_anchor(artifacts)
     ]
     return sorted(cases, key=lambda case: case.key)
+
+
+def _has_fea_case_anchor(artifacts: Iterable[FEAArtifact]) -> bool:
+    direct_input_roles = {
+        "calibrated_image",
+        "density_image",
+        "material_labelmap",
+        "hom_ls_model",
+        "model_labelmap",
+        "labelmap",
+        "segmentation",
+        "raw_image",
+        "vertebra_mask",
+        "mask_full",
+        "mask",
+        "mask_cort",
+        "mask_trab",
+    }
+    for artifact in artifacts:
+        if artifact.role in direct_input_roles:
+            return True
+        if artifact.role == "image" and str(artifact.derivative or "").strip().lower() in {"", "calibration", "segmentation"}:
+            return True
+    return False
 
 
 def workflow_role_requirements(workflow: str) -> dict[str, FEAWorkflowRoleRequirement]:

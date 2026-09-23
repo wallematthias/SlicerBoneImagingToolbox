@@ -63,3 +63,17 @@ def test_label_algebra_uses_shared_geometry_when_exporting_multiple_segments():
     assert "slicer.mrmlScene.RemoveNode(shared_reference_node)" in source
     assert "segment_id = self._segment_id_for_role(" in source
     assert "segment_ids.InsertNextValue(segment_id)" in source
+
+
+def test_label_algebra_shared_segmentation_reference_uses_stored_image_geometry():
+    source = MODULE.read_text()
+    helper = source.split(
+        "    def _segmentation_reference_node(self, segmentation_node, roles_and_segment_ids):",
+        1,
+    )[1].split("\n    def ", 1)[0]
+
+    assert "GetReferenceImageGeometryParameterName" in helper
+    assert "GetConversionParameter" in helper
+    assert "EXTENT_REFERENCE_GEOMETRY" in helper
+    assert "None,\n                extent_mode," in helper
+    assert "does not retain reference image geometry" in helper

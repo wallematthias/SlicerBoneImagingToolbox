@@ -240,6 +240,18 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
             raise
 
     def _segmentation_reference_node(self, segmentation_node, roles_and_segment_ids):
+        segmentation = segmentation_node.GetSegmentation()
+        geometry_parameter_name = (
+            slicer.vtkSegmentationConverter.GetReferenceImageGeometryParameterName()
+        )
+        reference_geometry = segmentation.GetConversionParameter(
+            geometry_parameter_name
+        )
+        if not str(reference_geometry or "").strip():
+            raise ValueError(
+                f"Segmentation {segmentation_node.GetName()} does not retain reference image geometry. "
+                "Set its reference geometry from the associated scan before creating FEA labels."
+            )
         segment_ids = vtk.vtkStringArray()
         seen = set()
         for role, selected_segment_id in roles_and_segment_ids:
@@ -258,11 +270,18 @@ class DeriveLabelsHRpQCTLogic(ScriptedLoadableModuleLogic):
             f"{segmentation_node.GetName()}_label_algebra_reference_geometry",
         )
         try:
-            slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(
+            extent_mode = slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY
+            exported = slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(
                 segmentation_node,
                 segment_ids,
                 labelmap_node,
+                None,
+                extent_mode,
             )
+            if exported is False:
+                raise RuntimeError(
+                    f"Could not export {segmentation_node.GetName()} using its reference image geometry."
+                )
             return labelmap_node
         except Exception:
             slicer.mrmlScene.RemoveNode(labelmap_node)

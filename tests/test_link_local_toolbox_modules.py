@@ -6,11 +6,17 @@ import types
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "link_local_toolbox_modules.py"
+USE_CURRENT_SCRIPT_PATH = ROOT / "scripts" / "use_current_checkout_in_slicer.py"
 
 
 def _load_helper():
     sys.modules.setdefault("slicer", types.SimpleNamespace())
     return runpy.run_path(str(SCRIPT_PATH), run_name="link_local_toolbox_modules_test")
+
+
+def _load_use_current_helper():
+    sys.modules.setdefault("slicer", types.SimpleNamespace())
+    return runpy.run_path(str(USE_CURRENT_SCRIPT_PATH), run_name="use_current_checkout_test")
 
 
 def test_local_link_helper_removes_renamed_microarchitecture_module_path() -> None:
@@ -56,3 +62,29 @@ def test_local_link_helper_removes_standalone_module_extension_paths() -> None:
     active_paths = {str((ROOT / "HRpQCTTools" / "MotionScoreHRpQCT").resolve())}
 
     assert helper["_is_stale_toolbox_path"](stale_path, ROOT, active_paths)
+
+
+def test_use_current_checkout_helper_removes_sibling_toolbox_checkout_paths() -> None:
+    helper = _load_use_current_helper()
+    stale_path = (
+        ROOT.parent
+        / "SlicerBoneImagingToolbox-deep-learning-segmentation-scene"
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+    )
+    active_paths = {str((ROOT / "HRpQCTTools" / "TimelapsedHRpQCT").resolve())}
+
+    assert helper["_is_shadowing_toolbox_module"](stale_path, ROOT, active_paths)
+
+
+def test_use_current_checkout_helper_removes_extra_modules_from_sibling_toolbox_checkout() -> None:
+    helper = _load_use_current_helper()
+    stale_path = (
+        ROOT.parent
+        / "SlicerBoneImagingToolbox-deep-learning-segmentation-scene"
+        / "HRpQCTTools"
+        / "DeepLearningSegmentationHRpQCT"
+    )
+    active_paths = {str((ROOT / "HRpQCTTools" / "TimelapsedHRpQCT").resolve())}
+
+    assert helper["_is_shadowing_toolbox_module"](stale_path, ROOT, active_paths)

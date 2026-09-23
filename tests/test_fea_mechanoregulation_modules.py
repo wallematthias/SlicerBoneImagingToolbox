@@ -77,17 +77,54 @@ def test_parosol_module_contains_derivative_output_helpers() -> None:
     assert "_write_parosol_run_derivative_manifest(output_dir, **context)" in load_results_body
 
 
-def test_parosol_scene_field_loader_restores_tight_crops_to_reference_grid() -> None:
+def test_parosol_scene_field_loader_restores_fields_by_physical_position() -> None:
     source = PAROSOL_MODULE.read_text(encoding="utf-8")
-    helper_body = source.split("def _restore_cropped_field_to_reference_grid", 1)[1].split("\ndef ", 1)[0]
+    helper_body = source.split("def _restore_field_to_reference_grid", 1)[1].split("\ndef ", 1)[0]
     load_body = source.split("    def _load_selected_result_fields", 1)[1].split("\n    def ", 1)[0]
 
-    assert "active = np.argwhere(reference_array != 0)" in helper_body
-    assert "bbox_shape" in helper_body
-    assert "restored[z0:z1, y0:y1, x0:x1] = field_array" in helper_body
+    assert "active = np.argwhere(reference_array != 0)" not in source
+    assert "from parosol_py.images import restore_scalar_image_to_reference_grid" in helper_body
+    assert "restore_scalar_image_to_reference_grid(" in helper_body
     assert 'out_dir = Path(field_path).parent / "reference_grid"' in helper_body
-    assert "path_to_load = _restore_cropped_field_to_reference_grid(path, reference_node)" in load_body
+    assert "path_to_load = _restore_field_to_reference_grid(path, reference_node)" in load_body
     assert "Loaded {display_name} field on reference grid" in load_body
+
+
+def test_parosol_scene_field_loader_uses_original_scene_input_as_reference() -> None:
+    source = PAROSOL_MODULE.read_text(encoding="utf-8")
+    init_body = source.split(
+        "    def __init__(self, parent=None):", 1
+    )[1].split("\n    def ", 1)[0]
+    input_changed_body = source.split(
+        "    def _on_input_node_changed(self, *_args):", 1
+    )[1].split("\n    def ", 1)[0]
+    reference_body = source.split(
+        "    def _scene_result_reference_node(self):", 1
+    )[1].split("\n    def ", 1)[0]
+    load_body = source.split(
+        "    def _load_selected_result_fields", 1
+    )[1].split("\n    def ", 1)[0]
+
+    assert "self._sceneResultReferenceNodeID = None" in init_body
+    assert "self._remember_scene_result_reference_node(image_node)" in input_changed_body
+    assert "_sceneResultReferenceNodeID" in reference_body
+    assert "_workflowReplaySourceInputs" in reference_body
+    assert "reference_node, temporary_reference_node = (" in load_body
+    assert "self._scene_result_reference_node()" in load_body
+    assert "self.logic.remove_node(temporary_reference_node)" in load_body
+    assert "reference_node = self._volume()" not in load_body
+
+
+def test_parosol_scene_field_loader_keeps_index_aligned_result_fields_on_reference_geometry() -> None:
+    source = PAROSOL_MODULE.read_text(encoding="utf-8")
+    load_body = source.split("    def _load_selected_result_fields", 1)[1].split("\n    def ", 1)[0]
+    helper_body = source.split("def _load_scalar_field_node_on_reference_geometry", 1)[1].split("\ndef ", 1)[0]
+
+    assert "def _resample_field_to_reference_grid" not in source
+    assert "node = _load_scalar_field_node_on_reference_geometry(" in load_body
+    assert "sitk.GetArrayFromImage(image).astype(np.float32, copy=False)" in helper_body
+    assert "slicer.util.updateVolumeFromArray(node, array)" in helper_body
+    assert "_copy_geometry_if_compatible(node, reference_node)" in helper_body
 
 
 def test_mechanoregulation_scene_stages_inputs_on_remodelling_grid() -> None:
@@ -99,10 +136,22 @@ def test_mechanoregulation_scene_stages_inputs_on_remodelling_grid() -> None:
     assert "sitk.Resample(" in helper_body
     assert "sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear" in helper_body
     assert "saved_path = self._resample_saved_scene_image_to_reference_node(" in source
-    assert "baseline_sed_path = self._align_saved_scene_scalar_to_reference_image(" in stage_body
+    assert "def _save_scene_scalar_array_on_reference_image" in source
+    assert "slicer.util.arrayFromVolume(node)" in source
+    assert "image.CopyInformation(reference)" in source
+    assert "baseline_sed_path = self._save_scene_scalar_array_on_reference_image(" in stage_body
+    assert "baseline_sed_path = self._align_saved_scene_scalar_to_reference_image(" not in stage_body
     assert "baseline_sed_path" in stage_body
     assert "remodelling_path" in stage_body
     assert "reference_node=remodelling_node" in stage_body
+
+
+def test_mechanoregulation_scene_alignment_preserves_index_aligned_values_when_size_and_spacing_match() -> None:
+    source = MECHREG_MODULE.read_text(encoding="utf-8")
+    helper_body = source.split("def _align_saved_scene_image_to_reference_image", 1)[1].split("\n    def ", 1)[0]
+
+    assert "aligned.CopyInformation(reference)" in helper_body
+    assert "sitk.Resample(" in helper_body
 
 
 def test_parosol_fea_manifest_writer_merges_existing_records() -> None:
@@ -291,7 +340,7 @@ def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api()
     assert 'mask_path=None if is_surface_events else staged.get("full_mask_path")' in source
     assert "def _event_display_mask_array" in source
     assert "events[~mask_array] = 0" in source
-    assert "profile = \"standard\"" in source
+    assert "profile = \"standard\"" in run_scene_body
 
 
 def test_mechanoregulation_scene_mode_consumes_loaded_parosol_outputs_without_fea_generation() -> None:
@@ -305,7 +354,7 @@ def test_mechanoregulation_scene_mode_consumes_loaded_parosol_outputs_without_fe
     assert 'scene_inputs.addRow("Mask segment", self.sceneAnalysisMaskSegmentCombo)' in scene_body
     assert 'controls.addRow("Bootstraps", self.sceneBootstrapSpinBox)' in scene_body
     assert 'controls.addRow("Profile", self.sceneProfileCombo)' not in scene_body
-    assert "baseline_sed_path = self._save_scene_node(sed_node" in stage_body
+    assert "baseline_sed_path = self._save_scene_scalar_array_on_reference_image(" in stage_body
     assert "analysis_mask_path = self._save_scene_analysis_mask(" in stage_body
     assert "no analysis mask selected; using whole remodelling image" in stage_body
     assert "using analysis mask:" in stage_body

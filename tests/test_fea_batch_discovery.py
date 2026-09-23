@@ -171,8 +171,7 @@ def test_measurement_derivative_maps_are_not_fea_model_images(tmp_path: Path) ->
 
     cases = discover_fea_batch_cases(tmp_path)
 
-    assert len(cases) == 1
-    assert cases[0].artifact_options("image") == []
+    assert cases == []
 
 
 def test_workflow_role_requirements_keep_profile_inputs_general() -> None:
@@ -249,9 +248,7 @@ def test_legacy_common_region_files_are_masks_not_candidate_images(tmp_path: Pat
 
     cases = discover_fea_batch_cases(tmp_path)
 
-    assert len(cases) == 1
-    assert cases[0].artifact_options("image") == []
-    assert cases[0].artifact_options("mask") == [str(common)]
+    assert cases == []
     assert build_parosol_case_commands(tmp_path, cases, workflow="XtremeCTII") == []
 
 
@@ -304,9 +301,38 @@ def test_remodelling_maps_are_not_candidate_fea_images(tmp_path: Path) -> None:
 
     cases = discover_fea_batch_cases(tmp_path)
 
-    assert len(cases) == 1
-    assert cases[0].artifact_options("image") == []
+    assert cases == []
     assert build_parosol_case_commands(tmp_path, cases, workflow="XtremeCTII") == []
+
+
+def test_sessionless_analysis_outputs_do_not_create_fea_cases(tmp_path: Path) -> None:
+    """Subject-level trajectory outputs must not become empty-session FEA rows."""
+    analysis = tmp_path / "derivatives" / "Timelapse" / "sub-001" / "xct" / "analysis"
+    analysis.mkdir(parents=True)
+    (analysis / "sub-001_voi-radiusleft_trajectory_metrics.csv").write_text("metric\n", encoding="utf-8")
+    common = analysis / "common_regions" / "sub-001_voi-radiusleft_desc-full_common-alltimepoints.nii.gz"
+    common.parent.mkdir(parents=True)
+    common.write_text("common", encoding="utf-8")
+
+    assert discover_fea_batch_cases(tmp_path) == []
+
+
+def test_mechanoregulation_outputs_do_not_create_fea_cases(tmp_path: Path) -> None:
+    """Pairwise analysis results with t0/t1 tokens are outputs, not FEA input sessions."""
+    output = (
+        tmp_path
+        / "derivatives"
+        / "Mechanoregulation"
+        / "sub-001"
+        / "xct"
+        / "runs"
+        / "sub-001_voi-radiusleft_t0-001_t1-002"
+        / "sub-001_voi-radiusleft_t0-001_t1-002_roi-full_surface-events.nii.gz"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_text("events", encoding="utf-8")
+
+    assert discover_fea_batch_cases(tmp_path) == []
 
 
 def test_xtremect_batch_requires_existing_material_labelmap(tmp_path: Path) -> None:

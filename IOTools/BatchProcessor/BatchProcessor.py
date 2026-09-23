@@ -114,6 +114,7 @@ from slicer.ScriptedLoadableModule import (  # noqa: E402
 
 
 MODULE_VERSION = "0.1.0"
+_BONE_CONTOUR_OUTPUT_ROLES = frozenset({"segmentation", "full", "trab", "cort", "material_labelmap"})
 TOOL_PROFILES = {
     "bone_contouring": (
         ("XtremeCT I", "XtremeCTI", False),
@@ -905,8 +906,12 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         expected_paths: list[Path] = []
         for roi in available_case_rois(case):
             outputs = case_outputs(case, roi=roi)
-            for key in ("csv", "curves", "schulte_curves", "summary"):
-                expected_paths.append(Path(outputs[key]))
+            required_keys = ("csv", "curves", "schulte_curves", "summary")
+            if any(not outputs.get(key) for key in required_keys):
+                return []
+            expected_paths.extend(Path(outputs[key]) for key in required_keys)
+            if outputs.get("surface_events"):
+                expected_paths.append(Path(outputs["surface_events"]))
         if not expected_paths or not all(path.exists() for path in expected_paths):
             return []
         return expected_paths
@@ -1463,6 +1468,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             return self._timelapse_output_paths_for_row(root, row)
         if tool == "mask_label_algebra":
             return [str(path) for path in self._imported_contour_paths_for_row(root, row)]
+        if tool == "bone_contouring":
+            return [str(path) for path in self._bone_contour_paths_for_row(root, row)]
         if tool == "fea":
             return [str(path) for path in self._fea_output_paths_for_row(root, row)]
         if tool == "mechanoregulation":
@@ -1494,6 +1501,19 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 continue
             records.append(artifact)
         return sorted({Path(artifact.path) for artifact in records}, key=lambda path: path.name)
+
+    @staticmethod
+    def _bone_contour_paths_for_row(root: Path, row: dict) -> list[Path]:
+        key = BatchProcessorLogic._row_case_key(row)
+        if key is None:
+            return []
+        available = (
+            *discover_derivative_artifacts(root, "IPLContours"),
+            *discover_derivative_artifacts(root, "ImportedContours"),
+            *discover_derivative_artifacts(root, "BoneContours"),
+        )
+        selected = preferred_contours(available, key)
+        return sorted({Path(artifact.path) for artifact in selected.selected.values()}, key=lambda path: path.name)
 
     def common_region_paths_for_row(self, dataset_root, row: dict) -> list[str]:
         """Return native common-region masks matching one registered row."""
@@ -1532,6 +1552,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             f"{case_id}_roi-*_conditional_curves.png",
             f"{case_id}_roi-*_schulte_binned_curves.png",
             f"{case_id}_roi-*_mechanoregulation_summary.json",
+            f"{case_id}_roi-*_surface-events.nii.gz",
         ):
             matches = sorted(base.glob(pattern))
             if not matches:
@@ -2072,11 +2093,15 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         status_by_key = {}
         for image in image_records:
             contours = preferred_contours(contour_artifacts, image.key)
+            case_status_outputs = status_outputs
+            if tool == "bone_contouring":
+                available_roles = set(contours.selected)
+                case_status_outputs = tuple(contours.selected.values()) if _BONE_CONTOUR_OUTPUT_ROLES <= available_roles else ()
             status_by_key[image.key] = prerequisite_status(
                 image,
                 contours,
                 required_roles=required_roles,
-                existing_outputs=status_outputs,
+                existing_outputs=case_status_outputs,
             )
         if self.profile_groups_timepoints(tool, profile):
             grouped = {}
@@ -2313,7 +2338,11 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 if not row.get("voidspace_mask_path"):
                     row["action"] = "Missing"
                     row["status"] = "Missing voidspace"
-            row_outputs = outputs_by_key.get(record.key, [])
+            row_outputs = (
+                list(contours.selected.values())
+                if tool == "bone_contouring"
+                else outputs_by_key.get(record.key, [])
+            )
             has_measurements_output = any(self._is_measurement_output_for_tool(tool, artifact) for artifact in row_outputs)
             output_paths = [str(artifact.path) for artifact in row_outputs]
             if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone" and has_measurements_output:
@@ -3298,11 +3327,14 @@ print(json.dumps({"cases": rows}, sort_keys=True))
 
     def _queue_row(self, row_index):
         queued_any = False
-        queued_indices = self._queued_row_indices()
+        queued_keys = self._queued_job_keys()
         for child_index in self._row_indices_for_group_action(row_index):
-            if child_index in queued_indices:
+            job = self._batch_job_for_row(child_index)
+            job_key = self._batch_job_key(job)
+            if job_key in queued_keys:
                 continue
-            self._batchQueue.append(self._batch_job_for_row(child_index))
+            self._batchQueue.append(job)
+            queued_keys.add(job_key)
             self._set_row_status(child_index, "Queued")
             queued_any = True
         if not queued_any:
@@ -3315,17 +3347,19 @@ print(json.dumps({"cases": rows}, sort_keys=True))
 
     def _queue_all_rows(self):
         queued = 0
-        queued_indices = self._queued_row_indices()
+        queued_keys = self._queued_job_keys()
         for row_index, row in enumerate(self._batchRows):
             if self._effective_row_action(row) != "Run":
                 continue
             queued_for_row = 0
             for child_index in self._row_indices_for_group_action(row_index):
-                if child_index in queued_indices:
+                job = self._batch_job_for_row(child_index)
+                job_key = self._batch_job_key(job)
+                if job_key in queued_keys:
                     continue
-                self._batchQueue.append(self._batch_job_for_row(child_index))
+                self._batchQueue.append(job)
                 self._set_row_status(child_index, "Queued")
-                queued_indices.add(child_index)
+                queued_keys.add(job_key)
                 queued_for_row += 1
             if queued_for_row == 0:
                 continue
@@ -3338,14 +3372,19 @@ print(json.dumps({"cases": rows}, sort_keys=True))
     def _has_active_batch(self):
         return bool(self._batchProcess is not None or self._batchQueue)
 
-    def _queued_row_indices(self):
-        indices = []
-        for job in self._batchQueue:
-            if isinstance(job, dict):
-                indices.append(int(job.get("row_index", -1)))
-            else:
-                indices.append(int(job))
-        return set(indices)
+    def _batch_job_key(self, job):
+        job = dict(job or {})
+        return (
+            str(job.get("tool") or ""),
+            str(job.get("profile") or ""),
+            str(job.get("backend") or ""),
+            str(job.get("local_root") or ""),
+            str(job.get("remote_root") or ""),
+            self._row_identity(job.get("row") or {}),
+        )
+
+    def _queued_job_keys(self):
+        return {self._batch_job_key(job) for job in self._batchQueue}
 
     def _batch_job_for_row(self, row_index):
         row_index = int(row_index)
@@ -4349,7 +4388,7 @@ print(str(csv_path))
                 if not success or node is None:
                     continue
                 if role == "sed":
-                    self._style_fea_volume(node, path)
+                    self._style_fea_volume(node, path, force=True)
                     sed_node = node
                 self._put_node_in_subject_hierarchy_folder(node, folder_name)
                 loaded += 1
@@ -4383,7 +4422,13 @@ print(str(csv_path))
             )
             if same_grid:
                 return sed_path
-            if sed_image.GetSize() == reference.GetSize() and sed_image.GetSpacing() == reference.GetSpacing():
+            same_sampling = sed_image.GetSize() == reference.GetSize() and np.allclose(
+                sed_image.GetSpacing(),
+                reference.GetSpacing(),
+                rtol=1e-4,
+                atol=1e-6,
+            )
+            if same_sampling:
                 aligned = sitk.GetImageFromArray(sitk.GetArrayFromImage(sed_image).astype(np.float32, copy=False))
                 aligned.CopyInformation(reference)
             else:
@@ -4792,10 +4837,10 @@ print(str(csv_path))
                     pass
 
     @staticmethod
-    def _style_fea_volume(node, path):
+    def _style_fea_volume(node, path, *, force=False):
         if node is None:
             return
-        if "_map-sed" not in Path(path).name.lower() and Path(path).name.lower() != "sed.nii.gz":
+        if not force and "_map-sed" not in Path(path).name.lower() and Path(path).name.lower() != "sed.nii.gz":
             return
         try:
             node.CreateDefaultDisplayNodes()

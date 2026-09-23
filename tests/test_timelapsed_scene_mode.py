@@ -449,6 +449,27 @@ def test_timelapsed_batch_loaded_remodelling_populates_current_comparison_from_s
     assert "def _metric_rows_have_finite_fractions" in source
 
 
+def test_timelapsed_loaded_remodelling_syncs_analysis_controls_from_source_context() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "def _apply_remodelling_source_context_to_analysis_controls" in source
+    helper = source.split("    def _apply_remodelling_source_context_to_analysis_controls", 1)[1].split("\n    def ", 1)[0]
+    assert 'ctx.get("threshold")' in helper
+    assert 'ctx.get("cluster")' in helper
+    assert "self._set_analysis_threshold_value(" in helper
+    assert "self._set_analysis_cluster_value(" in helper
+    load_selected = source.split("    def _on_load_selected", 1)[1].split("\n    def ", 1)[0]
+    assert "self._apply_remodelling_source_context_to_analysis_controls(ctx)" in load_selected
+    selection_changed = source.split("    def _on_remodelling_selection_changed", 1)[1].split("\n    def ", 1)[0]
+    assert "self._apply_remodelling_source_context_to_analysis_controls(ctx)" in selection_changed
+
+
 def test_timelapsed_analysis_options_are_positioned_below_active_profile() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
@@ -556,7 +577,7 @@ def test_timelapsed_scene_mask_group_selection_populates_matching_roles() -> Non
     assert "lambda _node=None, selector=selector: self._on_scene_mask_source_changed(selector)" in selector
     assert "timepoint_index = self._scene_timepoint_index_for_mask_source_selector(selector)" in changed
     assert "self._apply_scene_detected_roles_for_timepoint(timepoint_index, source_node)" in changed
-    assert 'for role in ("registration_roi", "segmentation", "roi1", "roi2", "roi3"):' in assign
+    assert 'for role in ("registration_roi", "segmentation", "full", "trab", "cort"):' in assign
     assert 'lookup_role = "full" if self._normalize_scene_role_name(role) == "registration_roi" else role' in assign
     assert "segment_id = self._scene_segment_id_for_node_role(source_node_id, lookup_role)" in assign
     assert "self._set_scene_mask_row_node(role_row, column, source_node_id, self.sceneRoiTable, role=role, segment_id=segment_id)" in assign
@@ -631,6 +652,64 @@ def test_timelapsed_scene_profile_change_applies_profile_controls_directly() -> 
     assert "if self._timelapsed_scene_mode_selected() and self._qt_object_alive(scene_combo):" in selected_config
     assert "data = self._combo_current_data_safe(scene_combo)" in selected_config
     assert "studyProfileCombo" not in selected_config
+
+
+def test_timelapsed_scene_requires_segmentation_for_bone_denominator_profiles() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "def _scene_analysis_fraction_denominator" in source
+    assert "def _validate_scene_analysis_segmentation_inputs" in source
+    validate = source.split("    def _validate_scene_analysis_segmentation_inputs", 1)[1].split("\n    def ", 1)[0]
+    assert '"baseline_bone"' in validate
+    assert '"bone_union"' in validate
+    assert '"mean_bone"' in validate
+    assert "timepoint.seg_mask_path" in validate
+    assert "raise ValueError(" in validate
+    run_scene = source.split("    def _on_run_scene_pipeline", 1)[1].split("\n    def ", 1)[0]
+    assert "self._validate_scene_analysis_segmentation_inputs(plan)" in run_scene
+
+
+def test_timelapsed_scene_uses_semantic_default_roi_roles_at_source() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+
+    role_at_row = source.split("    def _scene_role_at_row", 1)[1].split("\n    def ", 1)[0]
+    assert "role_data = self._normalize_scene_role_name(role)" in role_at_row
+    assert "return self._normalize_scene_role_name(item.text())" in role_at_row
+    role_row_index = source.split("    def _scene_role_row_index", 1)[1].split("\n    def ", 1)[0]
+    assert "normalized = self._normalize_scene_role_name(role)" in role_row_index
+    populate = source.split("    def _populate_scene_roi_rows_from_timepoints", 1)[1].split("\n    def ", 1)[0]
+    assert populate.index('("full", "full_mask_node_id")') < populate.index('("trab", "trab_mask_node_id")')
+    assert populate.index('("trab", "trab_mask_node_id")') < populate.index('("cort", "cort_mask_node_id")')
+    assert '("trab", "trab_mask_node_id")' in populate
+    assert '("cort", "cort_mask_node_id")' in populate
+    assert '("full", "full_mask_node_id")' in populate
+    assert '("roi1", "full_mask_node_id")' not in populate
+    assert '("roi2", "trab_mask_node_id")' not in populate
+    assert '("roi3", "cort_mask_node_id")' not in populate
+    roi_selections = source.split("    def _scene_roi_selections", 1)[1].split("\n    def ", 1)[0]
+    assert "TimelapsedSceneRoiSelection(" in roi_selections
+    assert "role=role" in roi_selections
+    requested_roles = source.split("    def _scene_requested_mask_roles", 1)[1].split("\n    def ", 1)[0]
+    assert "self._scene_roi_selections()" in requested_roles
+    assert "roi.role" in requested_roles
+    assert '"full": 0' in requested_roles
+    assert '"trab": 1' in requested_roles
+    assert '"cort": 2' in requested_roles
+    scene_settings = source.split("    def _scene_settings_override", 1)[1].split("\n    def ", 1)[0]
+    assert 'masks_cfg["roles"] = self._scene_requested_mask_roles()' in scene_settings
+    assert 'analysis_cfg["compartments"] = self._scene_analysis_compartments()' in scene_settings
 
 
 def test_timelapsed_scene_role_status_updates_when_roi_selector_changes() -> None:
@@ -794,9 +873,10 @@ def test_timelapsed_scene_layout_matches_batch_concepts() -> None:
     assert "self._scene_role_is_complete(row)" not in source
     assert "self.sceneRoiTable.setRowHidden(row, hidden)" not in source
     assert 'self._scene_role_label(role)' in source
-    assert '"roi1": "full"' in source
-    assert '"roi2": "trab"' in source
-    assert '"roi3": "cort"' in source
+    role_label = source.split("    def _scene_role_label", 1)[1].split("\n    def ", 1)[0]
+    assert '"full": "full"' in role_label
+    assert '"trab": "trab"' in role_label
+    assert '"cort": "cort"' in role_label
     assert "if self._scene_role_is_analysis_roi(role):" in source
     assert "return self._normalize_scene_role_name(item.text())" in source
     assert 'sceneActionBox = qt.QGroupBox("Pipeline")' in scene_ui
@@ -911,9 +991,9 @@ def test_timelapsed_scene_tables_display_named_default_rois() -> None:
     assert "table_labels = self._scene_role_display_labels()" in display_name
     assert "if normalized in table_labels:" in display_name
     assert "return table_labels[normalized]" in display_name
-    assert '"roi1": "full"' in display_name
-    assert '"roi2": "trab"' in display_name
-    assert '"roi3": "cort"' in display_name
+    assert '"roi1": "full"' not in display_name
+    assert '"roi2": "trab"' not in display_name
+    assert '"roi3": "cort"' not in display_name
     assert "self._scene_display_compartment_name(metric_row.get(\"compartment\", \"full\"))" in source
     assert "self._scene_display_compartment_name(compartment)" in source
 
@@ -1504,6 +1584,27 @@ def test_scene_mask_loadback_respects_selected_roi_roles() -> None:
     assert "continue" in load_masks
 
 
+def test_scene_loadback_groups_common_region_masks_in_one_hidden_segmentation() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    helper = source.split("    def _load_scene_common_region_segmentation", 1)[1].split("\n    def ", 1)[0]
+    loadback = source.split("    def _load_scene_run_outputs", 1)[1].split("\n    def ", 1)[0]
+    segmentation_loader = source.split("    def _load_masks_as_segmentation", 1)[1].split("\n\n\nclass ", 1)[0]
+
+    assert 'roles = ("full", "trab", "cort")' in helper
+    assert 'f"_desc-{role}_common-alltimepoints"' in helper
+    assert "self._load_masks_as_segmentation(" in helper
+    assert "visible=False" in helper
+    assert "self._load_scene_common_region_segmentation(plan, folder_item_id)" in loadback
+    assert 'role_order = ("full", "trab", "cort", "regmask")' in segmentation_loader
+    assert "display.SetVisibility(bool(visible))" in segmentation_loader
+
+
 def test_scene_cleans_generated_nonlinear_transform_nodes_before_discovery_and_loadback() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
@@ -1687,7 +1788,7 @@ def test_timelapsed_scene_auto_role_mapping_uses_full_segment_for_registration_r
     source = module_path.read_text(encoding="utf-8")
     auto_role_block = source.split("    def _apply_scene_detected_roles_for_timepoint", 1)[1].split("\n    def ", 1)[0]
 
-    assert '"registration_roi", "segmentation", "roi1", "roi2", "roi3"' in auto_role_block
+    assert '"registration_roi", "segmentation", "full", "trab", "cort"' in auto_role_block
     assert 'lookup_role = "full" if self._normalize_scene_role_name(role) == "registration_roi" else role' in auto_role_block
     assert "self._scene_segment_id_for_node_role(source_node_id, lookup_role)" in auto_role_block
     assert "if not segment_id and lookup_role != role:" in auto_role_block
@@ -1828,6 +1929,31 @@ def test_timelapsed_scene_plan_separates_registration_and_analysis_masks(tmp_pat
     assert plan.timepoints[0].reg_mask_path.name == "sub-SAMPLE001_ses-1_site-tibia_regmask.nii.gz"
     assert plan.rois[0].paths[0].name == "sub-SAMPLE001_ses-1_site-tibia_mask-full.nii.gz"
     assert plan.rois[1].paths[1].name == "sub-SAMPLE001_ses-2_site-tibia_mask-roi_medial.nii.gz"
+
+
+def test_timelapsed_scene_plan_preserves_custom_roi_roles(tmp_path: Path) -> None:
+    plan = build_timelapsed_scene_plan(
+        results_root=tmp_path,
+        subject_id="SAMPLE001",
+        site="radius",
+        timepoints=[
+            TimelapsedSceneTimepoint(session_id="ses-1", image_node_id="v1"),
+            TimelapsedSceneTimepoint(session_id="ses-2", image_node_id="v2"),
+        ],
+        rois=[
+            TimelapsedSceneRoiSelection(role="roi1", node_ids=("full1", "full2"), policies=("node", "node")),
+            TimelapsedSceneRoiSelection(role="roi2", node_ids=("trab1", "trab2"), policies=("node", "node")),
+            TimelapsedSceneRoiSelection(role="roi3", node_ids=("cort1", "cort2"), policies=("node", "node")),
+        ],
+        run_id="scene-test",
+    )
+
+    assert [roi.role for roi in plan.rois] == ["roi1", "roi2", "roi3"]
+    assert [roi.paths[0].name for roi in plan.rois] == [
+        "sub-SAMPLE001_ses-1_site-radius_mask-roi1.nii.gz",
+        "sub-SAMPLE001_ses-1_site-radius_mask-roi2.nii.gz",
+        "sub-SAMPLE001_ses-1_site-radius_mask-roi3.nii.gz",
+    ]
 
 
 def test_scene_discovery_ignores_generated_mask_loadback() -> None:

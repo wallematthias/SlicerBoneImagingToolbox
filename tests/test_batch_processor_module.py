@@ -335,7 +335,76 @@ def test_batch_processor_fea_and_mechanoregulation_use_low_blue_high_red_sed_col
     assert "vtkMRMLColorTableNodeFileColdToHotRainbow.txt" not in source
     assert "abs(4.0 * t - 3.0)" in source
     assert "abs(4.0 * t - 1.0)" in source
-    assert 'if role == "sed":\n                    self._style_fea_volume(node, path)' in source
+    assert 'if role == "sed":\n                    self._style_fea_volume(node, path, force=True)' in source
+
+
+def test_batch_mechanoregulation_forces_sed_colormap_for_aligned_display_path(monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+
+    class DisplayNode:
+        color_node_id = None
+
+        def SetAndObserveColorNodeID(self, value):
+            self.color_node_id = value
+
+        def AutoWindowLevelOn(self):
+            pass
+
+        def AutoThresholdOff(self):
+            pass
+
+    class VolumeNode:
+        def __init__(self):
+            self.display = DisplayNode()
+
+        def CreateDefaultDisplayNodes(self):
+            pass
+
+        def GetDisplayNode(self):
+            return self.display
+
+    node = VolumeNode()
+    color_node = types.SimpleNamespace(GetID=lambda: "sed-color")
+    monkeypatch.setattr(module.BatchProcessorWidget, "_fea_sed_color_node", staticmethod(lambda: color_node))
+
+    module.BatchProcessorWidget._style_fea_volume(
+        node,
+        Path("surface-events_sed_on_events_grid.nii.gz"),
+        force=True,
+    )
+
+    assert node.display.color_node_id == "sed-color"
+
+
+def test_batch_mechanoregulation_display_preserves_index_aligned_sed_with_spacing_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    sitk = pytest.importorskip("SimpleITK")
+    module = _import_batch_processor_module(monkeypatch)
+    sed_path = tmp_path / "sed.nii.gz"
+    events_path = tmp_path / "surface-events.nii.gz"
+    sed = sitk.Image(4, 4, 4, sitk.sitkFloat32)
+    sed.SetSpacing((0.0606999993, 0.0606999993, 0.0606999993))
+    sed.SetOrigin((-566.0, -465.0, 0.0))
+    sed.SetDirection((-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0))
+    sed[1, 1, 1] = 7.0
+    events = sitk.Image(4, 4, 4, sitk.sitkUInt8)
+    events.SetSpacing((0.0606996529, 0.0606996529, 0.0606964305))
+    events.SetOrigin((46.412, 38.130, 0.0))
+    sitk.WriteImage(sed, str(sed_path))
+    sitk.WriteImage(events, str(events_path))
+    widget = object.__new__(module.BatchProcessorWidget)
+    widget._append_log = lambda _message: None
+
+    aligned_path = widget._mechanoregulation_aligned_sed_display_path(
+        {"sed_path": str(sed_path)},
+        events_path,
+    )
+
+    aligned = sitk.ReadImage(str(aligned_path))
+    assert np.allclose(aligned.GetOrigin(), events.GetOrigin())
+    assert float(sitk.GetArrayFromImage(aligned).sum()) == 7.0
 
 
 def test_batch_processor_mechanoregulation_loads_events_as_sed_linked_segmentation() -> None:
@@ -817,7 +886,8 @@ def test_batch_processor_mechanoregulation_completed_rows_are_loadable(tmp_path:
     curves = out_dir / f"{case_id}_roi-full_conditional_curves.png"
     schulte = out_dir / f"{case_id}_roi-full_schulte_binned_curves.png"
     summary = out_dir / f"{case_id}_roi-full_mechanoregulation_summary.json"
-    for path in (csv_path, curves, schulte, summary):
+    surface_events = out_dir / f"{case_id}_roi-full_surface-events.nii.gz"
+    for path in (csv_path, curves, schulte, summary, surface_events):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"out")
 
@@ -832,7 +902,7 @@ def test_batch_processor_mechanoregulation_completed_rows_are_loadable(tmp_path:
     assert rows[0]["status"] == "Done"
     assert rows[0]["image_path"] == str(remodelling)
     assert rows[0]["sed_path"] == str(sed)
-    assert rows[0]["output_paths"] == [str(csv_path), str(curves), str(schulte), str(summary)]
+    assert rows[0]["output_paths"] == [str(csv_path), str(curves), str(schulte), str(summary), str(surface_events)]
 
 
 def test_batch_processor_mechanoregulation_partial_outputs_remain_runnable(tmp_path: Path, monkeypatch) -> None:
@@ -893,6 +963,27 @@ def test_batch_processor_mechanoregulation_partial_outputs_remain_runnable(tmp_p
     assert rows[0]["action"] == "Run"
     assert rows[0]["status"] == "Ready"
     assert "output_paths" not in rows[0]
+
+
+def test_batch_processor_mechanoregulation_outputs_allow_optional_surface_events(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    case = object()
+    outputs = {
+        key: tmp_path / f"{key}.out"
+        for key in ("csv", "curves", "schulte_curves", "summary")
+    }
+    for path in outputs.values():
+        path.write_bytes(b"out")
+
+    found = module.BatchProcessorLogic._mechanoregulation_output_paths_for_case(
+        case,
+        lambda _case, *, roi: outputs,
+        lambda _case: {"full": tmp_path / "mask.nii.gz"},
+    )
+
+    assert found == list(outputs.values())
 
 
 def test_batch_processor_compacts_mechanoregulation_summary_for_table_view(tmp_path: Path, monkeypatch) -> None:
@@ -1372,7 +1463,7 @@ def test_bone_contouring_ignores_registered_table_mode(tmp_path: Path, monkeypat
     assert all("action_row_span" not in row for row in rows)
 
 
-def test_loadable_bone_contouring_rows_include_output_paths(tmp_path: Path, monkeypatch) -> None:
+def test_partial_bone_contouring_rows_remain_runnable(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
     xct_dir.mkdir(parents=True)
@@ -1389,8 +1480,68 @@ def test_loadable_bone_contouring_rows_include_output_paths(tmp_path: Path, monk
         registered=False,
     )
 
-    assert rows[0]["action"] == "Load"
+    assert rows[0]["action"] == "Run"
     assert rows[0]["output_paths"] == [str(output)]
+
+
+def test_complete_bone_contouring_rows_are_loadable(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
+    xct_dir.mkdir(parents=True)
+    (xct_dir / "sub-001_ses-001_voi-radiusleft_xct.AIM").write_bytes(b"")
+    contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / "ses-001" / "xct"
+    contour_dir.mkdir(parents=True)
+    outputs = []
+    for role, suffix in (
+        ("seg", "mask"),
+        ("full", "mask"),
+        ("trab", "mask"),
+        ("cort", "mask"),
+        ("fea-input", "label"),
+    ):
+        output = contour_dir / f"sub-001_ses-001_voi-radiusleft_desc-{role}_{suffix}.AIM"
+        output.write_bytes(b"")
+        outputs.append(str(output))
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="bone_contouring",
+        profile="standard",
+        registered=False,
+    )
+
+    assert rows[0]["action"] == "Load"
+    assert set(rows[0]["output_paths"]) == set(outputs)
+
+
+def test_bone_contouring_completion_reuses_ipl_contours(tmp_path: Path, monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
+    xct_dir.mkdir(parents=True)
+    (xct_dir / "sub-001_ses-001_voi-radiusleft_xct.AIM").write_bytes(b"")
+    outputs = []
+    for family, role, suffix in (
+        ("IPLContours", "trab", "mask"),
+        ("IPLContours", "cort", "mask"),
+        ("BoneContours", "seg", "mask"),
+        ("BoneContours", "full", "mask"),
+        ("BoneContours", "fea-input", "label"),
+    ):
+        directory = tmp_path / "derivatives" / family / "sub-001" / "ses-001" / "xct"
+        directory.mkdir(parents=True, exist_ok=True)
+        output = directory / f"sub-001_ses-001_voi-radiusleft_desc-{role}_{suffix}.AIM"
+        output.write_bytes(b"")
+        outputs.append(str(output))
+
+    rows, _message = module.BatchProcessorLogic().discover_rows(
+        tmp_path,
+        tool="bone_contouring",
+        profile="standard",
+        registered=False,
+    )
+
+    assert rows[0]["action"] == "Load"
+    assert set(rows[0]["output_paths"]) == set(outputs)
 
 
 def test_batch_load_can_rediscover_outputs_written_after_analyze(tmp_path: Path, monkeypatch) -> None:
@@ -3043,7 +3194,8 @@ def test_queued_batch_jobs_snapshot_tool_profile_and_row() -> None:
     assert '"tool": self._selected_tool_key()' in source
     assert '"profile": str(self.profileCombo.currentData or "")' in source
     assert '"row": dict(self._batchRows[row_index])' in source
-    assert "self._batchQueue.append(self._batch_job_for_row(child_index))" in source
+    assert "job = self._batch_job_for_row(child_index)" in source
+    assert "self._batchQueue.append(job)" in source
     assert "job = self._batchQueue.pop(0)" in source
     assert 'tool=str(job.get("tool") or "")' in source
     assert 'profile=str(job.get("profile") or "")' in source
@@ -3054,6 +3206,45 @@ def test_queued_batch_jobs_snapshot_tool_profile_and_row() -> None:
         source.index("    def _batch_process_finished(") : source.index("    def _refresh_row_output_paths(", source.index("    def _batch_process_finished("))
     ]
     assert 'if self._selected_tool_key() == "fea"' not in finish_handler
+
+
+def test_queued_jobs_from_different_tools_do_not_collide_by_visible_row_index(monkeypatch) -> None:
+    module = _import_batch_processor_module(monkeypatch)
+    widget = object.__new__(module.BatchProcessorWidget)
+    row = {"subject": "001", "session": "001", "voi": "radius", "stack_index": "1"}
+    queued_job = {
+        "row_index": 2,
+        "tool": "bone_contouring",
+        "profile": "XtremeCTI",
+        "backend": "local",
+        "local_root": "/dataset",
+        "remote_root": "",
+        "row": row,
+    }
+    widget._batchQueue = [queued_job]
+    widget._batchRows = [
+        {"action": "Missing"},
+        {"action": "Missing"},
+        {**row, "action": "Run"},
+    ]
+    widget.toolCombo = types.SimpleNamespace(currentData="microarchitecture")
+    widget.profileCombo = types.SimpleNamespace(currentData="standard")
+    widget.skipExistingCheck = types.SimpleNamespace(checked=True)
+    widget.cancelBatchButton = types.SimpleNamespace(enabled=False)
+    widget._selected_backend_key = lambda: "local"
+    widget._current_local_dataset_root = lambda: "/dataset"
+    widget._current_remote_dataset_root = lambda: ""
+    widget._effective_row_action = lambda candidate: candidate.get("action")
+    widget._set_row_status = lambda index, status: widget._batchRows[index].update(status=status)
+    widget._set_row_action = lambda index, action: widget._batchRows[index].update(action=action)
+    widget._append_log = lambda _message: None
+    widget._start_next_batch_job = lambda: None
+
+    widget._queue_all_rows()
+
+    assert len(widget._batchQueue) == 2
+    assert widget._batchQueue[1]["row_index"] == 2
+    assert widget._batchQueue[1]["tool"] == "microarchitecture"
 
 
 def test_grouped_voidspace_finish_updates_visible_group_action() -> None:

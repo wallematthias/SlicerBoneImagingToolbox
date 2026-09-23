@@ -40,9 +40,14 @@ def _is_shadowing_toolbox_module(path, repo_root, active_paths):
     resolved = Path(path).expanduser().resolve()
     if str(resolved) in active_paths:
         return False
+    sibling_toolbox_checkout = any(
+        part.startswith("SlicerBoneImagingToolbox-") and part != "SlicerBoneImagingToolbox-private"
+        for part in resolved.parts
+    )
+    if sibling_toolbox_checkout:
+        return True
     if resolved.name in {Path(active).name for active in active_paths}:
-        marker = "SlicerBoneImagingToolbox"
-        return marker in resolved.parts or "SlicerBoneImagingToolbox-private" in resolved.parts
+        return any("SlicerBoneImagingToolbox" in part for part in resolved.parts)
     try:
         resolved.relative_to(repo_root)
     except ValueError:
