@@ -7008,11 +7008,27 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._set_widget_style_safe(label, "color: #666666;")
         return changed
 
+    def _remodelling_analysis_context_for_node(self, node, source_path):
+        ctx = self._parse_remodelling_source_context(source_path) if source_path else None
+        if ctx is None:
+            ctx = {}
+        else:
+            ctx = dict(ctx)
+        if node is None:
+            return ctx
+        threshold = node.GetAttribute("TimelapsedHRpQCT.AnalysisThreshold")
+        cluster = node.GetAttribute("TimelapsedHRpQCT.AnalysisClusterSize")
+        if threshold not in (None, ""):
+            ctx["threshold"] = float(threshold)
+        if cluster not in (None, ""):
+            ctx["cluster"] = int(cluster)
+        return ctx
+
     def _on_remodelling_selection_changed(self, *_args):
         node_id = self.remodellingFullSegCombo.currentData
         node = slicer.mrmlScene.GetNodeByID(str(node_id)) if node_id is not None else None
         source_path = str(node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "") if node is not None else ""
-        ctx = self._parse_remodelling_source_context(source_path) if source_path else None
+        ctx = self._remodelling_analysis_context_for_node(node, source_path)
         self._apply_remodelling_source_context_to_analysis_controls(ctx)
         self._activate_remodelling_display_for_current_selection()
         self._refresh_pair_metrics_for_current_selection()
@@ -7101,6 +7117,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         geometry_source_node=None,
         center_slices=True,
         activate_display=True,
+        analysis_threshold=None,
+        analysis_cluster_size=None,
     ):
         filtered_arr = self._apply_preview_label_filters(label_arr_zyx, valid_mask_zyx=valid_mask_zyx)
         full_seg = None
@@ -7120,6 +7138,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingSourcePath", str(Path(source_path).resolve()))
             if interactive_cache_key is not None:
                 full_seg.SetAttribute("TimelapsedHRpQCT.RemodellingInteractiveCacheKey", str(interactive_cache_key))
+            if analysis_threshold is not None:
+                full_seg.SetAttribute("TimelapsedHRpQCT.AnalysisThreshold", str(float(analysis_threshold)))
+            if analysis_cluster_size is not None:
+                full_seg.SetAttribute("TimelapsedHRpQCT.AnalysisClusterSize", str(int(analysis_cluster_size)))
             if center_slices:
                 self._center_slices_on_segmentation(full_seg)
 
@@ -7352,6 +7374,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                     valid_mask_zyx=preview.valid_mask,
                     geometry_source_node=full_seg,
                     center_slices=False,
+                    analysis_threshold=float(self.analysisThreshold.value),
+                    analysis_cluster_size=int(self.analysisCluster.value),
                 )
                 slicer.mrmlScene.RemoveNode(full_seg)
                 if new_full is not None:
@@ -7419,6 +7443,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 valid_mask_zyx=preview.valid_mask,
                 geometry_source_node=full_seg,
                 center_slices=False,
+                analysis_threshold=float(self.analysisThreshold.value),
+                analysis_cluster_size=int(self.analysisCluster.value),
             )
             slicer.mrmlScene.RemoveNode(full_seg)
             if new_full is not None:

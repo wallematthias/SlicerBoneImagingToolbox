@@ -470,6 +470,28 @@ def test_timelapsed_loaded_remodelling_syncs_analysis_controls_from_source_conte
     assert "self._apply_remodelling_source_context_to_analysis_controls(ctx)" in selection_changed
 
 
+def test_interactive_remodelling_node_parameters_override_original_source_filename() -> None:
+    analysis_context = _timelapsed_widget_method("_remodelling_analysis_context_for_node")
+
+    class FakeNode:
+        attributes = {
+            "TimelapsedHRpQCT.AnalysisThreshold": "310",
+            "TimelapsedHRpQCT.AnalysisClusterSize": "9",
+        }
+
+        def GetAttribute(self, name):
+            return self.attributes.get(name)
+
+    class FakeWidget:
+        def _parse_remodelling_source_context(self, _source_path):
+            return {"threshold": 225.0, "cluster": 5}
+
+    ctx = analysis_context(FakeWidget(), FakeNode(), "/tmp/thr-225p0_cluster-5_remodelling.nii.gz")
+
+    assert ctx["threshold"] == 310.0
+    assert ctx["cluster"] == 9
+
+
 def test_timelapsed_analysis_options_are_positioned_below_active_profile() -> None:
     module_path = (
         Path(__file__).resolve().parents[1]
