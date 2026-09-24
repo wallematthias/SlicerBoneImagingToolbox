@@ -136,10 +136,9 @@ def test_mechanoregulation_scene_stages_inputs_on_remodelling_grid() -> None:
     assert "sitk.Resample(" in helper_body
     assert "sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear" in helper_body
     assert "saved_path = self._resample_saved_scene_image_to_reference_node(" in source
-    assert "def _save_scene_scalar_array_on_reference_image" in source
-    assert "slicer.util.arrayFromVolume(node)" in source
-    assert "image.CopyInformation(reference)" in source
-    assert "baseline_sed_path = self._save_scene_scalar_array_on_reference_image(" in stage_body
+    assert "def _save_scene_scalar_array_on_reference_image" not in source
+    assert "baseline_sed_path = self._save_scene_node(" in stage_body
+    assert "sed_node," in stage_body
     assert "baseline_sed_path = self._align_saved_scene_scalar_to_reference_image(" not in stage_body
     assert "baseline_sed_path" in stage_body
     assert "remodelling_path" in stage_body
@@ -322,7 +321,7 @@ def test_mechanoregulation_scene_mode_discovers_loaded_nodes_and_runs_case_api()
     assert "self._style_selected_scene_sed()" in source
     assert "def _style_selected_scene_sed" in source
     assert "self._style_fe_scalar_volume(sed_node)" in source
-    assert "def _align_saved_scene_scalar_to_reference_image" in source
+    assert "def _align_saved_scene_scalar_to_reference_image" not in source
     assert "self._load_event_segmentation" in source
     assert "def _write_scene_mechanoregulation_summary_table_csv" in source
     assert 'outputs = case_outputs(case, roi="full")' in source
@@ -354,7 +353,7 @@ def test_mechanoregulation_scene_mode_consumes_loaded_parosol_outputs_without_fe
     assert 'scene_inputs.addRow("Mask segment", self.sceneAnalysisMaskSegmentCombo)' in scene_body
     assert 'controls.addRow("Bootstraps", self.sceneBootstrapSpinBox)' in scene_body
     assert 'controls.addRow("Profile", self.sceneProfileCombo)' not in scene_body
-    assert "baseline_sed_path = self._save_scene_scalar_array_on_reference_image(" in stage_body
+    assert "baseline_sed_path = self._save_scene_node(" in stage_body
     assert "analysis_mask_path = self._save_scene_analysis_mask(" in stage_body
     assert "no analysis mask selected; using whole remodelling image" in stage_body
     assert "using analysis mask:" in stage_body

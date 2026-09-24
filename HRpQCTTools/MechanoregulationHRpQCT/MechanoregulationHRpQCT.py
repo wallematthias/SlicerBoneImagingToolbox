@@ -944,27 +944,6 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._show(f"[scene] could not align {path.name} to remodelling grid: {exc}")
         return path
 
-    def _align_saved_scene_scalar_to_reference_image(self, path, reference_path):
-        return self._align_saved_scene_image_to_reference_image(path, reference_path, nearest=False)
-
-    def _save_scene_scalar_array_on_reference_image(self, node, path, reference_path):
-        """Save a scalar node's voxel array with reference geometry, without storage-layer resampling."""
-        if node is None:
-            return None
-        path = Path(path)
-        reference_path = Path(reference_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        array = np.asarray(slicer.util.arrayFromVolume(node))
-        image = sitk.GetImageFromArray(array.astype(np.float32, copy=False))
-        reference = sitk.ReadImage(str(reference_path))
-        if image.GetSize() != reference.GetSize():
-            raise RuntimeError(
-                f"Scene scalar {node.GetName()} has size {image.GetSize()} but reference has size {reference.GetSize()}."
-            )
-        image.CopyInformation(reference)
-        sitk.WriteImage(image, str(path))
-        return path
-
     def _refresh_scene_remodelling_role_controls(self):
         node = self.sceneRemodellingSelector.currentNode() if hasattr(self, "sceneRemodellingSelector") else None
         is_segmentation = bool(node is not None and node.IsA("vtkMRMLSegmentationNode"))
@@ -1180,10 +1159,9 @@ class MechanoregulationHRpQCTWidget(ScriptedLoadableModuleWidget):
             remodelling_node,
             input_dir / f"scene-row-{row + 1:02d}_remodelling.nii.gz",
         )
-        baseline_sed_path = self._save_scene_scalar_array_on_reference_image(
+        baseline_sed_path = self._save_scene_node(
             sed_node,
             input_dir / f"scene-row-{row + 1:02d}_sed.nii.gz",
-            remodelling_path,
         )
         analysis_mask_path = self._save_scene_analysis_mask(
             self.sceneAnalysisMaskSelector.currentNode(),
