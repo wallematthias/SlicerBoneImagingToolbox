@@ -2686,8 +2686,10 @@ def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: 
     )
     with output.open(newline="", encoding="utf-8") as handle:
         rows = {row["Parameter"]: row for row in csv.DictReader(handle)}
-    assert float(rows["Tt.TV"]["Mean"]) == 26.0
-    assert (output.parent / "functional_bone_analysis_mask.nii.gz").exists()
+    assert float(rows["Tt.BMD"]["Mean"]) == 100.0
+    analysis_path = output.parent / "functional_bone_analysis_mask.nii.gz"
+    analysis_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(analysis_path)))
+    assert np.count_nonzero(analysis_mask) == 26
     assert not (maps_dir / "sub-001_ses-001_voi-radiusleft_map-functional-bone.npy").exists()
     assert any(maps_dir.glob("sub-001_ses-001_voi-radiusleft_map-*.nii.gz"))
 

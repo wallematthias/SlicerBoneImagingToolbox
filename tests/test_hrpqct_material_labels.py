@@ -1,15 +1,60 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.util
 import sys
+import types
 
 import numpy as np
 
 
-MODULE_DIR = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "DeriveLabelsHRpQCT"
-sys.path.insert(0, str(MODULE_DIR))
+MODULE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "HRpQCTTools"
+    / "DeriveLabelsHRpQCT"
+    / "DeriveLabelsHRpQCT.py"
+)
 
-import DeriveLabelsHRpQCT  # noqa: E402
+
+def _load_module():
+    qt = types.ModuleType("qt")
+    vtk = types.ModuleType("vtk")
+    slicer = types.ModuleType("slicer")
+    scripted = types.ModuleType("slicer.ScriptedLoadableModule")
+
+    class _Base:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    scripted.ScriptedLoadableModule = _Base
+    scripted.ScriptedLoadableModuleWidget = _Base
+    scripted.ScriptedLoadableModuleLogic = _Base
+    scripted.ScriptedLoadableModuleTest = _Base
+    slicer.ScriptedLoadableModule = scripted
+    slicer.util = types.SimpleNamespace()
+
+    modules = {
+        "qt": qt,
+        "vtk": vtk,
+        "slicer": slicer,
+        "slicer.ScriptedLoadableModule": scripted,
+    }
+    previous = {name: sys.modules.get(name) for name in modules}
+    sys.modules.update(modules)
+    try:
+        spec = importlib.util.spec_from_file_location("DeriveLabelsHRpQCT_test", MODULE_PATH)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, prior in previous.items():
+            if prior is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prior
+
+
+DeriveLabelsHRpQCT = _load_module()
 
 
 def test_material_label_arrays_combine_segmentation_and_compartments():

@@ -49,7 +49,7 @@ def test_timelapsed_has_control_level_tooltips_for_profiles_analysis_and_loading
     source = _source("HRpQCTTools/TimelapsedHRpQCT/TimelapsedHRpQCT.py")
 
     for snippet in [
-        "Apply the selected profile to visible settings",
+        "Study defaults applied to scene runs.",
         "Adjust absolute density-change threshold",
         "Load the selected processed output into the current Slicer scene.",
         "Apply the current remodelling analysis options to the loaded comparison.",
