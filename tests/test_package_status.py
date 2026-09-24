@@ -223,6 +223,10 @@ def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() ->
 
     assert specs["parosol-py"].display_name == "ParOsol-FEA"
     assert specs["parosol-py"].import_name == "parosol_py"
+    assert specs["parosol-py"].minimum_version == "0.1.25"
+    assert install_command(specs["parosol-py"], installed=True) == (
+        "--upgrade --prefer-binary --only-binary parosol-py parosol-py>=0.1.25"
+    )
     assert "ParOSol" in specs["parosol-py"].notes
 
     assert specs["bone-mechanoregulation"].display_name == "Bone Mechanoregulation"

@@ -122,7 +122,8 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="ParOsol-FEA",
         package_name="parosol-py",
         import_name="parosol_py",
-        minimum_version="0.1.24",
+        minimum_version="0.1.25",
+        install_options=("--prefer-binary", "--only-binary", "parosol-py"),
         notes="ParOSol finite-element analysis backend and Python workflow package.",
     ),
     PackageSpec(
