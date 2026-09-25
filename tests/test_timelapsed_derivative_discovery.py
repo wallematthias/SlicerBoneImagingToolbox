@@ -107,12 +107,12 @@ def test_pipeline_status_uses_distribution_version_when_module_version_is_stale(
     installed_package.__file__ = str(tmp_path / "site-packages" / "timelapsedhrpqct" / "__init__.py")
     installed_package.__version__ = "2.0.44"
     monkeypatch.setitem(sys.modules, "timelapsedhrpqct", installed_package)
-    monkeypatch.setattr(module.metadata, "version", lambda package_name: "2.0.46")
+    monkeypatch.setattr(module.metadata, "version", lambda package_name: "2.0.48")
 
     available, detail = module.TimelapsedHRpQCTLogic().pipeline_status()
 
     assert available is True
-    assert "Installed (2.0.46)" in detail
+    assert "Installed (2.0.48)" in detail
 
 
 def test_timelapsed_ui_mentions_derivative_prerequisites():

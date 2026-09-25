@@ -293,7 +293,7 @@ def test_timelapsed_batch_cohort_summary_is_not_in_analysis_options() -> None:
     assert 'if selected.name == "derivatives":' in source
     assert 'return selected / "Timelapse"' in source
     assert "timelapsedhrpqct.cli import main" in source
-    assert 'MIN_PIPELINE_VERSION = "2.0.46"' in source
+    assert 'MIN_PIPELINE_VERSION = "2.0.48"' in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source
@@ -732,6 +732,7 @@ def test_timelapsed_scene_uses_semantic_default_roi_roles_at_source() -> None:
     scene_settings = source.split("    def _scene_settings_override", 1)[1].split("\n    def ", 1)[0]
     assert 'masks_cfg["roles"] = self._scene_requested_mask_roles()' in scene_settings
     assert 'analysis_cfg["compartments"] = self._scene_analysis_compartments()' in scene_settings
+    assert 'analysis_cfg["write_interactive_pair_cache"] = True' in scene_settings
 
 
 def test_timelapsed_scene_role_status_updates_when_roi_selector_changes() -> None:
@@ -1098,6 +1099,29 @@ def test_scene_interactive_preview_caches_density_delta_for_live_updates() -> No
     assert "from timelapsedhrpqct.analysis import compute_pair_remodelling_preview_from_delta" in preview_helper
     assert "delta = self._preview_delta_for_current_settings(preview_inputs)" in preview_helper
     assert "compute_pair_remodelling_preview_from_delta" in preview_helper
+
+
+def test_scene_interactive_preview_prefers_exact_pairwise_analysis_cache() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    get_inputs = source.split("    def _get_interactive_preview_inputs", 1)[1].split("\n    def ", 1)[0]
+    delta_helper = source.split("    def _preview_delta_for_current_settings", 1)[1].split("\n    def ", 1)[0]
+    union_update = source.split("    def _compute_pair_union_remodelling_preview", 1)[1].split("\n    def ", 1)[0]
+    metric_rows = source.split("    def _compute_pair_metric_rows", 1)[1].split("\n    def ", 1)[0]
+
+    assert "interactive_pair_cache_path" in get_inputs
+    assert "np.load(pair_cache_path, allow_pickle=False)" in get_inputs
+    assert '"exact_pair_cache": exact_pair_cache' in get_inputs
+    assert "self._exact_pair_cache_matches_current_settings(preview_inputs)" in delta_helper
+    assert 'return np.asarray(exact_cache["delta"], dtype=np.float32)' in delta_helper
+    assert 'exact_cache["classification_valid"]' in union_update
+    assert "classification_preview = self._compute_pair_remodelling_preview_from_cached_delta" in metric_rows
+    assert "classification_preview.formation & valid_mask" in metric_rows
 
 
 def test_scene_results_table_refresh_does_not_change_remodelling_selection() -> None:

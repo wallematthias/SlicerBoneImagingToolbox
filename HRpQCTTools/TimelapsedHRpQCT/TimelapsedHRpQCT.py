@@ -22,7 +22,7 @@ import slicer
 import vtk
 
 MODULE_VERSION = "0.2.4"
-MIN_PIPELINE_VERSION = "2.0.46"
+MIN_PIPELINE_VERSION = "2.0.48"
 _SCENE_MASK_CHOICE_SEPARATOR = "||"
 
 
@@ -2445,20 +2445,24 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             source_path = str(source_node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
         preview_inputs = self._get_interactive_preview_inputs(source_path)
         support_t0, support_t1 = self._preview_compartment_masks(preview_inputs, "full")
-        valid_union = np.zeros_like(support_t0, dtype=bool)
         compartments = self._pair_metric_compartments(preview_inputs)
-        for compartment in compartments:
-            comp_t0, comp_t1 = self._preview_compartment_masks(preview_inputs, compartment)
-            valid = build_series_common_masks(
-                {
-                    "full": [support_t0, support_t1],
-                    compartment: [comp_t0, comp_t1],
-                },
-                [compartment],
-                int(self._analysis_erosion_voxels),
-                full_mask_dilation_voxels=int(self.analysisFullMaskDilation.value),
-            )[compartment]
-            valid_union |= np.asarray(valid, dtype=bool)
+        if self._exact_pair_cache_matches_current_settings(preview_inputs):
+            exact_cache = preview_inputs["exact_pair_cache"]
+            valid_union = np.asarray(exact_cache["classification_valid"], dtype=bool)
+        else:
+            valid_union = np.zeros_like(support_t0, dtype=bool)
+            for compartment in compartments:
+                comp_t0, comp_t1 = self._preview_compartment_masks(preview_inputs, compartment)
+                valid = build_series_common_masks(
+                    {
+                        "full": [support_t0, support_t1],
+                        compartment: [comp_t0, comp_t1],
+                    },
+                    [compartment],
+                    int(self._analysis_erosion_voxels),
+                    full_mask_dilation_voxels=int(self.analysisFullMaskDilation.value),
+                )[compartment]
+                valid_union |= np.asarray(valid, dtype=bool)
         preview = self._compute_pair_remodelling_preview_from_cached_delta(
             preview_inputs,
             valid_mask=valid_union,
@@ -2972,6 +2976,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         analysis_cfg = dict(settings.get("analysis") or {})
         analysis_cfg["compartments"] = self._scene_analysis_compartments()
+        analysis_cfg["write_interactive_pair_cache"] = True
         visualization_cfg = dict(settings.get("visualization") or {})
         label_map = dict(visualization_cfg.get("label_map") or {})
         if not self._scene_segmentation_requested():
@@ -6522,6 +6527,15 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return None
 
     def _display_valid_mask_for_preview_inputs(self, preview_inputs):
+        if self._exact_pair_cache_matches_current_settings(preview_inputs):
+            exact_cache = preview_inputs["exact_pair_cache"]
+            compartment = str((preview_inputs.get("context") or {}).get("compartment", "full"))
+            if compartment == "roi_union":
+                return np.asarray(exact_cache["classification_valid"], dtype=bool)
+            exact_valid = exact_cache.get("valid_by_compartment") or {}
+            if compartment in exact_valid:
+                return np.asarray(exact_valid[compartment], dtype=bool)
+
         valid_mask = preview_inputs.get("valid_mask")
         if str(preview_inputs.get("context", {}).get("compartment", "")) != "full":
             return valid_mask
@@ -6795,6 +6809,45 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             int(self._analysis_erosion_voxels),
         )[compartment_for_valid_mask]
 
+        from timelapsedhrpqct.dataset.derivative_paths import interactive_pair_cache_path
+
+        pair_cache_path = interactive_pair_cache_path(
+            imported_root,
+            str(ctx["subject_id"]),
+            str(ctx["site"]),
+            str(ctx["t0"]),
+            str(ctx["t1"]),
+        )
+        exact_pair_cache = None
+        if pair_cache_path.exists():
+            with np.load(pair_cache_path, allow_pickle=False) as pair_cache:
+                pair_metadata = json.loads(str(pair_cache["metadata_json"]))
+                pair_compartments = [str(role) for role in pair_metadata.get("compartments", [])]
+                has_segmentation = bool(pair_metadata.get("has_segmentation", False))
+                pair_shape = tuple(int(value) for value in pair_metadata["shape_zyx"])
+                pair_voxel_count = int(np.prod(pair_shape))
+
+                def unpack_pair_mask(name):
+                    return np.unpackbits(
+                        pair_cache[name],
+                        count=pair_voxel_count,
+                        bitorder="little",
+                    ).reshape(pair_shape).astype(bool, copy=False)
+
+                exact_pair_cache = {
+                    "path": str(pair_cache_path),
+                    "metadata": pair_metadata,
+                    "delta": np.asarray(pair_cache["delta"], dtype=np.float32),
+                    "seg_t0": unpack_pair_mask("seg_t0") if has_segmentation else None,
+                    "seg_t1": unpack_pair_mask("seg_t1") if has_segmentation else None,
+                    "support_t0": unpack_pair_mask("support_t0"),
+                    "support_t1": unpack_pair_mask("support_t1"),
+                    "classification_valid": unpack_pair_mask("classification_valid"),
+                    "valid_by_compartment": {
+                        role: unpack_pair_mask(f"valid__{role}") for role in pair_compartments
+                    },
+                }
+
         cached = {
             "cache_key": cache_key,
             "context": ctx,
@@ -6811,12 +6864,40 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             "t1_mask_paths": {str(k): str(v) for k, v in (t1.mask_paths or {}).items()},
             "compartment_mask_cache": {},
             "valid_mask": valid_mask,
+            "exact_pair_cache": exact_pair_cache,
             "current_label_arr": None,
         }
         self._interactive_preview_cache[cache_key] = cached
         return cached
 
+    def _exact_pair_cache_matches_current_settings(self, preview_inputs):
+        exact_cache = preview_inputs.get("exact_pair_cache")
+        if not exact_cache:
+            return False
+        metadata = exact_cache.get("metadata") or {}
+        return (
+            str(metadata.get("space", "")) == "pairwise_fixed_t0"
+            and str(metadata.get("method", "")) == self._current_analysis_method()
+            and bool(metadata.get("gaussian_filter", False))
+            == bool(self.analysisGaussianFilterCheck.checked)
+            and np.isclose(
+                float(metadata.get("gaussian_sigma", 0.0)),
+                float(self.analysisGaussianSigma.value),
+            )
+            and int(metadata.get("full_mask_dilation_voxels", -1))
+            == int(self.analysisFullMaskDilation.value)
+            and int(metadata.get("marrow_mask_dilation_voxels", -1))
+            == int(self.analysisMarrowMaskDilation.value)
+            and int(metadata.get("marrow_mask_erosion_voxels", -1))
+            == int(self.analysisMarrowMaskErosion.value)
+            and int(metadata.get("valid_region_erosion_voxels", -1))
+            == int(self._analysis_erosion_voxels)
+        )
+
     def _pair_metric_compartments(self, preview_inputs):
+        if self._exact_pair_cache_matches_current_settings(preview_inputs):
+            metadata = preview_inputs["exact_pair_cache"].get("metadata") or {}
+            return [str(role) for role in metadata.get("compartments", [])]
         roles = ["full"]
         mask_paths_t0 = preview_inputs.get("t0_mask_paths") or {}
         mask_paths_t1 = preview_inputs.get("t1_mask_paths") or {}
@@ -6833,6 +6914,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _preview_compartment_masks(self, preview_inputs, compartment):
         from timelapsedhrpqct.analysis import dilate_mask_xy, repartition_compartment_masks_to_support
+
+        if self._exact_pair_cache_matches_current_settings(preview_inputs):
+            exact_cache = preview_inputs["exact_pair_cache"]
+            role = str(compartment)
+            if role == "full":
+                return exact_cache["support_t0"], exact_cache["support_t1"]
 
         cache = preview_inputs.setdefault("compartment_mask_cache", {})
         dilation = int(self.analysisFullMaskDilation.value)
@@ -6889,6 +6976,10 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return compute_pair_remodelling_preview(**kwargs)
 
     def _preview_delta_for_current_settings(self, preview_inputs):
+        if self._exact_pair_cache_matches_current_settings(preview_inputs):
+            exact_cache = preview_inputs["exact_pair_cache"]
+            return np.asarray(exact_cache["delta"], dtype=np.float32)
+
         delta_cache = preview_inputs.setdefault("delta_cache", {})
         gaussian_enabled = bool(self.analysisGaussianFilterCheck.checked)
         sigma = float(self.analysisGaussianSigma.value)
@@ -6917,6 +7008,54 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _compute_pair_remodelling_preview_from_cached_delta(self, preview_inputs, *, valid_mask, label_map):
         support_mask_t0, support_mask_t1 = self._preview_compartment_masks(preview_inputs, "full")
+        exact_settings = self._exact_pair_cache_matches_current_settings(preview_inputs)
+        if exact_settings:
+            exact_cache = preview_inputs["exact_pair_cache"]
+            seg_arr_t0 = exact_cache.get("seg_t0")
+            seg_arr_t1 = exact_cache.get("seg_t1")
+            exact_metadata = exact_cache.get("metadata") or {}
+            ring_centers = [
+                tuple(float(value) for value in center)
+                for center in exact_metadata.get("ring_artifact_suppression_centers_yx", [])
+            ]
+            exact_classification_kwargs = {
+                "ring_artifact_suppression_enabled": bool(
+                    exact_metadata.get("ring_artifact_suppression_enabled", False)
+                ),
+                "ring_artifact_suppression_mode": str(
+                    exact_metadata.get("ring_artifact_suppression_mode", "polar")
+                ),
+                "ring_artifact_suppression_proximity_voxels": int(
+                    exact_metadata.get("ring_artifact_suppression_proximity_voxels", 1)
+                ),
+                "ring_artifact_suppression_axial_radius_voxels": int(
+                    exact_metadata.get("ring_artifact_suppression_axial_radius_voxels", 0)
+                ),
+                "ring_artifact_suppression_radial_bin_width_voxels": float(
+                    exact_metadata.get("ring_artifact_suppression_radial_bin_width_voxels", 1.0)
+                ),
+                "ring_artifact_suppression_min_radius_band_events": int(
+                    exact_metadata.get("ring_artifact_suppression_min_radius_band_events", 100)
+                ),
+                "ring_artifact_suppression_radial_band_padding_voxels": int(
+                    exact_metadata.get("ring_artifact_suppression_radial_band_padding_voxels", 2)
+                ),
+                "ring_artifact_suppression_max_radius_bands": int(
+                    exact_metadata.get("ring_artifact_suppression_max_radius_bands", 2)
+                ),
+                "ring_artifact_suppression_min_radius_band_separation_voxels": int(
+                    exact_metadata.get("ring_artifact_suppression_min_radius_band_separation_voxels", 8)
+                ),
+                "ring_artifact_suppression_center_yx": ring_centers[0] if ring_centers else None,
+                "ring_artifact_suppression_centers_yx": ring_centers or None,
+            }
+        else:
+            seg_arr_t0 = preview_inputs["seg_arr_t0"]
+            seg_arr_t1 = preview_inputs["seg_arr_t1"]
+            exact_classification_kwargs = {}
+        preview_method = self._current_analysis_method()
+        if exact_settings and preview_method == "grayscale_marrow_mask":
+            preview_method = "grayscale_delta_only"
         try:
             from timelapsedhrpqct.analysis import compute_pair_remodelling_preview_from_delta
 
@@ -6924,17 +7063,18 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
             return self._compute_pair_remodelling_preview_compat(
                 compute_pair_remodelling_preview_from_delta,
                 delta=delta,
-                seg_arr_t0=preview_inputs["seg_arr_t0"],
-                seg_arr_t1=preview_inputs["seg_arr_t1"],
+                seg_arr_t0=seg_arr_t0,
+                seg_arr_t1=seg_arr_t1,
                 valid_mask=valid_mask,
                 threshold=float(self.analysisThreshold.value),
                 cluster_size=int(self.analysisCluster.value),
-                method=self._current_analysis_method(),
+                method=preview_method,
                 label_map=label_map,
                 support_mask_t0=support_mask_t0,
                 support_mask_t1=support_mask_t1,
                 marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
+                **exact_classification_kwargs,
             )
         except ImportError:
             from timelapsedhrpqct.analysis import compute_pair_remodelling_preview
@@ -6943,12 +7083,12 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 compute_pair_remodelling_preview,
                 image_arr_t0=preview_inputs["image_arr_t0"],
                 image_arr_t1=preview_inputs["image_arr_t1"],
-                seg_arr_t0=preview_inputs["seg_arr_t0"],
-                seg_arr_t1=preview_inputs["seg_arr_t1"],
+                seg_arr_t0=seg_arr_t0,
+                seg_arr_t1=seg_arr_t1,
                 valid_mask=valid_mask,
                 threshold=float(self.analysisThreshold.value),
                 cluster_size=int(self.analysisCluster.value),
-                method=self._current_analysis_method(),
+                method=preview_method,
                 gaussian_filter=bool(self.analysisGaussianFilterCheck.checked),
                 gaussian_sigma=float(self.analysisGaussianSigma.value),
                 label_map=label_map,
@@ -6960,6 +7100,53 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _compute_pair_metric_rows(self, preview_inputs):
         from timelapsedhrpqct.analysis import build_series_common_masks
+
+        if self._exact_pair_cache_matches_current_settings(preview_inputs):
+            from timelapsedhrpqct.analysis import safe_frac
+            from timelapsedhrpqct.analysis.remodelling import remodelling_fraction_denominator
+
+            exact_cache = preview_inputs["exact_pair_cache"]
+            metadata = exact_cache.get("metadata") or {}
+            classification_valid = np.asarray(exact_cache["classification_valid"], dtype=bool)
+            classification_preview = self._compute_pair_remodelling_preview_from_cached_delta(
+                preview_inputs,
+                valid_mask=classification_valid,
+                label_map=self._interactive_preview_label_map(),
+            )
+            seg_t0 = exact_cache.get("seg_t0")
+            seg_t1 = exact_cache.get("seg_t1")
+            b0_full = (
+                np.asarray(seg_t0, dtype=bool) & classification_valid
+                if seg_t0 is not None
+                else classification_valid
+            )
+            b1_full = (
+                np.asarray(seg_t1, dtype=bool) & classification_valid
+                if seg_t1 is not None
+                else classification_valid
+            )
+            rows = []
+            for compartment in self._pair_metric_compartments(preview_inputs):
+                valid_mask = np.asarray(
+                    exact_cache["valid_by_compartment"][compartment],
+                    dtype=bool,
+                )
+                denominator = remodelling_fraction_denominator(
+                    mode=str(metadata.get("fraction_denominator", "baseline_bone")),
+                    b0=b0_full,
+                    b1=b1_full,
+                    valid=valid_mask,
+                )
+                formation_vox = int(np.count_nonzero(classification_preview.formation & valid_mask))
+                resorption_vox = int(np.count_nonzero(classification_preview.resorption & valid_mask))
+                rows.append(
+                    {
+                        "compartment": str(compartment),
+                        "formation_frac_bv0": float(safe_frac(formation_vox, denominator)),
+                        "resorption_frac_bv0": float(safe_frac(resorption_vox, denominator)),
+                    }
+                )
+            return rows
 
         support_t0, support_t1 = self._preview_compartment_masks(preview_inputs, "full")
         rows = []

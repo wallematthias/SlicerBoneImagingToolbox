@@ -154,6 +154,7 @@ def test_timelapsed_runtime_package_has_user_facing_setup_name() -> None:
     specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
 
     assert specs["timelapsed-hrpqct"].display_name == "Timelapsed HR-pQCT"
+    assert specs["timelapsed-hrpqct"].minimum_version == "2.0.48"
     assert "timelapsed-hrpqct" in specs["timelapsed-hrpqct"].notes
     assert specs["hrpqct-geodesic-contour"].display_name == "Geodesic Contour"
     assert specs["hrpqct-geodesic-contour"].import_name == "hrpqct_geodesic_contour"
