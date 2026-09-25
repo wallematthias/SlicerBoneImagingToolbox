@@ -33,6 +33,9 @@ from SlicerBoneImagingToolboxLib.updater import (  # noqa: E402
     short_revision,
     update_toolbox,
 )
+from SlicerBoneImagingToolboxLib.volume_rendering_presets import (  # noqa: E402
+    ensure_hrpqct_density_preset,
+)
 
 
 MODULE_VERSION = "0.1.0"
@@ -50,7 +53,7 @@ class BoneImagingToolboxSetup(ScriptedLoadableModule):
         parent.title = "Toolbox Setup"
         parent.categories = ["Bone Imaging.Setup"]
         parent.index = 10
-        parent.dependencies = []
+        parent.dependencies = ["VolumeRendering"]
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             f"Central setup and update dashboard for {TOOLBOX_DISPLAY_NAME}.\n"
@@ -59,6 +62,30 @@ class BoneImagingToolboxSetup(ScriptedLoadableModule):
         parent.acknowledgementText = (
             "Author: Matthias Walle. Built for streamlined Bone Imaging Toolbox installation and updates."
         )
+        self._volume_rendering_preset_registered = False
+        slicer.app.connect("startupCompleted()", self._register_volume_rendering_presets)
+        self._register_volume_rendering_presets()
+
+    def _register_volume_rendering_presets(self):
+        if self._volume_rendering_preset_registered:
+            return
+        volume_rendering_module = getattr(slicer.modules, "volumerendering", None)
+        if volume_rendering_module is None:
+            return
+        try:
+            preset_path = Path(__file__).resolve().parent / "Resources" / "HRpQCTVolumeRenderingPresets.mrml"
+            preset_scene = slicer.vtkMRMLScene()
+            preset_scene.RegisterNodeClass(slicer.vtkMRMLVolumePropertyNode())
+            preset_scene.SetURL(str(preset_path))
+            if not preset_scene.Connect():
+                raise RuntimeError(f"Could not read custom preset scene: {preset_path}")
+            preset_node = preset_scene.GetFirstNodeByName("HR-pQCT Density")
+            if preset_node is None:
+                raise RuntimeError(f"Custom preset scene did not contain 'HR-pQCT Density': {preset_path}")
+            ensure_hrpqct_density_preset(volume_rendering_module.logic(), preset_node)
+            self._volume_rendering_preset_registered = True
+        except Exception as exc:
+            print(f"[BoneImagingToolbox] Could not register HR-pQCT volume-rendering preset: {exc}")
 
 
 class BoneImagingToolboxSetupLogic(ScriptedLoadableModuleLogic):

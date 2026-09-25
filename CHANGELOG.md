@@ -6,6 +6,7 @@ All notable changes to this extension are documented in this file.
 
 ### Added
 
+- Added an `HR-pQCT Density` volume-rendering preset with transparent sub-trabecular densities and progressively stronger trabecular and cortical opacity.
 - Added a Voidspace scene module for single-case and baseline/follow-up interactive analysis backed by the `voidspace` core package.
 - Added Batch Processor support for Voidspace, Registered voidspace, and Dynamic voidspace profiles.
 - Added Voidspace runtime package status, setup metadata, toolbox registry entries, and user documentation.

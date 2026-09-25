@@ -35,6 +35,7 @@ set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/timelapsed_scene.py
   SlicerBoneImagingToolboxLib/updater.py
   SlicerBoneImagingToolboxLib/vertebra_labels.py
+  SlicerBoneImagingToolboxLib/volume_rendering_presets.py
   SlicerBoneImagingToolboxLib/workflow_planning.py
 )
 
