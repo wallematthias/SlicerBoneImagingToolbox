@@ -293,7 +293,7 @@ def test_timelapsed_batch_cohort_summary_is_not_in_analysis_options() -> None:
     assert 'if selected.name == "derivatives":' in source
     assert 'return selected / "Timelapse"' in source
     assert "timelapsedhrpqct.cli import main" in source
-    assert 'MIN_PIPELINE_VERSION = "2.0.44"' in source
+    assert 'MIN_PIPELINE_VERSION = "2.0.46"' in source
     assert "Move up" in source
     assert "Move down" in source
     assert "discover_timelapsed_scene_timepoints" in source
@@ -1685,6 +1685,25 @@ def test_interactive_update_recomputes_display_union_from_available_rois() -> No
     assert "self._compute_pair_remodelling_preview_from_cached_delta(" in union_update
     assert "compute_pair_remodelling_preview(" not in union_update
     assert "using saved per-ROI analysis rows instead of interactive recomputation" not in apply_update
+
+
+def test_interactive_update_prepares_dilated_compartments_like_batch_analysis() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "HRpQCTTools"
+        / "TimelapsedHRpQCT"
+        / "TimelapsedHRpQCT.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    prepare = source.split("    def _preview_compartment_masks", 1)[1].split("\n    def ", 1)[0]
+
+    assert "dilate_mask_xy" in prepare
+    assert "repartition_compartment_masks_to_support" in prepare
+    assert "analysisFullMaskDilation.value" in prepare
+    assert 'prepared_key = ("prepared", dilation, tuple(roles))' in prepare
+    assert 'raw_key = ("raw", tuple(roles))' in prepare
+    assert 'cache["prepared_key"] = prepared_key' in prepare
+    assert 'masks_t0 = {"full": np.asarray(preview_inputs["support_mask_t0"], dtype=bool)}' in prepare
 
 
 def test_scene_export_temporarily_detaches_display_transforms() -> None:

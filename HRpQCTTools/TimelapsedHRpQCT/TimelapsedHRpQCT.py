@@ -21,7 +21,7 @@ import slicer
 import vtk
 
 MODULE_VERSION = "0.2.4"
-MIN_PIPELINE_VERSION = "2.0.44"
+MIN_PIPELINE_VERSION = "2.0.46"
 _SCENE_MASK_CHOICE_SEPARATOR = "||"
 
 
@@ -2426,8 +2426,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not source_path:
             source_path = str(source_node.GetAttribute("TimelapsedHRpQCT.RemodellingSourcePath") or "")
         preview_inputs = self._get_interactive_preview_inputs(source_path)
-        support_t0 = np.asarray(preview_inputs["support_mask_t0"], dtype=bool)
-        support_t1 = np.asarray(preview_inputs["support_mask_t1"], dtype=bool)
+        support_t0, support_t1 = self._preview_compartment_masks(preview_inputs, "full")
         valid_union = np.zeros_like(support_t0, dtype=bool)
         compartments = self._pair_metric_compartments(preview_inputs)
         for compartment in compartments:
@@ -6815,24 +6814,45 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return roles
 
     def _preview_compartment_masks(self, preview_inputs, compartment):
-        if str(compartment) == "full":
-            return (
-                np.asarray(preview_inputs["support_mask_t0"], dtype=bool),
-                np.asarray(preview_inputs["support_mask_t1"], dtype=bool),
-            )
+        from timelapsedhrpqct.analysis import dilate_mask_xy, repartition_compartment_masks_to_support
+
         cache = preview_inputs.setdefault("compartment_mask_cache", {})
-        if compartment in cache:
-            return cache[compartment]
-        mask_paths_t0 = preview_inputs.get("t0_mask_paths") or {}
-        mask_paths_t1 = preview_inputs.get("t1_mask_paths") or {}
-        path_t0 = Path(str(mask_paths_t0.get(compartment, "")))
-        path_t1 = Path(str(mask_paths_t1.get(compartment, "")))
-        if not path_t0.exists() or not path_t1.exists():
-            raise ValueError(f"Mask role '{compartment}' is not available for the current pair.")
-        mask_t0 = (sitk.GetArrayFromImage(sitk.ReadImage(str(path_t0))) > 0).astype(bool, copy=False)
-        mask_t1 = (sitk.GetArrayFromImage(sitk.ReadImage(str(path_t1))) > 0).astype(bool, copy=False)
-        cache[compartment] = (mask_t0, mask_t1)
-        return cache[compartment]
+        dilation = int(self.analysisFullMaskDilation.value)
+        roles = self._pair_metric_compartments(preview_inputs)
+        prepared_key = ("prepared", dilation, tuple(roles))
+        if cache.get("prepared_key") == prepared_key:
+            return cache["prepared_masks"][str(compartment)]
+
+        raw_key = ("raw", tuple(roles))
+        if cache.get("raw_key") == raw_key:
+            masks_t0, masks_t1 = cache["raw_masks"]
+        else:
+            mask_paths_t0 = preview_inputs.get("t0_mask_paths") or {}
+            mask_paths_t1 = preview_inputs.get("t1_mask_paths") or {}
+            masks_t0 = {"full": np.asarray(preview_inputs["support_mask_t0"], dtype=bool)}
+            masks_t1 = {"full": np.asarray(preview_inputs["support_mask_t1"], dtype=bool)}
+            for role in roles:
+                if role == "full":
+                    continue
+                path_t0 = Path(str(mask_paths_t0.get(role, "")))
+                path_t1 = Path(str(mask_paths_t1.get(role, "")))
+                if not path_t0.exists() or not path_t1.exists():
+                    raise ValueError(f"Mask role '{role}' is not available for the current pair.")
+                masks_t0[role] = (sitk.GetArrayFromImage(sitk.ReadImage(str(path_t0))) > 0).astype(bool, copy=False)
+                masks_t1[role] = (sitk.GetArrayFromImage(sitk.ReadImage(str(path_t1))) > 0).astype(bool, copy=False)
+            cache["raw_key"] = raw_key
+            cache["raw_masks"] = (masks_t0, masks_t1)
+
+        if dilation > 0:
+            support_t0 = dilate_mask_xy(masks_t0["full"], dilation)
+            support_t1 = dilate_mask_xy(masks_t1["full"], dilation)
+            masks_t0 = repartition_compartment_masks_to_support(masks_t0, support_t0)
+            masks_t1 = repartition_compartment_masks_to_support(masks_t1, support_t1)
+
+        prepared = {role: (masks_t0[role], masks_t1[role]) for role in roles}
+        cache["prepared_key"] = prepared_key
+        cache["prepared_masks"] = prepared
+        return prepared[str(compartment)]
 
     def _compute_pair_remodelling_preview_compat(self, compute_pair_remodelling_preview, **kwargs):
         import inspect
@@ -6878,6 +6898,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
         return delta
 
     def _compute_pair_remodelling_preview_from_cached_delta(self, preview_inputs, *, valid_mask, label_map):
+        support_mask_t0, support_mask_t1 = self._preview_compartment_masks(preview_inputs, "full")
         try:
             from timelapsedhrpqct.analysis import compute_pair_remodelling_preview_from_delta
 
@@ -6892,8 +6913,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 cluster_size=int(self.analysisCluster.value),
                 method=self._current_analysis_method(),
                 label_map=label_map,
-                support_mask_t0=preview_inputs.get("support_mask_t0"),
-                support_mask_t1=preview_inputs.get("support_mask_t1"),
+                support_mask_t0=support_mask_t0,
+                support_mask_t1=support_mask_t1,
                 marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
@@ -6913,8 +6934,8 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
                 gaussian_filter=bool(self.analysisGaussianFilterCheck.checked),
                 gaussian_sigma=float(self.analysisGaussianSigma.value),
                 label_map=label_map,
-                support_mask_t0=preview_inputs.get("support_mask_t0"),
-                support_mask_t1=preview_inputs.get("support_mask_t1"),
+                support_mask_t0=support_mask_t0,
+                support_mask_t1=support_mask_t1,
                 marrow_mask_dilation_voxels=int(self.analysisMarrowMaskDilation.value),
                 marrow_mask_erosion_voxels=int(self.analysisMarrowMaskErosion.value),
             )
@@ -6922,8 +6943,7 @@ class TimelapsedHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _compute_pair_metric_rows(self, preview_inputs):
         from timelapsedhrpqct.analysis import build_series_common_masks
 
-        support_t0 = np.asarray(preview_inputs["support_mask_t0"], dtype=bool)
-        support_t1 = np.asarray(preview_inputs["support_mask_t1"], dtype=bool)
+        support_t0, support_t1 = self._preview_compartment_masks(preview_inputs, "full")
         rows = []
         for compartment in self._pair_metric_compartments(preview_inputs):
             comp_t0, comp_t1 = self._preview_compartment_masks(preview_inputs, compartment)
