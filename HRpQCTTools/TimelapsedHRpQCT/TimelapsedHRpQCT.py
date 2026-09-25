@@ -11,6 +11,7 @@ import csv
 import gc
 import sys
 import importlib
+from importlib import metadata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,6 +50,23 @@ def _local_pipeline_usable(repo_path, src_path):
         and bool(version)
         and _version_tuple(version) >= _version_tuple(MIN_PIPELINE_VERSION)
     )
+
+
+def _pipeline_runtime_version(package_module):
+    package_path = Path(getattr(package_module, "__file__", "")).resolve()
+    try:
+        package_path.relative_to(_PIPELINE_LOCAL_SRC.resolve())
+    except ValueError:
+        pass
+    else:
+        local_version = _local_pipeline_version(_PIPELINE_LOCAL_REPO)
+        if local_version:
+            return local_version
+
+    try:
+        return metadata.version("timelapsed-hrpqct")
+    except Exception:
+        return str(getattr(package_module, "__version__", "0"))
 
 
 def _resolve_local_pipeline_paths(toolbox_root):
@@ -196,7 +214,7 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         except Exception as exc:
             return False, f"Not installed ({exc})"
 
-        version = str(getattr(timelapsedhrpqct, "__version__", "0"))
+        version = _pipeline_runtime_version(timelapsedhrpqct)
         package_path = str(Path(getattr(timelapsedhrpqct, "__file__", "")).resolve())
         if _version_tuple(version) < _version_tuple(MIN_PIPELINE_VERSION):
             return (

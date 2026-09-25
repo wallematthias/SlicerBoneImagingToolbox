@@ -92,6 +92,29 @@ def test_timelapsed_prerequisites_accept_dataset_or_derivatives_root(tmp_path: P
     assert logic.discover_derivative_prerequisites(tmp_path / "derivatives")["common_region_available"] is True
 
 
+def test_pipeline_status_uses_distribution_version_when_module_version_is_stale(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _install_slicer_import_stubs(monkeypatch)
+    module_dir = MODULE_PATH.parent
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+    spec = importlib.util.spec_from_file_location("timelapsed_version_test", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    installed_package = types.ModuleType("timelapsedhrpqct")
+    installed_package.__file__ = str(tmp_path / "site-packages" / "timelapsedhrpqct" / "__init__.py")
+    installed_package.__version__ = "2.0.44"
+    monkeypatch.setitem(sys.modules, "timelapsedhrpqct", installed_package)
+    monkeypatch.setattr(module.metadata, "version", lambda package_name: "2.0.46")
+
+    available, detail = module.TimelapsedHRpQCTLogic().pipeline_status()
+
+    assert available is True
+    assert "Installed (2.0.46)" in detail
+
+
 def test_timelapsed_ui_mentions_derivative_prerequisites():
     source = MODULE_PATH.read_text(encoding="utf-8")
 
