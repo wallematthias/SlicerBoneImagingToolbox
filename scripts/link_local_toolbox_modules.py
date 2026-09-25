@@ -70,6 +70,13 @@ def _is_stale_toolbox_path(path, repo_root, active_module_paths):
     resolved = path_obj.resolve()
     if str(resolved) in active_module_paths:
         return False
+    sibling_toolbox_checkout = any(
+        part.startswith("SlicerBoneImagingToolbox-")
+        and part != "SlicerBoneImagingToolbox-private"
+        for part in resolved.parts
+    )
+    if sibling_toolbox_checkout:
+        return True
     if resolved.name in LEGACY_MODULE_DIR_NAMES:
         return True
     try:

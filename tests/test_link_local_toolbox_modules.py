@@ -64,6 +64,19 @@ def test_local_link_helper_removes_standalone_module_extension_paths() -> None:
     assert helper["_is_stale_toolbox_path"](stale_path, ROOT, active_paths)
 
 
+def test_local_link_helper_removes_extra_modules_from_sibling_toolbox_checkout() -> None:
+    helper = _load_helper()
+    stale_path = (
+        ROOT.parent
+        / "SlicerBoneImagingToolbox-deep-learning-segmentation-scene"
+        / "HRpQCTTools"
+        / "DeepLearningSegmentationHRpQCT"
+    )
+    active_paths = {str((ROOT / "HRpQCTTools" / "TimelapsedHRpQCT").resolve())}
+
+    assert helper["_is_stale_toolbox_path"](stale_path, ROOT, active_paths)
+
+
 def test_use_current_checkout_helper_removes_sibling_toolbox_checkout_paths() -> None:
     helper = _load_use_current_helper()
     stale_path = (
