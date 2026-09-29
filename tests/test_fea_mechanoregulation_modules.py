@@ -37,6 +37,17 @@ def test_parosol_workflow_profiles_use_shared_profile_registry() -> None:
     assert "SlicerParOSolTemplates" not in source
 
 
+def test_parosol_workflow_replay_applies_scene_label_overrides() -> None:
+    source = PAROSOL_MODULE.read_text(encoding="utf-8")
+    export_body = source.split(
+        "    def _interactive_workflow_replay_config_for_export", 1
+    )[1].split("\n    def ", 1)[0]
+
+    assert "workflow_label_overrides_from_scene" in source
+    assert "def _apply_scene_workflow_label_overrides(self, model_cfg):" in source
+    assert "self._apply_scene_workflow_label_overrides(model_cfg)" in export_body
+
+
 def test_mechanoregulation_module_has_public_metadata_and_root_resolution() -> None:
     source = MECHREG_MODULE.read_text(encoding="utf-8")
 
@@ -87,6 +98,8 @@ def test_parosol_scene_field_loader_restores_fields_by_physical_position() -> No
     assert "restore_scalar_image_to_reference_grid(" in helper_body
     assert 'out_dir = Path(field_path).parent / "reference_grid"' in helper_body
     assert "path_to_load = _restore_field_to_reference_grid(path, reference_node)" in load_body
+    assert "def _scalar_field_file_has_positive_values(path)" in source
+    assert "Skipped empty reference-grid {display_name} field" in load_body
     assert "Loaded {display_name} field on reference grid" in load_body
 
 
@@ -125,6 +138,7 @@ def test_parosol_scene_field_loader_keeps_index_aligned_result_fields_on_referen
     assert "sitk.GetArrayFromImage(image).astype(np.float32, copy=False)" in helper_body
     assert "slicer.util.updateVolumeFromArray(node, array)" in helper_body
     assert "_copy_geometry_if_compatible(node, reference_node)" in helper_body
+    assert "_set_slicer_volume_geometry_from_sitk_image(node, image)" in helper_body
 
 
 def test_mechanoregulation_scene_stages_inputs_on_remodelling_grid() -> None:

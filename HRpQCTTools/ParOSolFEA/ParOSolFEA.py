@@ -182,6 +182,9 @@ from SlicerBoneImagingToolboxLib.fea_batch import (
     parosol_command_derivative_context,
     role_options_for_workflow,
 )
+from SlicerBoneImagingToolboxLib.fea_workflow_labels import (
+    workflow_label_overrides_from_scene,
+)
 
 
 MODULE_VERSION = "0.1.0"
@@ -214,7 +217,7 @@ USER_WORKFLOW_ROOT = _shared_profile_tool_root("parosol-fea")
 WORKFLOW_SEARCH_ROOTS = (USER_WORKFLOW_ROOT,)
 WORKFLOW_BUNDLE_EXCLUDED_FILES = {"slicer_input.nii.gz", "slicer_mask.nii.gz"}
 PREFERRED_WORKFLOW = "interactive_custom"
-SLICER_PAROSOL_BUILD = "2026-07-16-portable-load-history-bundle"
+SLICER_PAROSOL_BUILD = "2026-09-29-workflow-labels-sed-geometry"
 CUSTOM_PREPROCESSING_CREATE_TOKEN = "__create__"
 CUSTOM_PREPROCESSING_SCAFFOLD_TEMPLATE = '''"""Custom preprocessing hook for ParOSol-py/Slicer workflows.
 
@@ -7870,6 +7873,31 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             return (int(next(iter(current))),)
         return requested
 
+    def _apply_scene_workflow_label_overrides(self, model_cfg):
+        if not isinstance(model_cfg, dict):
+            return {}
+        labels_cfg = model_cfg.get("labels")
+        if not isinstance(labels_cfg, dict):
+            return {}
+        label_node = self.maskSelector.currentNode() if hasattr(self, "maskSelector") else None
+        current_labels = _label_values_from_node(label_node, self._volume())
+        if not current_labels:
+            current_labels = _label_values_from_node(self._volume(), self._volume())
+        selected_registration_label = _first_int_text(self._selected_icp_target_values())
+        overrides = workflow_label_overrides_from_scene(
+            labels_cfg,
+            current_labels=current_labels,
+            selected_registration_label=selected_registration_label,
+        )
+        if not overrides:
+            return {}
+        labels_cfg.update(overrides)
+        registration_cfg = model_cfg.get("registration")
+        body_label = overrides.get("body")
+        if isinstance(registration_cfg, dict) and body_label is not None:
+            registration_cfg["target_label"] = int(body_label)
+        return overrides
+
     def _icp_transform_for_current_sample(self, image_node, mask_node=None):
         config = self._active_workflow_config()
         model = config.get("model", {}) if isinstance(config, dict) else {}
@@ -10908,6 +10936,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             model_cfg["mask_image"] = str(mask_path)
         else:
             model_cfg.pop("mask_image", None)
+        self._apply_scene_workflow_label_overrides(model_cfg)
         replay_cfg = model_cfg.setdefault("workflow_replay", {})
         replay_cfg["enabled"] = True
         preprocessing = self._preprocessing_config(force=True)
@@ -12505,8 +12534,19 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             if not path.exists():
                 self._append_log(f"Selected output field not found: {path}\n")
                 continue
-            path_to_load = _restore_field_to_reference_grid(path, reference_node)
             display_name = _result_field_display_name(field)
+            path_to_load = _restore_field_to_reference_grid(path, reference_node)
+            if (
+                field in {"sed", "load_history_estimated_sed", "load_history_final_sed"}
+                and Path(path_to_load) != path
+                and not _scalar_field_file_has_positive_values(path_to_load)
+                and _scalar_field_file_has_positive_values(path)
+            ):
+                self._append_log(
+                    f"Skipped empty reference-grid {display_name} field; "
+                    f"loading model-grid field instead: {path}\n"
+                )
+                path_to_load = path
             node = _load_scalar_field_node_on_reference_geometry(
                 path_to_load,
                 reference_node,
@@ -13512,10 +13552,7 @@ def _load_scalar_field_node_on_reference_geometry(path, reference_node, name):
     if reference_node is not None and _copy_geometry_if_compatible(node, reference_node):
         pass
     else:
-        spacing = image.GetSpacing()
-        node.SetSpacing(float(spacing[0]), float(spacing[1]), float(spacing[2]))
-        origin = image.GetOrigin()
-        node.SetOrigin(float(origin[0]), float(origin[1]), float(origin[2]))
+        _set_slicer_volume_geometry_from_sitk_image(node, image)
     node.Modified()
     return node
 
@@ -13553,6 +13590,14 @@ def _restore_field_to_reference_grid(field_path, reference_node):
                 Path(reference_path_text).unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def _scalar_field_file_has_positive_values(path):
+    try:
+        array = sitk.GetArrayFromImage(sitk.ReadImage(str(path)))
+        return bool(np.any(np.isfinite(array) & (array > 0.0)))
+    except Exception:
+        return False
 
 
 def _decode_process_output(raw):
