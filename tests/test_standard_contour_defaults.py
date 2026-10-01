@@ -42,6 +42,14 @@ def test_slicer_defaults_match_core_standard(site):
     assert ns['_contour_site_defaults']('knee', 'xct2')['inner']['endosteal_threshold'] == 250
 
 
+@pytest.mark.parametrize('modality', ['xct1', 'xct2'])
+@pytest.mark.parametrize('site', ['radius', 'tibia', 'knee'])
+def test_standard_peel_defaults_to_three_for_every_profile(modality, site):
+    defaults = adapter_namespace()['_contour_site_defaults'](site, modality)
+    assert defaults['inner']['peel'] == 3
+
+
+@pytest.mark.parametrize('peel', [None, 0, 5])
 @pytest.mark.parametrize('modality,site,outer_threshold,inner_threshold,kernel', [
     ('xct2', 'radius', 320, 380, (31, 31, 1)),
     ('xct1', 'radius', 300, 500, (10, 10, 1)),
@@ -50,7 +58,7 @@ def test_slicer_defaults_match_core_standard(site):
     ('xct2', 'knee', 150, 250, (10, 10, 1)),
 ])
 def test_adapter_passes_new_kernel_and_physical_smoothing_and_keeps_overrides(
-        monkeypatch, modality, site, outer_threshold, inner_threshold, kernel):
+        monkeypatch, modality, site, outer_threshold, inner_threshold, kernel, peel):
     captured = []
     class StopAtGeneration(Exception):
         pass
@@ -64,10 +72,12 @@ def test_adapter_passes_new_kernel_and_physical_smoothing_and_keeps_overrides(
         call(logic, None, None, site=site, segmentation_method='seg_gauss',
              periosteal_contour_method='standard', endosteal_contour_method='standard',
              params={'modality': modality, 'segmentation': {'cort_threshold': 470},
+                     'inner': {} if peel is None else {'peel': peel},
                      'stable_3d': {'inner_sigma_mm': [0.03, 0.03, 0.04]}})
     p = captured[0]
     assert p.outer.periosteal_threshold == outer_threshold
     assert p.inner.endosteal_threshold == inner_threshold
+    assert p.inner.peel == (3 if peel is None else peel)
     assert p.buie.endosteal_kernel_size == kernel
     assert tuple(p.stable_3d.inner_sigma_mm) == (.03, .03, .04)
     assert p.stable_3d.outer_sigma_mm == (.03, .03, .06)

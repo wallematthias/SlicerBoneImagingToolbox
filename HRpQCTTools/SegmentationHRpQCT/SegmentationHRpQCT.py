@@ -61,7 +61,7 @@ from slicer.ScriptedLoadableModule import (
 )
 
 
-MODULE_VERSION = "0.2.2"
+MODULE_VERSION = "0.2.3"
 SEGMENT_COLORS = {
     "full": (0.2, 0.8, 0.25),
     "trab": (0.0, 0.75, 1.0),
@@ -143,6 +143,8 @@ def _contour_site_defaults(site, modality, periosteal_method="standard", endoste
     """Site-specific density defaults for the shared standard contouring path."""
     preset = SITE_PRESETS.get(str(site), SITE_PRESETS["radius"])
     defaults = {key: dict(value) for key, value in preset.items()}
+    if endosteal_method == "standard":
+        defaults["inner"]["peel"] = 3
     if str(modality) == "xct2" and str(site) in {"radius", "tibia"}:
         if periosteal_method == "standard":
             defaults["outer"].update(periosteal_threshold=320.0, gaussian_sigma=0.8)
@@ -1989,7 +1991,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.outerKernelSpin, "Kernel size for periosteal contour smoothing/refinement.")
         self._tip(self.innerKernelSpin, "Kernel size for endosteal contour smoothing/refinement.")
         self._tip(self.outerOpenSpin, "Opening radius for full-mask contour cleanup.")
-        self._tip(self.peelSpin, "Number of voxels peeled near the cortex for trabecular mask separation.")
+        self._tip(self.peelSpin, "Minimum cortical compartment rim: XY erosion radius in voxels (default 3; 0 disables). Applied after smoothing/filling; does not peel Z end slices or measure cortical bone thickness.")
         endosteal_form.addRow("Trab close radius", self.trabCloseSpin)
         self._remember_expert_row("trabecular_close_radius", self.trabCloseSpin, form=endosteal_form, group="Endosteal contour")
         periosteal_form.addRow("Periosteal Gaussian sigma", self.outerGaussSigmaSpin)

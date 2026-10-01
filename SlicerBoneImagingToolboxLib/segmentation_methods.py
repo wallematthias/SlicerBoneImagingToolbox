@@ -104,5 +104,5 @@ def selected_parameter_groups(
     if periosteal_method == "standard":
         groups["Periosteal contour"] = ("periosteal_threshold", "outer_gaussian_sigma", "periosteal_kernelsize")
     if endosteal_method == "standard":
-        groups["Endosteal contour"] = ("endosteal_threshold", "inner_gaussian_sigma")
+        groups["Endosteal contour"] = ("endosteal_threshold", "inner_gaussian_sigma", "peel")
     return groups

@@ -18,6 +18,16 @@ All notable changes to this extension are documented in this file.
 - Voidspace load-back imports source segmentations, analysis masks, and change maps into one Slicer segmentation node with distinct display colors.
 - Remote batch processing checks server availability before starting server-side work so missing VPN/server access fails quickly instead of hanging.
 
+## [0.2.3] - 2026-10-01
+
+### Fixed
+
+- Restore the standard contouring Peel control with a default 3-voxel XY minimum cortical compartment rim for XCTI/XCTII radius, tibia, and knee; retain custom peel overrides and cross-slice smoothing. The core applies the constraint after smoothing and hole filling, without peeling Z end slices.
+
+### Changed
+
+- Require `bone-contouring>=0.2.1` so Setup installs the implementation that honors the Peel control.
+
 ## [0.2.1] - 2026-09-08
 
 ### Changed

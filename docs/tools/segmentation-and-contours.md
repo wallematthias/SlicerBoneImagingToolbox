@@ -39,24 +39,28 @@ Use this tool when you need to:
 
 Expert settings are grouped by algorithm. Gaussian settings appear for Gaussian segmentation, Laplace-Hamming settings appear for Laplace-Hamming segmentation, and geodesic settings appear only when the geodesic periosteal contour is selected.
 
-Toolbox release `v0.2.2` requires `bone-contouring>=0.2.0`. Update the toolbox
+Toolbox release `v0.2.3` requires `bone-contouring>=0.2.1`. Update the toolbox
 and the Bone Contouring runtime package through Setup, then restart Slicer.
 
 Standard uses the same topology-first compartment contouring for XCTI and XCTII,
 including radius, tibia, and knee. XCTII radius/tibia use outer threshold 320 and
 inner threshold 380 in calibrated mg HA/cm³; other presets retain their existing
 density settings. All envelopes are independent of tissue-segmentation thresholds.
-The fragile pre-fill opening and forced
-cortical peel are removed. Axial hole filling/closing repairs the compartment
+The fragile pre-fill opening is removed. Axial hole filling/closing repairs the compartment
 envelopes; modest 3D signed-distance smoothing uses XYZ sigmas
 `(0.03, 0.03, 0.06)` mm. This is not full-3D morphological closing or a literal
 Buie/native IPL reproduction. Native-mask comparisons currently cover XCTII
 radius/tibia only. Largest-component selection still assumes one target bone;
 this is not a multi-bone knee segmentation method.
 Final axial filling after smoothing prevents reintroduced enclosed envelope
-holes; trabecular ROI is clipped to full before cortical subtraction.
+holes; the final trabecular ROI is constrained to full eroded in XY by `Peel`
+(default 3 voxels for all standard profiles) before cortical subtraction.
+This minimum cortical compartment rim is applied after smoothing/filling and
+does not peel Z end slices. It is not measured cortical bone thickness or an
+original Buie requirement; an explicit peel of 0 disables the constraint.
 
-Ignored legacy controls are hidden for this standard. Physical smoothing and
+Ignored legacy controls are hidden for this standard; the effective Peel control
+is visible in Endosteal expert settings. Physical smoothing and
 the endosteal footprint are recorded in exported recipes (`(31, 31, 1)` dimensions
 for XCTII radius/tibia; existing Buie defaults `(10, 10, 1)` for XCTI/knee),
 and custom recipe overrides are preserved. Algorithm revision, effective
