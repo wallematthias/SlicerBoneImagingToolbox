@@ -88,6 +88,8 @@ def selected_parameter_groups(
     bone_method: str,
     periosteal_method: str,
     endosteal_method: str,
+    modality: str = "",
+    site: str = "",
 ) -> dict[str, tuple[str, ...]]:
     groups = {}
     bone = BONE_SEGMENTATION_METHODS[str(bone_method)]
@@ -99,4 +101,8 @@ def selected_parameter_groups(
         groups["Periosteal contour"] = periosteal.parameters
     if endosteal.parameters:
         groups["Endosteal contour"] = endosteal.parameters
+    if periosteal_method == "standard":
+        groups["Periosteal contour"] = ("periosteal_threshold", "outer_gaussian_sigma", "periosteal_kernelsize")
+    if endosteal_method == "standard":
+        groups["Endosteal contour"] = ("endosteal_threshold", "inner_gaussian_sigma")
     return groups

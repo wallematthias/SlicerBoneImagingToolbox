@@ -39,6 +39,32 @@ Use this tool when you need to:
 
 Expert settings are grouped by algorithm. Gaussian settings appear for Gaussian segmentation, Laplace-Hamming settings appear for Laplace-Hamming segmentation, and geodesic settings appear only when the geodesic periosteal contour is selected.
 
+Toolbox release `v0.2.2` requires `bone-contouring>=0.2.0`. Update the toolbox
+and the Bone Contouring runtime package through Setup, then restart Slicer.
+
+Standard uses the same topology-first compartment contouring for XCTI and XCTII,
+including radius, tibia, and knee. XCTII radius/tibia use outer threshold 320 and
+inner threshold 380 in calibrated mg HA/cm³; other presets retain their existing
+density settings. All envelopes are independent of tissue-segmentation thresholds.
+The fragile pre-fill opening and forced
+cortical peel are removed. Axial hole filling/closing repairs the compartment
+envelopes; modest 3D signed-distance smoothing uses XYZ sigmas
+`(0.03, 0.03, 0.06)` mm. This is not full-3D morphological closing or a literal
+Buie/native IPL reproduction. Native-mask comparisons currently cover XCTII
+radius/tibia only. Largest-component selection still assumes one target bone;
+this is not a multi-bone knee segmentation method.
+Final axial filling after smoothing prevents reintroduced enclosed envelope
+holes; trabecular ROI is clipped to full before cortical subtraction.
+
+Ignored legacy controls are hidden for this standard. Physical smoothing and
+the endosteal footprint are recorded in exported recipes (`(31, 31, 1)` dimensions
+for XCTII radius/tibia; existing Buie defaults `(10, 10, 1)` for XCTI/knee),
+and custom recipe overrides are preserved. Algorithm revision, effective
+parameters, and advisory contour QA are saved on the generated segmentation
+node. Existing saved masks are not automatically changed. Inspect each result:
+the method cannot guarantee anatomical correctness or voxel-identical Scanco
+contours.
+
 ## Batch Workflow
 
 Use `Bone Imaging > I/O > Batch Processor` for cohort contouring. Each row corresponds to one image. Batch contouring writes generated masks under `derivatives/BoneContours/` and records how they were generated in sidecars and manifests.

@@ -1,6 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
+
+
+@pytest.mark.parametrize('modality', ['xct1', 'xct2'])
+@pytest.mark.parametrize('site', ['radius', 'tibia', 'knee', 'unparsed'])
+def test_standard_hides_ignored_legacy_controls(modality, site):
+    from SlicerBoneImagingToolboxLib.segmentation_methods import selected_parameter_groups
+    groups = selected_parameter_groups(bone_method='seg_gauss', periosteal_method='standard',
+                                       endosteal_method='standard', modality=modality, site=site)
+    assert groups['Periosteal contour'] == ('periosteal_threshold', 'outer_gaussian_sigma', 'periosteal_kernelsize')
+    assert groups['Endosteal contour'] == ('endosteal_threshold', 'inner_gaussian_sigma')
 import sys
 
 
@@ -89,7 +100,7 @@ def test_expert_parameter_groups_are_driven_by_selected_algorithms() -> None:
 
     assert "laplace_hamming_threshold" in groups["Bone segmentation"]
     assert "periosteal_threshold" in groups["Periosteal contour"]
-    assert "fill_holes" in groups["Periosteal contour"]
+    assert "fill_holes" not in groups["Periosteal contour"]
     assert "endosteal_threshold" in groups["Endosteal contour"]
 
 

@@ -61,7 +61,7 @@ from slicer.ScriptedLoadableModule import (
 )
 
 
-MODULE_VERSION = "0.2.0"
+MODULE_VERSION = "0.2.2"
 SEGMENT_COLORS = {
     "full": (0.2, 0.8, 0.25),
     "trab": (0.0, 0.75, 1.0),
@@ -138,6 +138,18 @@ SITE_PRESETS = {
         },
     },
 }
+
+def _contour_site_defaults(site, modality, periosteal_method="standard", endosteal_method="standard"):
+    """Site-specific density defaults for the shared standard contouring path."""
+    preset = SITE_PRESETS.get(str(site), SITE_PRESETS["radius"])
+    defaults = {key: dict(value) for key, value in preset.items()}
+    if str(modality) == "xct2" and str(site) in {"radius", "tibia"}:
+        if periosteal_method == "standard":
+            defaults["outer"].update(periosteal_threshold=320.0, gaussian_sigma=0.8)
+        if endosteal_method == "standard":
+            defaults["inner"].update(endosteal_threshold=380.0, gaussian_sigma=0.8)
+    return defaults
+
 
 METHOD_PRESETS = {
     "seg_gauss": {
@@ -974,7 +986,8 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         generate_masks_from_image = bone_contouring.generate_masks_from_image
 
         params = dict(params or {})
-        site_defaults = SITE_PRESETS.get(str(site), SITE_PRESETS["radius"])
+        site_defaults = _contour_site_defaults(
+            site, params.get("modality", "xct2"), periosteal_contour_method, endosteal_contour_method)
         method_defaults = METHOD_PRESETS.get(segmentation_method, METHOD_PRESETS["seg_gauss"])
 
         inner_params = dict(site_defaults["inner"])
@@ -1000,10 +1013,20 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             "none": "gauss",
         }.get(segmentation_method, segmentation_method)
         geodesic_params = dict(params.get("geodesic", {}))
+        core_defaults = bone_contouring.resolve_preset(
+            modality=str(params.get("modality", "xct2")),
+            site=str(site) if str(site) in SITE_PRESETS else "radius",
+            segmentation=segmentation_package_method, outer_contour=outer_method,
+            inner_contour=inner_method)
+        from dataclasses import replace
+        buie_params = replace(core_defaults.buie, **dict(params.get("buie", {})))
+        stable_params = replace(core_defaults.stable_3d, **dict(params.get("stable_3d", {})))
 
         contour_params = ContourParameters(
             modality=str(params.get("modality", "xct2")),
             site=str(site),
+            buie=buie_params,
+            stable_3d=stable_params,
             outer=OuterContourParameters(
                 contour_method=outer_method,
                 periosteal_threshold=_float_param(outer_params, "periosteal_threshold", 300.0),
@@ -1071,6 +1094,7 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             segmentation_image, segmentation_source_meta = self._laplace_hamming_support_image(volume_node, image)
 
         generated = generate_masks_from_image(image, contour_params, segmentation_image=segmentation_image)
+        generated.metadata["effective_parameters"] = asdict(contour_params)
         generated.metadata.update(segmentation_source_meta)
 
         periosteal_contour_generated = periosteal_contour_method != "none"
@@ -1171,6 +1195,9 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         ):
             if key in generated.metadata:
                 segmentation_node.SetAttribute(f"HRpQCT.{key}", str(generated.metadata[key]))
+        # Keep the actual algorithm revision, physical settings, and QA with the scene.
+        for key in ("outer_contour", "inner_contour", "effective_parameters"):
+            segmentation_node.SetAttribute(f"HRpQCT.{key}", json.dumps(generated.metadata[key], sort_keys=True))
 
         outputs = {}
         output_specs = [
@@ -2133,6 +2160,8 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             bone_method=str(self.segmentationMethodCombo.currentData),
             periosteal_method=periosteal_method,
             endosteal_method=str(self.endostealContourCombo.currentData),
+            modality=str(self.modalityCombo.currentData),
+            site=self._effective_contour_site(),
         )
         visible_parameters = {parameter for parameters in groups.values() for parameter in parameters}
         for parameter_id in self._expertRows:
@@ -2232,6 +2261,21 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _on_contour_method_changed(self):
         self._mark_contour_methods_custom()
+        methods = (str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
+        previous = getattr(self, "_lastContourMethods", (None, None))
+        if not getattr(self, "_suppressMethodCustomSwitch", False):
+            site = self._effective_contour_site()
+            modality = str(self.modalityCombo.currentData)
+            if site in SITE_PRESETS:
+                defaults = _contour_site_defaults(site, modality)
+                for index, stage, threshold, sigma, key in (
+                    (0, "outer", self.periostealThresholdSpin, self.outerGaussSigmaSpin, "periosteal_threshold"),
+                    (1, "inner", self.endostealThresholdSpin, self.innerGaussSigmaSpin, "endosteal_threshold"),
+                ):
+                    if methods[index] == "standard" and previous[index] != "standard":
+                        threshold.value = defaults[stage][key]
+                        sigma.value = defaults[stage]["gaussian_sigma"]
+        self._lastContourMethods = methods
         self._refresh_method_dependent_ui()
 
     def _mark_contour_methods_custom(self):
@@ -2451,6 +2495,10 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._update_batch_options_summary()
 
     def _apply_params_to_widgets(self, params):
+        # Preserve physical-unit settings when loading/exporting custom recipes.
+        self._contourRegularizationParams = {
+            key: dict(params.get(key) or {}) for key in ("buie", "stable_3d")}
+        self._lastContourMethods = (str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
         segmentation = dict(params.get("segmentation") or {})
         outer = dict(params.get("outer") or {})
         inner = dict(params.get("inner") or {})
@@ -2514,7 +2562,11 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             site = self._selected_site(volume_node=self.volumeSelector.currentNode(), strict=False)
         if site not in SITE_PRESETS:
             site = "radius"
-        preset = SITE_PRESETS[site]
+        modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
+        preset = _contour_site_defaults(site, modality,
+            str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
+        self._contourRegularizationParams = {}
+        self._lastContourMethods = (str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
         inner = preset["inner"]
         outer = preset["outer"]
         modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
@@ -2566,7 +2618,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 break
 
     def _site_contour_params(self, site):
-        preset = SITE_PRESETS[str(site)]
+        modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
+        preset = _contour_site_defaults(site, modality,
+            str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
         inner = dict(preset["inner"])
         outer = dict(preset["outer"])
         modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
@@ -2638,7 +2692,25 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         }
         if use_site_defaults and site in SITE_PRESETS:
             params.update(self._site_contour_params(site))
+        effective_site = selected_site if selected_site in SITE_PRESETS else self._effective_contour_site()
+        methods = (str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
+        if effective_site in SITE_PRESETS and "standard" in methods:
+            core = self.logic._import_bone_contouring().resolve_preset(
+                modality=modality, site=effective_site,
+                outer_contour="geodesic" if methods[0] == "geodesic_fracture" else "standard",
+                inner_contour=methods[1])
+            for key in ("buie", "stable_3d"):
+                params[key] = asdict(getattr(core, key))
+        if not use_site_defaults:
+            for key, settings in getattr(self, "_contourRegularizationParams", {}).items():
+                params.setdefault(key, {}).update(settings)
         return params
+
+    def _effective_contour_site(self):
+        selected = str(self.siteCombo.currentData)
+        if selected in SITE_PRESETS:
+            return selected
+        return self._selected_site(volume_node=self.volumeSelector.currentNode(), strict=False)
 
     def _is_batch_image_path(self, path):
         name = path.name.lower()
