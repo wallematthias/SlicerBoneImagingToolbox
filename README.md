@@ -26,6 +26,7 @@ Key pages:
 - [Motion Scoring](docs/tools/motion-scoring.md)
 - [Segmentation and Contours](docs/tools/segmentation-and-contours.md)
 - [Published U-Net Contouring](docs/tools/deep-learning-segmentation.md)
+- [Functional Bone batch tutorial](docs/tutorials/functional-bone.md)
 - [Scanco I/O](docs/tools/scanco-io.md)
 - [Voidspace](docs/tools/voidspace.md)
 - [derivative workflow contract](docs/derivatives.md)

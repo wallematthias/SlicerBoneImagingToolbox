@@ -165,7 +165,7 @@ def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["bone-contouring"].display_name == "Bone Contouring"
     assert specs["bone-contouring"].import_name == "bone_contouring"
-    assert specs["bone-contouring"].minimum_version == "0.3.1"
+    assert specs["bone-contouring"].minimum_version == "0.3.2"
     assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 
@@ -175,7 +175,7 @@ def test_bone_contouring_install_uses_local_editable_checkout() -> None:
 
     assert len(commands) == 2
     assert "torch>=2.2" in commands[0]
-    assert "bone-imaging-derivatives>=0.1.6" in commands[0]
+    assert "bone-imaging-derivatives>=0.1.7" in commands[0]
     assert commands[1].startswith("--no-deps -e ")
     assert commands[1].endswith("/bone-contouring[unet]")
 
@@ -207,7 +207,7 @@ def test_voidspace_runtime_package_has_user_facing_setup_name() -> None:
 
     assert spec.display_name == "Voidspace"
     assert spec.import_name == "voidspace"
-    assert spec.minimum_version == "0.1.3"
+    assert spec.minimum_version == "0.1.4"
     assert "analysis-domain masks" in spec.notes
 
 
@@ -224,7 +224,7 @@ def test_plate_rod_install_commands_honor_wheel_only_with_sibling_checkout(monke
 
 def test_microarchitecture_minimum_includes_canonical_contour_discovery() -> None:
     spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "bone-microarchitecture")
-    assert spec.minimum_version == "0.2.4"
+    assert spec.minimum_version == "0.2.5"
 
 
 def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:

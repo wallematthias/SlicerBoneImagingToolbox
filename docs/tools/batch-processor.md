@@ -23,11 +23,13 @@ If the dataset is not yet normalized, run the Dataset Naming Helper first. The B
 
 Each tool-specific profile defines the command, required inputs, and expected outputs for the selected tool. Shipped profiles provide scanner or workflow defaults. Some tools also discover user-exported custom profiles.
 
-For published CNN compartments, select **Bone Contouring → U-Net (Neeteson et al.)**
+For published CNN compartments, select **Bone Contouring → U-Net contours (Neeteson et al.) + LH SEG**
 and a device. Standard/custom contour profiles remain in the same list, with
 automatic per-row site detection. U-Net uses fixed published defaults and writes
-full/trab/cort masks; run a standard profile afterwards to add missing tissue SEG
-without replacing those compartments. Scene-only U-Net and tissue-only recipes
+full/trab/cort masks plus XCTII Laplace–Hamming tissue SEG and material labels in
+one run. Completed U-Net compartments are reused when only SEG/material is
+missing, without running the network or replacing those files. Load combines
+full/trab/cort/SEG in one node. Scene-only U-Net and tissue-only recipes
 are not offered as standard batch profiles.
 
 ## Required Inputs By Tool
@@ -38,6 +40,8 @@ are not offered as standard batch profiles.
 | Timelapsed Remodelling | XCT images, registration ROI, bone segmentation, analysis ROIs | transforms, common region, remodelling maps, comparison table |
 | Microarchitecture | XCT/BMD image, bone segmentation, analysis ROIs | scalar maps, measurement table |
 | Registered Microarchitecture profile | Microarchitecture inputs plus common region | common-region-restricted measurement table |
+| Native Functional Bone profile | Microarchitecture inputs plus native large-void map | full-scan measurements excluding large voidspace, analysis mask |
+| Registered Functional Bone profile | Microarchitecture inputs plus common region and large-void map | common-region measurements excluding large voidspace, analysis mask |
 | Voidspace | bone segmentation and optional mask | all-void and large-void masks, measurement table |
 | Registered Voidspace profile | native segmentation, native full mask, native common region | common-region-restricted all-void and large-void masks, measurement table |
 | Dynamic Voidspace profile | adjacent Timelapsed registered segmentations and common region | expanded, contracted, and quiescent voidspace masks, change table |
@@ -48,6 +52,8 @@ are not offered as standard batch profiles.
 | Spine Segmentation | CT image | vertebral segmentation outputs |
 
 The table should show only inputs required by the selected tool/profile. A row with missing required inputs should not run.
+
+Both Functional Bone profiles are under **Microarchitecture**. Native requires a native Voidspace run but no registration/common region. Registered requires a native common region and accepts either native or Registered voidspace output. Their measurement directories and loaded analysis regions are distinct, while native Microarchitecture maps are shared. Existing saved `functional-bone` jobs remain registered. See [Microarchitecture](microarchitecture.md) for details.
 
 ## Queue Behavior
 
@@ -62,6 +68,16 @@ The queued jobs keep the tool and profile that were active when they were added 
 ## Outputs
 
 Outputs are written as derivative artifacts with manifest records. Loaded outputs should appear in Slicer with readable names, compact result tables, and predictable display settings.
+
+Imported cropped masks retain their own origin, spacing, and direction when
+loaded; the source volume's geometry must not overwrite their crop position.
+Loading contours, U-Net compartments, Voidspace, common regions, or Functional
+bone analysis masks marks them as batch-owned case overlays. Loading another
+case hides earlier batch overlays, while registered timepoints of the same subject
+and VOI remain visible together. Manually created segmentations are left alone.
+Reloading a contour result replaces only the previously tagged batch result, even
+if a manual segmentation has the same name. Legacy untagged overlays are not hidden
+automatically; hide them manually or start a fresh scene for testing.
 
 ## Citation
 

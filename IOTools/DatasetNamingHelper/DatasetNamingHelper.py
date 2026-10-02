@@ -444,7 +444,7 @@ class DatasetNamingHelperWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self.statusLabel.text = f"Could not undo rename: {exc}"
             return
-        message = f"Restored {restored} path(s) from {manifest}."
+        message = f"Restored {restored} path(s); completed manifest archived. You can rename again."
         self._analyze()
         self.statusLabel.text = message
 

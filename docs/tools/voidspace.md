@@ -4,6 +4,9 @@ Voidspace computes void masks and measurements from binary bone segmentations. T
 
 https://github.com/wallematthias/voidspace
 
+To use Large voidspace maps in microarchitecture analysis, follow the
+[Functional Bone tutorial](../tutorials/functional-bone.md).
+
 ## Required Inputs
 
 | Input | Required | Meaning |
@@ -46,7 +49,7 @@ Three profiles are exposed:
 
 | Profile | Behavior |
 | --- | --- |
-| Voidspace | runs native voidspace from each native segmentation |
+| Voidspace | runs native voidspace from each native segmentation, using the full bone mask when available |
 | Registered voidspace | reuses or creates native voidspace maps, then constrains measurement and output masks to `native full mask & native common region` |
 | Dynamic voidspace | runs pair-local registered-space voidspace for adjacent Timelapsed pairs, then compares baseline and follow-up large-void masks |
 
@@ -54,7 +57,33 @@ The native profile writes full-image voidspace maps. The registered profile stay
 
 Dynamic voidspace uses the registered Timelapsed segmentations as inputs, but it writes its baseline and follow-up intermediate voidspace maps inside the dynamic pair folder. Running dynamic voidspace should not cause standalone Registered voidspace rows to switch to `Load`.
 
-For native plus common-region reporting, combine masks upstream and provide the combined mask as the single Voidspace mask. The Voidspace batch interface intentionally exposes one mask input.
+For common-region reporting, calculate maps on the full bone domain first and
+then clip/measure them within `full mask & common region`. Both registered and
+dynamic batch profiles follow this order, avoiding morphology at the artificial
+common-region boundaries. Dynamic full-domain intermediates are retained inside
+each pair's baseline/follow-up `full_domain_maps/` directory.
+
+### Boundary handling and consistency
+
+Scene and batch use the same core morphology and physical radii. For the closest
+scene/batch comparison, select the matching full bone mask in scene mode as well.
+Mask crops are placed by their physical geometry using nearest-neighbor resampling.
+
+Closing and erosion continue the first/last slices beyond the scan ends before
+cropping back. This assumes the endpoint cross-section continues outside the
+acquisition; it avoids treating the scan ends as empty biological space. It is
+not evidence of exact IPL equivalence. Without a full mask, exterior background
+is identified from the lateral image edges, not the two scan-end faces, so an
+internal cavity open at the scan ends is not discarded. An explicit full mask is
+preferred, especially with breached cortex or truncated anatomy at lateral edges.
+
+`All voidspace` includes `Large voidspace`; the large map is a size-filtered subset,
+not a component subtracted from All. The two displayed segments can overlap.
+
+After updating, force-rerun existing Voidspace outputs (disable `Skip existing`),
+then rerun dependent Functional bone measurements. Old files are not corrected
+merely by loading them. Force-rerunning Registered voidspace also recomputes its
+native maps rather than silently reusing earlier results.
 
 ## Loaded Outputs
 

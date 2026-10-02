@@ -126,7 +126,7 @@ TOOL_PROFILES = {
         ("XtremeCT II", "XtremeCTII", False),
         ("XtremeCT II - Geodesic", "XtremeCTII-Geodesic", False),
         ("XtremeCT II - LH", "XtremeCTII-LH", False),
-        ("U-Net (Neeteson et al.)", "unet", False),
+        ("U-Net contours (Neeteson et al.) + LH SEG", "unet", False),
     ),
     "mask_label_algebra": (
         ("Standard", "standard", False),
@@ -134,7 +134,8 @@ TOOL_PROFILES = {
     "microarchitecture": (
         ("XtremeCT II", "xtremectii", False),
         ("XtremeCT II - registered", "xtremectii-registered", True),
-        ("Functional bone", "functional-bone", True),
+        ("Native Functional Bone", "functional-bone-native", False),
+        ("Registered Functional Bone", "functional-bone", True),
     ),
     "timelapse": (
         ("Standard", "standard", True),
@@ -217,49 +218,15 @@ _VOIDSPACE_REGISTERED_SCRIPT = r"""
 from __future__ import annotations
 
 import argparse
-import numpy as np
 from pathlib import Path
 
-import SimpleITK as sitk
-
 from voidspace import analyze_maps, run_case
-from voidspace.io import read_mask, write_mask_like
-
-
-def _reference_image(reference):
-    return reference.image if hasattr(reference, "image") else reference
-
-
-def _array_on_reference_grid(array, source_reference, target_reference):
-    source_image = _reference_image(source_reference)
-    target_image = _reference_image(target_reference)
-    if source_image.GetSize() == target_image.GetSize() and source_image.GetOrigin() == target_image.GetOrigin():
-        return np.asarray(array, dtype=bool)
-    image = sitk.GetImageFromArray(np.asarray(array, dtype=np.uint8))
-    image.CopyInformation(source_image)
-    resampled = sitk.Resample(
-        image,
-        target_image,
-        sitk.Transform(),
-        sitk.sitkNearestNeighbor,
-        0,
-        sitk.sitkUInt8,
-    )
-    return sitk.GetArrayFromImage(resampled).astype(bool)
 
 
 def _intersect_masks(mask_paths: list[str], output_path: Path) -> Path:
-    intersection, spacing, reference = read_mask(mask_paths[0])
-    for path in mask_paths[1:]:
-        mask, mask_spacing, mask_reference = read_mask(path)
-        if mask_spacing != spacing:
-            raise ValueError("all masks must have the same spacing")
-        mask = _array_on_reference_grid(mask, mask_reference, reference)
-        if mask.shape != intersection.shape:
-            raise ValueError("all masks must overlap the reference image space")
-        intersection = intersection & mask
-    write_mask_like(intersection, reference, output_path)
-    return output_path
+    from voidspace import intersect_masks
+
+    return intersect_masks(mask_paths, output_path=output_path, force=True)
 
 
 def main() -> int:
@@ -286,9 +253,10 @@ def main() -> int:
     ]
     large_void = next((path for path in native_outputs if "voidspace_large_mask" in path.name), large_void)
     all_void = next((path for path in native_outputs if "voidspace_all_mask" in path.name), all_void)
-    if not large_void.exists() or not all_void.exists():
+    if args.force or not large_void.exists() or not all_void.exists():
         result = run_case(
             segmentation_path=args.segmentation,
+            mask_path=args.full_mask,
             output_dir=native_output_dir,
             force=True,
         )
@@ -316,13 +284,10 @@ _VOIDSPACE_DYNAMIC_SCRIPT = r"""
 from __future__ import annotations
 
 import argparse
-import numpy as np
 from pathlib import Path
 
-import SimpleITK as sitk
-
 from voidspace import compare, run_case
-from voidspace.io import read_mask, write_mask_like
+from voidspace import analyze_maps
 
 
 def _existing_map(directory: Path, stem: str) -> Path | None:
@@ -333,40 +298,10 @@ def _existing_map(directory: Path, stem: str) -> Path | None:
     return None
 
 
-def _reference_image(reference):
-    return reference.image if hasattr(reference, "image") else reference
-
-
-def _array_on_reference_grid(array, source_reference, target_reference):
-    source_image = _reference_image(source_reference)
-    target_image = _reference_image(target_reference)
-    if source_image.GetSize() == target_image.GetSize() and source_image.GetOrigin() == target_image.GetOrigin():
-        return np.asarray(array, dtype=bool)
-    image = sitk.GetImageFromArray(np.asarray(array, dtype=np.uint8))
-    image.CopyInformation(source_image)
-    resampled = sitk.Resample(
-        image,
-        target_image,
-        sitk.Transform(),
-        sitk.sitkNearestNeighbor,
-        0,
-        sitk.sitkUInt8,
-    )
-    return sitk.GetArrayFromImage(resampled).astype(bool)
-
-
 def _intersect_masks(mask_paths: list[str], output_path: Path) -> Path:
-    intersection, spacing, reference = read_mask(mask_paths[0])
-    for path in mask_paths[1:]:
-        mask, mask_spacing, mask_reference = read_mask(path)
-        if mask_spacing != spacing:
-            raise ValueError("all masks must have the same spacing")
-        mask = _array_on_reference_grid(mask, mask_reference, reference)
-        if mask.shape != intersection.shape:
-            raise ValueError("all masks must overlap the reference image space")
-        intersection = intersection & mask
-    write_mask_like(intersection, reference, output_path)
-    return output_path
+    from voidspace import intersect_masks
+
+    return intersect_masks(mask_paths, output_path=output_path, force=True)
 
 
 def _registered_void(segmentation: str, full_mask: str, common_region: str, output_dir: Path, *, force: bool) -> Path:
@@ -381,9 +316,16 @@ def _registered_void(segmentation: str, full_mask: str, common_region: str, outp
         )
         result = run_case(
             segmentation_path=segmentation,
+            mask_path=full_mask,
+            output_dir=output_dir / "full_domain_maps",
+            force=True,
+        )
+        result = analyze_maps(
+            large_void_path=result.large_mask_path,
+            all_void_path=result.all_mask_path,
             mask_path=analysis_mask,
             output_dir=output_dir,
-            force=True if force or large_void is not None or all_void is not None else False,
+            force=True,
         )
         return result.large_mask_path
     return large_void
@@ -446,6 +388,7 @@ from bone_imaging_derivatives.layout import voi_token
 from bone_microarchitecture.batch import (
     _load_map,
     _load_volume,
+    _mask_on_reference_grid,
     _masked_maps_for_measurements,
     _summarize_measurements,
     run_microarchitecture_batch,
@@ -456,17 +399,6 @@ from bone_microarchitecture.results import write_measurement_csv
 def _map_filename(subject: str, session: str, site: str, map_name: str, extension: str) -> str:
     token = map_name.lower().replace(".", "-")
     return f"sub-{subject}_ses-{session}_voi-{voi_token(site)}_map-{token}{extension}"
-
-
-def _same_geometry(left, right) -> bool:
-    if left is None or right is None:
-        return True
-    return (
-        left.GetSize() == right.GetSize()
-        and left.GetSpacing() == right.GetSpacing()
-        and left.GetOrigin() == right.GetOrigin()
-        and left.GetDirection() == right.GetDirection()
-    )
 
 
 def _existing_native_maps(map_dir: Path, subject: str, session: str, site: str, *, has_cortical: bool):
@@ -502,7 +434,7 @@ def main() -> int:
     parser.add_argument("--full-mask", required=True)
     parser.add_argument("--trab-mask", required=True)
     parser.add_argument("--cort-mask", required=True)
-    parser.add_argument("--common-region", required=True)
+    parser.add_argument("--common-region")
     parser.add_argument("--voidspace-mask", required=True)
     parser.add_argument("--dataset-root", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -523,30 +455,16 @@ def main() -> int:
         "bone_segmentation": _load_volume(Path(args.segmentation), scaling="native"),
         "periosteal_mask": _load_volume(Path(args.full_mask), scaling="native"),
         "trabecular_mask": _load_volume(Path(args.trab_mask), scaling="native"),
-        "common_region": _load_volume(Path(args.common_region), scaling="native"),
         "voidspace_mask": _load_volume(Path(args.voidspace_mask), scaling="native"),
     }
     volumes["cortical_mask"] = _load_volume(Path(args.cort_mask), scaling="native")
-    masks = {
-        "bone_segmentation": np.asarray(volumes["bone_segmentation"].array) > 0,
-        "periosteal_mask": np.asarray(volumes["periosteal_mask"].array) > 0,
-        "trabecular_mask": np.asarray(volumes["trabecular_mask"].array) > 0,
-        "cortical_mask": np.asarray(volumes["cortical_mask"].array) > 0,
-    }
-    common = np.asarray(volumes["common_region"].array) > 0
-    voidspace = np.asarray(volumes["voidspace_mask"].array) > 0
-    expected_shape = np.asarray(image.array).shape
-    arrays = {"common_region": common, "voidspace_mask": voidspace, **masks}
-    mismatched = [name for name, array in arrays.items() if np.asarray(array).shape != expected_shape]
-    if mismatched:
-        raise ValueError("functional bone inputs must be in the image space: " + ", ".join(mismatched))
-    geometry_mismatched = [
-        name
-        for name, volume in volumes.items()
-        if not _same_geometry(image.sitk_image, volume.sitk_image)
-    ]
-    if geometry_mismatched:
-        raise ValueError("functional bone inputs must match image geometry: " + ", ".join(geometry_mismatched))
+    masks = {name: _mask_on_reference_grid(volumes[name], image) for name in (
+        "bone_segmentation", "periosteal_mask", "trabecular_mask", "cortical_mask",
+    )}
+    common = masks["periosteal_mask"]
+    if args.common_region:
+        common = common & _mask_on_reference_grid(_load_volume(Path(args.common_region), scaling="native"), image)
+    voidspace = _mask_on_reference_grid(volumes["voidspace_mask"], image)
 
     functional_common = common & ~voidspace
     analysis_extension = ".nii.gz" if image.sitk_image is not None else ".npy"
@@ -653,6 +571,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if tool == "bone_contouring" and str(profile) == "unet":
             tool = "deep_learning_segmentation"
         registered = self.profile_requests_registration(tool, profile) or bool(registered and tool in {"microarchitecture", "plate_rod", "timelapse", "voidspace"})
+        if tool == "microarchitecture" and self.is_functional_bone_profile(profile):
+            registered = self.profile_requests_registration(tool, profile)
         if tool == "fea":
             ok, message = self.normalized_dataset_status(root)
             if not ok:
@@ -679,14 +599,17 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 if outputs:
                     row.update(action="Load", status="Complete", output_paths=outputs)
                 elif completed_unet_masks(self._deep_learning_targets(root, row)["provenance"]):
-                    row.update(action="Publish", status="Masks complete; manifest publication needed")
+                    if self._deep_learning_incompatible_seg(root, row):
+                        row.update(action="Missing", status="Existing SEG conflicts with XCTII LH defaults; preserved")
+                    else:
+                        row.update(action="Run", status="U-Net contours complete; finish missing LH SEG/material (no inference)")
                 elif (any(path.exists() for path in self._deep_learning_targets(root, row).values())
                       or self._deep_learning_existing_compartments(root, row)):
                     row.update(action="Missing", status="Existing/incomplete contours; preserved (no overwrite)")
                 if record.source == "virtual" or record.metadata.get("review_reason"):
                     row.update(action="Missing", status="U-Net requires a physical AIM stack, not a virtual slice view")
                 rows.append(row)
-            return rows, f"Discovered {len(rows)} AIM row(s); published radius/tibia weights."
+            return rows, f"Discovered {len(rows)} AIM row(s); published radius/tibia contours plus XCTII LH SEG."
         images = discover_raw_xct_images(root)
         contour_artifacts = (
             *discover_derivative_artifacts(root, "IPLContours"),
@@ -1389,6 +1312,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             "sub-*/ses-*/xct/measurements/*_measurements.csv",
             "sub-*/ses-*/xct/registered_measurements/*_measurements.csv",
             "sub-*/ses-*/xct/functional_bone_measurements/*_measurements.csv",
+            "sub-*/ses-*/xct/functional_bone_native_measurements/*_measurements.csv",
         )
         for pattern in measurement_patterns:
             for path in sorted(micro_root.glob(pattern)):
@@ -1411,7 +1335,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         metadata={
                             "use_common_region": "/registered_measurements/" in path_text
                             or "/functional_bone_measurements/" in path_text,
-                            "functional_bone": "/functional_bone_measurements/" in path_text,
+                            "functional_bone": "/functional_bone_measurements/" in path_text
+                            or "/functional_bone_native_measurements/" in path_text,
                         },
                     )
                 )
@@ -1453,11 +1378,14 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 continue
             path_text = str(artifact.path).replace("\\", "/").lower()
             common_region = bool(artifact.metadata.get("use_common_region"))
-            functional_bone = bool(artifact.metadata.get("functional_bone")) or "/functional_bone_measurements/" in path_text
+            functional_bone = bool(artifact.metadata.get("functional_bone")) or any(
+                folder in path_text for folder in ("/functional_bone_measurements/", "/functional_bone_native_measurements/")
+            )
             path_registered = "/registered_measurements/" in path_text
             if str(tool or "") == "microarchitecture":
-                if profile_value == "functional-bone":
-                    if functional_bone:
+                if BatchProcessorLogic.is_functional_bone_profile(profile_value):
+                    functional_registered = common_region or "/functional_bone_measurements/" in path_text
+                    if functional_bone and functional_registered == (profile_value == "functional-bone"):
                         filtered.append(artifact)
                     continue
                 if functional_bone:
@@ -1467,6 +1395,10 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             elif not registered and not common_region and not path_registered:
                 filtered.append(artifact)
         return tuple(filtered)
+
+    @staticmethod
+    def is_functional_bone_profile(profile: str) -> bool:
+        return str(profile or "").strip() in {"functional-bone", "functional-bone-native"}
 
     @staticmethod
     def _is_microarchitecture_map_output(artifact) -> bool:
@@ -1509,7 +1441,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             return [str(path) for path in self._mechanoregulation_output_paths_for_row(root, row)]
         if tool == "voidspace":
             return [str(path) for path in self._voidspace_output_paths_for_row(root, row)]
-        if tool == "microarchitecture" and str(row.get("profile") or "").strip() == "functional-bone":
+        if tool == "microarchitecture" and self.is_functional_bone_profile(row.get("profile")):
             return [str(path) for path in self._functional_bone_output_paths_for_row(root, row)]
         key = self._row_case_key(row)
         if key is None:
@@ -1819,12 +1751,14 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             output = self._deep_learning_output_directory(root, row)
             prefix = re.sub(r"_xct$", "", re.sub(r"\.aim(?:;\d+)?$", "", image.name, flags=re.IGNORECASE), flags=re.IGNORECASE)
             expected = self._deep_learning_targets(root,row)["provenance"].stem.removesuffix("_UNET")
-            if (any(path.exists() for path in self._deep_learning_targets(root, row).values())
+            complete = completed_unet_masks(self._deep_learning_targets(root, row)["provenance"])
+            if not complete and (any(path.exists() for path in self._deep_learning_targets(root, row).values())
                     or self._deep_learning_existing_compartments(root, row)):
                 raise FileExistsError("Existing BoneContours are preserved; U-Net will not overwrite or mix masks.")
             if prefix != expected or row.get("action") == "Missing":
                 raise ValueError("U-Net requires a normalized physical AIM stack matching the row identity.")
             return ["-m", "bone_contouring.unet.cli", str(image), "--output", str(output),
+                    "--dataset-root", str(root),
                     "--device", str(row.get("device") or "auto")]
         if tool_key == "fea":
             return self._fea_command_for_row(self._dataset_root(dataset_root), profile, row, force=force)
@@ -1832,8 +1766,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             return self._mechanoregulation_command_for_row(self._dataset_root(dataset_root), profile, row, force=force)
         if tool_key == "voidspace":
             return self._voidspace_command_for_row(self._dataset_root(dataset_root), profile, row, force=force)
-        if tool_key == "microarchitecture" and str(profile or "").strip() == "functional-bone":
-            return self._functional_bone_command_for_row(self._dataset_root(dataset_root), row, force=force)
+        if tool_key == "microarchitecture" and self.is_functional_bone_profile(profile):
+            return self._functional_bone_command_for_row(self._dataset_root(dataset_root), dict(row, profile=str(profile).strip()), force=force)
         if tool_key not in self._CLI_COMMANDS:
             raise ValueError(f"{tool_key} does not expose a one-row batch processor command yet.")
         module, command = self._CLI_COMMANDS[tool_key]
@@ -1887,6 +1821,15 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         return bool(preferred_contours(candidates, BatchProcessorLogic._row_case_key(row)))
 
     @staticmethod
+    def _deep_learning_incompatible_seg(root, row):
+        from bone_contouring.unet.batch import lh_segmentation_matches
+        candidates = [artifact for family in ("ImportedContours", "IPLContours", "BoneContours")
+                      for artifact in discover_derivative_artifacts(root, family)]
+        selection = preferred_contours(candidates, BatchProcessorLogic._row_case_key(row))
+        seg = selection.selected.get("segmentation")
+        return bool(seg is not None and seg.path.is_file() and not lh_segmentation_matches(seg.path, row["voi_value"]))
+
+    @staticmethod
     def _deep_learning_output_paths(root, row):
         targets = BatchProcessorLogic._deep_learning_targets(root, row)
         if targets["provenance"].exists() and not completed_unet_masks(targets["provenance"]):
@@ -1901,8 +1844,12 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if selection.review_roles:
             return []
         selected = selection.selected
-        return ([str(selected[role].path) for role in ("full", "trab", "cort")]
-                if {"full", "trab", "cort"} <= set(selected) else [])
+        roles = ("full", "trab", "cort", "segmentation") if targets["provenance"].exists() else ("full", "trab", "cort")
+        if targets["provenance"].exists() and BatchProcessorLogic._deep_learning_incompatible_seg(root, row):
+            return []
+        if not set(roles) <= set(selected) or not all(selected[role].path.is_file() for role in roles):
+            return []
+        return [str(selected[role].path) for role in (*roles, "material_labelmap") if role in selected and selected[role].path.is_file()]
 
     @staticmethod
     def publish_deep_learning_manifest(root, row):
@@ -1938,7 +1885,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         session = str(row.get("session_value", row.get("session")) or "").strip()
         voi = BatchProcessorLogic._filename_token(str(row.get("voi_value", row.get("voi")) or "").strip().lower())
         base = root / "derivatives" / "Microarchitecture" / f"sub-{subject}" / f"ses-{session}" / "xct"
-        return base / "maps", base / "functional_bone_measurements"
+        folder = "functional_bone_native_measurements" if row.get("profile") == "functional-bone-native" else "functional_bone_measurements"
+        return base / "maps", base / folder
 
     @staticmethod
     def _functional_bone_output_paths_for_row(root: Path, row: dict) -> list[Path]:
@@ -1968,9 +1916,11 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             "full_mask_path": "full mask",
             "trab_mask_path": "trabecular mask",
             "cort_mask_path": "cortical mask",
-            "common_region_path": "common-region mask",
-            "voidspace_mask_path": "registered voidspace mask",
+            "voidspace_mask_path": "large voidspace mask",
         }
+        registered = row.get("profile") != "functional-bone-native"
+        if registered:
+            required["common_region_path"] = "common-region mask"
         missing = [label for key, label in required.items() if not str(row.get(key) or "").strip()]
         if missing:
             raise ValueError(f"Functional bone rows require {', '.join(missing)}.")
@@ -1986,8 +1936,6 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             str(row["full_mask_path"]),
             "--trab-mask",
             str(row["trab_mask_path"]),
-            "--common-region",
-            str(row["common_region_path"]),
             "--voidspace-mask",
             str(row["voidspace_mask_path"]),
             "--dataset-root",
@@ -2004,6 +1952,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             str(row.get("voi_value", row.get("voi")) or ""),
         ]
         args.extend(["--cort-mask", str(row["cort_mask_path"])])
+        if registered:
+            args.extend(["--common-region", str(row["common_region_path"])])
         if force:
             args.append("--force")
         return args
@@ -2022,7 +1972,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     @staticmethod
     def _voidspace_mask_path_for_row(profile: str, row: dict) -> str:
         if str(profile or "").strip() not in {"registered", "dynamic"}:
-            return ""
+            return str(row.get("full_mask_path") or "")
         paths = row.get("common_region_paths")
         if isinstance(paths, (list, tuple)) and paths:
             return str(paths[0])
@@ -2129,16 +2079,19 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         return ""
 
     @staticmethod
-    def _apply_functional_bone_inputs(root: Path, row: dict, contours, common_regions) -> None:
-        row["profile"] = "functional-bone"
+    def _apply_functional_bone_inputs(root: Path, row: dict, contours, common_regions, profile: str = "functional-bone") -> None:
+        row["profile"] = str(profile).strip()
         row["seg_path"] = str(contours["segmentation"].path) if "segmentation" in contours else ""
         row["full_mask_path"] = str(contours["full"].path) if "full" in contours else ""
         row["trab_mask_path"] = str(contours["trab"].path) if "trab" in contours else ""
         row["cort_mask_path"] = str(contours["cort"].path) if "cort" in contours else ""
-        row["common_region_paths"] = [str(common.path) for common in common_regions]
-        if common_regions:
-            row["common_region_path"] = str(common_regions[0].path)
-        voidspace_mask = BatchProcessorLogic._voidspace_existing_mask(root, "registered", row, "voidspace_large_mask")
+        if row["profile"] == "functional-bone":
+            row["common_region_paths"] = [str(common.path) for common in common_regions]
+            if common_regions:
+                row["common_region_path"] = str(common_regions[0].path)
+        voidspace_mask = BatchProcessorLogic._voidspace_existing_mask(root, "standard", row, "voidspace_large_mask")
+        if not voidspace_mask and row["profile"] == "functional-bone":
+            voidspace_mask = BatchProcessorLogic._voidspace_existing_mask(root, "registered", row, "voidspace_large_mask")
         row["voidspace_mask_path"] = voidspace_mask
         if voidspace_mask:
             row["input"] = f"{row.get('input', '')}\nvoidspace={Path(voidspace_mask).name}".strip()
@@ -2289,19 +2242,19 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         row["common_region_path"] = str(common_regions[0].path)
                     if bool(registered) and str(profile or "").strip() == "dynamic":
                         self._apply_timelapse_transformed_voidspace_inputs(root, row)
-                if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone":
-                    self._apply_functional_bone_inputs(root, row, contours, common_regions)
+                if tool == "microarchitecture" and self.is_functional_bone_profile(profile):
+                    self._apply_functional_bone_inputs(root, row, contours, common_regions, profile)
                     if not row.get("voidspace_mask_path"):
                         group["missing"].add("voidspace")
                         group["action"] = "Missing"
-                        row["status"] = "Missing voidspace"
+                        row["status"] = "Missing voidspace: run native or registered Voidspace"
                 row_outputs = outputs_by_key.get(record.key, [])
                 has_measurements_output = any(
                     self._is_measurement_output_for_tool(tool, artifact)
                     for artifact in row_outputs
                 )
                 output_paths = [str(artifact.path) for artifact in row_outputs]
-                if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone" and has_measurements_output:
+                if tool == "microarchitecture" and self.is_functional_bone_profile(profile) and has_measurements_output:
                     output_paths = [str(path) for path in self._functional_bone_output_paths_for_row(root, row)]
                 if output_paths and (tool not in {"microarchitecture", "plate_rod"} or has_measurements_output):
                     row["output_paths"] = output_paths
@@ -2448,11 +2401,11 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 if str(profile or "").strip() == "registered" and not common_regions:
                     row["action"] = "Missing"
                     row["status"] = "Missing mask"
-            if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone":
-                self._apply_functional_bone_inputs(root, row, contours, common_regions)
+            if tool == "microarchitecture" and self.is_functional_bone_profile(profile):
+                self._apply_functional_bone_inputs(root, row, contours, common_regions, profile)
                 if not row.get("voidspace_mask_path"):
                     row["action"] = "Missing"
-                    row["status"] = "Missing voidspace"
+                    row["status"] = "Missing voidspace: run native Voidspace" if profile == "functional-bone-native" else "Missing voidspace: run native or registered Voidspace"
             row_outputs = (
                 list(contours.selected.values())
                 if tool == "bone_contouring"
@@ -2460,7 +2413,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             )
             has_measurements_output = any(self._is_measurement_output_for_tool(tool, artifact) for artifact in row_outputs)
             output_paths = [str(artifact.path) for artifact in row_outputs]
-            if tool == "microarchitecture" and str(profile or "").strip() == "functional-bone" and has_measurements_output:
+            if tool == "microarchitecture" and self.is_functional_bone_profile(profile) and has_measurements_output:
                 output_paths = [str(path) for path in self._functional_bone_output_paths_for_row(root, row)]
             if output_paths and (tool not in {"microarchitecture", "plate_rod"} or has_measurements_output):
                 row["output_paths"] = output_paths
@@ -3469,7 +3422,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             self._selected_tool_key() == "voidspace"
             or (
                 self._selected_tool_key() == "microarchitecture"
-                and str(row.get("profile") or self.profileCombo.currentData or "").strip() == "functional-bone"
+                and BatchProcessorLogic.is_functional_bone_profile(row.get("profile") or self.profileCombo.currentData)
             )
         )
         if not grouped_child_commands or int(row.get("action_row_span") or 0) <= 1:
@@ -4227,7 +4180,7 @@ print(str(csv_path))
             self._load_voidspace_outputs(row, output_paths)
             return
         functional_analysis_paths = []
-        if self._selected_tool_key() == "microarchitecture" and str(row.get("profile") or "").strip() == "functional-bone":
+        if self._selected_tool_key() == "microarchitecture" and BatchProcessorLogic.is_functional_bone_profile(row.get("profile")):
             functional_analysis_paths = [path for path in output_paths if self._is_functional_bone_analysis_mask(path)]
             output_paths = [path for path in output_paths if not self._is_functional_bone_analysis_mask(path)]
         loaded = 0
@@ -4362,6 +4315,7 @@ print(str(csv_path))
                 loaded += 1
             if reference_node is not None:
                 slicer.util.setSliceViewerLayers(background=reference_node, fit=False)
+            self._show_case_overlay(segmentation_node, row)
             self._center_slices_on_node(segmentation_node)
         except Exception as exc:
             try:
@@ -5186,6 +5140,7 @@ print(str(csv_path))
                 self._name_last_segment(segmentation_node, f"Common region ses-{session}", "common_region")
             segmentation_node.SetAttribute("BoneImaging.MaskRoles", "common_region")
             segmentation_node.SetAttribute("BoneImaging.CommonRegion", "scan_region_native_common")
+            self._show_case_overlay(segmentation_node, row)
             self._put_node_in_subject_hierarchy_folder(
                 segmentation_node,
                 self._registered_common_region_folder_name(row),
@@ -5222,7 +5177,8 @@ print(str(csv_path))
         subject = str(row.get("subject") or "unknown")
         session = str(row.get("session_value", row.get("session")) or "unknown")
         voi = str(row.get("voi_value", row.get("voi")) or "unknown")
-        node_name = f"sub-{subject}_ses-{session}_voi-{voi}_functional-bone-analysis"
+        mode = "native" if row.get("profile") == "functional-bone-native" else "registered"
+        node_name = f"sub-{subject}_ses-{session}_voi-{voi}_functional-bone-{mode}-analysis"
         self._remove_existing_node_named(node_name)
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
             "vtkMRMLSegmentationNode",
@@ -5243,13 +5199,15 @@ print(str(csv_path))
                 slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(label_node, segmentation_node)
                 self._name_last_segment(
                     segmentation_node,
-                    f"Functional bone analysis ses-{session}",
+                    f"{mode.title()} Functional Bone analysis ses-{session}",
                     "functional_bone_analysis",
                 )
             segmentation_node.SetAttribute("BoneImaging.MaskRoles", "functional_bone_analysis")
+            segmentation_node.SetAttribute("BoneImaging.FunctionalBoneMode", mode)
+            self._show_case_overlay(segmentation_node, row)
             self._put_node_in_subject_hierarchy_folder(
                 segmentation_node,
-                f"sub-{subject}_ses-{session}_voi-{voi}_xct_functional-bone_analysis",
+                f"sub-{subject}_ses-{session}_voi-{voi}_xct_functional-bone-{mode}_analysis",
             )
             self._center_slices_on_node(segmentation_node)
             return 1
@@ -5315,6 +5273,22 @@ print(str(csv_path))
             return False
 
     @staticmethod
+    def _show_case_overlay(node, row):
+        """Hide earlier batch case overlays without touching manually created nodes."""
+        case = [str(row.get("subject") or "unknown"), str(row.get("voi_value", row.get("voi")) or "unknown")]
+        if not row.get("registered"):
+            case.extend([str(row.get("session_value", row.get("session")) or "unknown"), str(row.get("stack_index") or "")])
+        case_key = json.dumps(case)
+        for previous in slicer.util.getNodesByClass("vtkMRMLSegmentationNode"):
+            previous_case = previous.GetAttribute("BoneImaging.BatchCase")
+            if previous is not node and previous_case and previous_case != case_key:
+                display = previous.GetDisplayNode()
+                if display is not None:
+                    display.SetVisibility(False)
+        node.SetAttribute("BoneImaging.BatchCase", case_key)
+        node.GetDisplayNode().SetVisibility(True)
+
+    @staticmethod
     def _remove_existing_node_named(name):
         try:
             matches = slicer.mrmlScene.GetNodesByName(str(name))
@@ -5336,7 +5310,7 @@ print(str(csv_path))
         arrays = {}
         for path in output_paths:
             role = BatchProcessorWidget._mask_role_from_path(Path(path))
-            role = role if role in {"full", "trab", "cort"} else None
+            role = role if role in {"full", "trab", "cort", "seg"} else None
             if role:
                 image, metadata = aim_io.read_aim(path, scaling="native")
                 # Validate AIM physical geometry before the scene snapshot import.
@@ -5346,14 +5320,15 @@ print(str(csv_path))
                 native = sitk.GetArrayFromImage(image)
                 foreground = np.unique(native)
                 foreground = foreground[foreground != 0]
-                if len(foreground) != 1 or foreground[0] not in (1,127,255):
+                if (len(foreground) != 1 or foreground[0] not in (1,127,255)) and not (role == "seg" and len(foreground) == 0):
                     raise ValueError(f"Invalid binary U-Net {role} mask: {path}")
                 arrays[role] = (native>0).astype(np.uint8)
         with tempfile.TemporaryDirectory(prefix="unet-batch-load-") as directory:
             output = Path(directory)/"masks.npz"
             np.savez(output, **arrays)
-            DeepLearningSegmentationHRpQCTLogic().import_outputs(reference, output)
-        self._append_log("[batch] loaded U-Net full/trab/cort compartments.")
+            segmentation_node = DeepLearningSegmentationHRpQCTLogic().import_outputs(reference, output)
+            self._show_case_overlay(segmentation_node, row)
+        self._append_log("[batch] loaded U-Net full/trab/cort compartments and LH bone SEG.")
 
     def _load_bone_contour_outputs_as_segmentation(self, row, output_paths):
         mask_paths = [Path(path) for path in output_paths if self._is_bone_contour_segmentation_output(Path(path))]
@@ -5361,6 +5336,10 @@ print(str(csv_path))
             self._append_log("[batch] No BoneContours mask/label outputs were discovered for this row.")
             return
         source_name = Path(str(row.get("image_path") or mask_paths[0])).stem
+        source_key = str(row.get("image_path") or mask_paths[0])
+        for previous in slicer.util.getNodesByClass("vtkMRMLSegmentationNode"):
+            if previous.GetAttribute("BoneImaging.BatchContourSource") == source_key:
+                slicer.mrmlScene.RemoveNode(previous)
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
             "vtkMRMLSegmentationNode",
             f"{source_name}_contours",
@@ -5386,6 +5365,8 @@ print(str(csv_path))
                 loaded_roles.append(role)
             if loaded_roles:
                 segmentation_node.SetAttribute("BoneImaging.MaskRoles", ",".join(loaded_roles))
+                segmentation_node.SetAttribute("BoneImaging.BatchContourSource", source_key)
+                self._show_case_overlay(segmentation_node, row)
                 if reference_node is not None:
                     slicer.util.setSliceViewerLayers(background=reference_node, fit=False)
                 self._center_slices_on_node(segmentation_node)
@@ -5503,8 +5484,8 @@ print(str(csv_path))
             success, label_node = bool(loaded), loaded
         if not success or label_node is None:
             raise RuntimeError(f"Could not load mask labelmap: {path.name}")
-        if reference_node is not None:
-            label_node.CopyOrientation(reference_node)
+        # Cropped imported masks carry their own physical geometry. Copying the
+        # scan orientation here also overwrites their origin and shifts them.
         return label_node
 
     @staticmethod

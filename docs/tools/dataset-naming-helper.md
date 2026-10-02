@@ -29,6 +29,18 @@ The helper should not expose private subject names in shareable outputs. Identif
 
 Edits made directly in the review table are treated as overrides. Use them when a session label, VOI, stack, modality, or role was inferred incorrectly.
 
+Native Scanco names such as `D0000308.AIM` identify a measurement, not a patient.
+When available, the AIM `Index Patient` header groups these scans into one subject;
+the measurement identifies the session. Explicit subject IDs in normalized paths
+or sidecars remain authoritative, so anonymized IDs are not replaced by header IDs.
+
+Undo restores original sidecars as well as images and checks restore collisions
+before moving any files. After a successful undo, the original manifest is kept
+as `dataset_rename_manifest.undone-<unique-id>.json`, freeing the active manifest
+path for the next rename. If an older undo left the active manifest behind, run
+Undo once more with this version to archive it. Keep identity-bearing manifests
+private when sharing anonymized data.
+
 ## Before And After
 
 A loosely named input set:

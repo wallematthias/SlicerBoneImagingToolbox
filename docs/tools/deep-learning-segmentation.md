@@ -8,7 +8,7 @@ there is no separate Deep Learning Segmentation module. No Bonelab or vtkbone is
 ## Setup
 
 Install **Bone Contouring** through Toolbox Setup, which includes the U-Net extra.
-Requires `bone-contouring>=0.3.1` and `bone-imaging-derivatives>=0.1.6` from PyPI.
+Requires `bone-contouring>=0.3.2` and `bone-imaging-derivatives>=0.1.7` from PyPI.
 Setup can also use sibling local checkouts for development.
 Restart Slicer after dependency installation.
 
@@ -53,30 +53,32 @@ smoothing is applied; the published post-processing includes its own 8-voxel she
 
 ## Batch and SSH
 
-In **Batch Processor**, choose **Bone Contouring**, profile **U-Net (Neeteson et al.)**, a normalized dataset
+In **Batch Processor**, choose **Bone Contouring**, profile **U-Net contours (Neeteson et al.) + LH SEG**, a normalized dataset
 root and device. Only raw AIM images are selected. Native AIM outputs go under
 `derivatives/BoneContours/sub-<id>/ses-<id>/xct/`, using the standard
 `_desc-full_mask.AIM`, `_desc-trab_mask.AIM`, `_desc-cort_mask.AIM` names, individual
 sidecars, and the shared portable BoneContours manifest. Model, resolved device,
 weights checksum and scientific defaults remain in the provenance. Load imports
-all three roles into one segmentation node, as in scene mode.
+full/trab/cort and the Laplace–Hamming tissue SEG into one segmentation node.
+The same run adds FEA material labels. LH uses the original native AIM intensities
+with shipped XCTII defaults, selecting radius/tibia from each normalized VOI.
 
 Existing outputs are never overwritten. A complete published contour set is
-loadable; partial files block U-Net reruns to prevent mixed results. Complete cases
-whose manifest publication failed offer **Publish**, which retries only the
-manifest without inference or mask rewriting. Incomplete cases are withheld from
+loadable once tissue SEG is also available. Complete U-Net compartments with
+missing SEG offer **Run**, which finishes LH/material generation without loading
+the network or rewriting compartments. This also recovers failed manifest
+publication. Partial files block U-Net reruns to prevent mixed results and are withheld from
 downstream discovery until all masks, sidecars and the completion marker exist.
 Virtual stack views must first be exported as physical AIM stacks. Downstream tools
 discover these compartment roles through the usual BoneContours contract; imported
-and IPL contours keep their existing priority. Run **Bone Contouring** afterwards
-to generate missing tissue SEG and FEA material labels while reusing the U-Net
-compartments, without recomputing or overwriting their files (unless explicitly
-using the other tool's force option).
+and IPL contours keep their existing priority. Imported/conflicting contours are
+not overwritten or silently mixed with generated U-Net compartments. Standard
+profiles can still fill missing SEG/material without replacing existing contours.
 
 The same core runs without Slicer on another computer, including over SSH:
 
 ```bash
-python -m pip install --upgrade 'bone-contouring[unet]>=0.3.1'
+python -m pip install --upgrade 'bone-contouring[unet]>=0.3.2'
 bone-contouring unet /data/raw --output /data/unet-results --device auto
 ssh host 'bone-contouring unet /data/raw --output /data/unet-results --device cuda'
 ```

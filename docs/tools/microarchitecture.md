@@ -7,6 +7,9 @@ Microarchitecture computes bone structure and density measurements from images, 
 
 https://github.com/wallematthias/bone-microarchitecture
 
+For prerequisites and step-by-step native or registered Functional Bone analysis,
+start with the [Functional Bone batch tutorial](../tutorials/functional-bone.md).
+
 ## Required Inputs
 
 | Input | Required | Meaning |
@@ -14,8 +17,8 @@ https://github.com/wallematthias/bone-microarchitecture
 | XCT/BMD image | yes | grayscale or calibrated density image |
 | Bone segmentation | yes | binary bone mask |
 | Analysis ROI masks | yes | one or more reporting regions such as full, trabecular, or cortical |
-| Common region | registered profile only | native-space scan/FOV common region from Timelapsed |
-| Large voidspace mask | functional bone profile only | native-space registered voidspace mask to exclude from the common region |
+| Common region | registered profiles only | native-space scan/FOV common region from Timelapsed |
+| Large voidspace mask | both Functional Bone profiles | large-void map to exclude from the reporting region |
 
 If a Slicer segmentation node contains multiple labels, select the exact segment in the adjacent segment dropdown.
 
@@ -34,17 +37,32 @@ Use scene mode for one loaded image and loaded masks.
 
 Use `Bone Imaging > I/O > Batch Processor`.
 
-Three common profiles are exposed:
+Four profiles are exposed:
 
 | Profile | Behavior |
 | --- | --- |
-| Microarchitecture | measures each session in native space |
-| Registered Microarchitecture | applies each session's native common region during measurement |
-| Functional bone | applies each session's native common region after removing the registered large voidspace mask |
+| XtremeCT II | measures each session in native space |
+| XtremeCT II - registered | applies each session's native common region during measurement |
+| Native Functional Bone | measures each session's full scan after excluding large voidspace; no common region required |
+| Registered Functional Bone | restricts each session to its native common region, then excludes large voidspace |
 
 Native maps are reusable. If native maps already exist, the registered profile can reuse them and only recompute the common-region-restricted measurement table.
-Functional bone follows the same map reuse model: it does not create functional-bone maps. It reuses or creates the native maps, then writes measurements over `common region AND NOT large voidspace`.
-For review/debugging, the functional bone profile also writes and loads the effective analysis-region mask.
+Both Functional Bone profiles follow the same map reuse model: they do not create functional-bone maps or recompute thickness on clipped regions. They reuse or create native maps, then summarize over `full mask AND NOT large voidspace` (native) or `full mask AND common region AND NOT large voidspace` (registered), intersected with each reporting compartment.
+For review/debugging, both profiles also write and load their effective analysis-region masks with distinct mode names.
+
+Native Functional Bone requires the full-domain **Voidspace** large-void map for that session. It does not accept a Registered voidspace map because that map may exclude voids outside the common region. It runs one row per session.
+
+Registered Functional Bone prefers the native Voidspace large-void map and falls back to the Registered voidspace map for that session. It additionally requires the matching native common region and groups sessions for one subject/VOI. Registration and common-region generation remain upstream steps.
+
+Existing saved `functional-bone` jobs retain registered behavior and the existing `functional_bone_measurements` directory. The new native profile uses `functional-bone-native` and a separate directory; neither mode treats the other's measurements as completed outputs.
+
+Imported compartment masks may be cropped differently from the grayscale image.
+Batch processing places masks on the grayscale grid with nearest-neighbor
+resampling using origin, spacing, and direction, rather than assuming equal array
+dimensions. This reconciles grids in the same physical space; it does not register
+different scans. Geometry-free arrays must already match the image dimensions.
+The mask-grid policy is included in cache compatibility, invalidating older maps
+computed under the equal-array assumption.
 
 ## Outputs
 
@@ -60,6 +78,7 @@ derivatives/
           measurements/
           registered_measurements/
           functional_bone_measurements/
+          functional_bone_native_measurements/
 ```
 
 The Slicer load action should load:

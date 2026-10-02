@@ -2,10 +2,21 @@
 
 All notable changes to this extension are documented in this file.
 
-## Unreleased
+## [0.3.2] - 2026-10-02
+
+### Fixed
+
+- Restore original sidecars, preflight undo collisions, and archive completed rename manifests so rename/undo/rename works; use AIM patient headers for native Scanco measurement filenames without overriding explicit anonymized IDs.
+- Preserve imported cropped-mask geometry in batch loading and align Microarchitecture/Functional bone inputs on the grayscale physical grid with nearest-neighbor resampling.
+- Hide previous batch case segmentations without affecting manual nodes, preserve grouped registered timepoints, and avoid duplicate contour nodes on reload.
+- Use available full bone masks for native Voidspace; compute registered/dynamic morphology before common-region clipping and recompute native maps when forcing registered runs.
+- Accept native large-void maps for Functional bone and explain the missing Voidspace prerequisite. Core Voidspace also preserves scan-end-connected cavities and uses endpoint continuation during morphology.
 
 ### Added
 
+- U-Net batch contouring now also generates XCTII Laplace–Hamming tissue SEG and material labels, reuses completed compartments without inference, and loads SEG alongside full/trab/cort in one node. Scene choices are unchanged.
+- Add a Functional Bone batch tutorial covering required contour/voidspace inputs, native versus registered profiles, result inspection, and safe reruns.
+- Add Native Functional Bone and Registered Functional Bone batch profiles under Microarchitecture, with separate measurement directories and analysis-region overlays, shared native maps, and preserved registered semantics for saved `functional-bone` jobs.
 - Added an `HR-pQCT Density` volume-rendering preset with transparent sub-trabecular densities and progressively stronger trabecular and cortical opacity.
 - Added a Voidspace scene module for single-case and baseline/follow-up interactive analysis backed by the `voidspace` core package.
 - Added Batch Processor support for Voidspace, Registered voidspace, and Dynamic voidspace profiles.
@@ -13,6 +24,7 @@ All notable changes to this extension are documented in this file.
 
 ### Changed
 
+- Require bone-contouring 0.3.2, bone-imaging-derivatives 0.1.7, bone-microarchitecture 0.2.5, and voidspace 0.1.4 in Setup.
 - Registered voidspace now stays in native segmentation space and applies the matching native common region for restricted reporting.
 - Dynamic voidspace writes baseline/follow-up intermediate maps inside the dynamic pair output folder so Registered voidspace remains an independent profile.
 - Voidspace load-back imports source segmentations, analysis masks, and change maps into one Slicer segmentation node with distinct display colors.
