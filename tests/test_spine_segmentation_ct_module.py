@@ -11,7 +11,7 @@ def test_spine_segmentation_ct_module_wraps_spine_segment_dependency() -> None:
 
     assert 'parent.title = "Spine Segmentation"' in source
     assert 'parent.categories = ["Bone Imaging.CT Analysis"]' in source
-    assert 'slicer.util.pip_install("spine-segment>=0.1.0")' in source
+    assert 'slicer_pip_install("spine-segment>=0.1.0")' in source
     assert 'CONDA_RUNTIME_ENV = "spine-segment-pytorch"' in source
     assert "Install Slicer Runtime" not in source
     assert "self.installButton.clicked.connect(self._install_core)" not in source

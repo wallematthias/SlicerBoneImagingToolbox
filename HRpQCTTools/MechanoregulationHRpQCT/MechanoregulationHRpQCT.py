@@ -33,6 +33,9 @@ MODULE_VERSION = "0.1.0"
 CORE_REQUIREMENT = "bone-mechanoregulation"
 MIN_CORE_VERSION = "0.1.5"
 TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
+if str(TOOLBOX_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLBOX_ROOT))
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install
 
 
 def _active_repositories_root(toolbox_root):
@@ -290,9 +293,9 @@ class MechanoregulationHRpQCTLogic(ScriptedLoadableModuleLogic):
 
     def install_or_update_core(self):
         if _use_local_core_checkout() and (CORE_LOCAL_REPO / "pyproject.toml").is_file():
-            slicer.util.pip_install(str(CORE_LOCAL_REPO))
+            slicer_pip_install(str(CORE_LOCAL_REPO))
         else:
-            slicer.util.pip_install(f"--upgrade --force-reinstall --no-cache-dir {CORE_REQUIREMENT}>={MIN_CORE_VERSION}")
+            slicer_pip_install(f"--upgrade --no-cache-dir {CORE_REQUIREMENT}>={MIN_CORE_VERSION}")
         self._purge_core_modules()
         _prefer_local_core(force_reload=True)
 

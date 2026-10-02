@@ -185,6 +185,7 @@ from SlicerBoneImagingToolboxLib.fea_batch import (
 from SlicerBoneImagingToolboxLib.fea_workflow_labels import (
     workflow_label_overrides_from_scene,
 )
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_constraints
 
 
 MODULE_VERSION = "0.1.0"
@@ -2687,18 +2688,27 @@ for component, axis in enumerate(("x", "y", "z")):
             "pip",
             "install",
             "--upgrade",
-            "--force-reinstall",
             str(Path(wheel_path)),
         ]
         if on_output:
             on_output(f"[runtime] installing with Slicer Python: {' '.join(command)}\n")
-        completed = subprocess.run(
-            command,
-            text=True,
-            capture_output=True,
-            check=False,
-            env=self.parosol_environment(),
-        )
+        with slicer_pip_constraints() as constraints:
+            command.extend(["--constraint", str(constraints)])
+            # Resolve dependencies first, then refresh only the selected wheel.
+            # Custom solver wheels may share a version with the installed build.
+            for install_command in (command, [*command, "--force-reinstall", "--no-deps"]):
+                completed = subprocess.run(
+                    install_command,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env=self.parosol_environment(),
+                )
+                if completed.returncode != 0:
+                    raise RuntimeError(
+                        f"Wheel install failed with exit code {completed.returncode}: "
+                        f"{completed.stdout}\n{completed.stderr}"
+                    )
         stdout = _filter_runtime_noise(completed.stdout)
         stderr = _filter_runtime_noise(completed.stderr)
         if on_output and stdout:
@@ -2728,13 +2738,15 @@ for component, axis in enumerate(("x", "y", "z")):
             on_output(f"[runtime] installing from PyPI with Slicer Python: {' '.join(command)}\n")
         env = self.parosol_environment()
         env.pop("PYTHONPATH", None)
-        completed = subprocess.run(
-            command,
-            text=True,
-            capture_output=True,
-            check=False,
-            env=env,
-        )
+        with slicer_pip_constraints() as constraints:
+            command.extend(["--constraint", str(constraints)])
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
         stdout = _filter_runtime_noise(completed.stdout)
         stderr = _filter_runtime_noise(completed.stderr)
         if on_output and stdout:

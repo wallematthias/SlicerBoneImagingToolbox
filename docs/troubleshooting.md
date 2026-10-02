@@ -30,6 +30,30 @@ Check how the image and mask were loaded:
 - Segmentations loaded without a reference image may need slice views centered on the segmentation bounds.
 - Scene-mode tools resample selected inputs to the analysis grid when a workflow requires matching arrays.
 
+## SimpleITK / MRMLIDImageIO Warning
+
+`MRMLIDImageIO is not available` or `Possible incompatible factory load` usually
+means an installer replaced Slicer's bundled SimpleITK with a generic PyPI wheel.
+Image transfer then falls back to temporary files and can be slower. The toolbox
+now preserves the installed version during package updates and does not disable
+Slicer's plugin autoloading or globally hide SimpleITK warnings.
+
+An update cannot repair a build that has already been replaced. Restore the
+bundled SimpleITK from a clean **matching Slicer version/revision**, or reinstall
+that Slicer distribution after backing up your application and extensions. Do
+not try to repair it with `pip install --force-reinstall SimpleITK`: even the same
+version number may be a different build. Restart Slicer and check in the Python
+Interactor:
+
+```python
+import sitkUtils
+print(sitkUtils.IsMRMLIDImageIOAvailable())  # should print True
+```
+
+The macOS Qt message about the missing `Courier` font is a separate, cosmetic
+font-substitution warning; it does not indicate a contouring or segmentation
+failure. The toolbox does not request that font.
+
 ## Batch Row Says Inputs Are Missing
 
 The Batch Processor only launches rows that have the inputs required by the selected tool and profile.

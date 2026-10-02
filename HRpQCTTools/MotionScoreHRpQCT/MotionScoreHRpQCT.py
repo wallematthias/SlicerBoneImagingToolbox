@@ -44,6 +44,7 @@ from SlicerBoneImagingToolboxLib.motionscore_scene import (
     motionscore_scene_runner_args,
 )
 from SlicerBoneImagingToolboxLib.motionscore_review import next_review_scan_id
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -1601,7 +1602,7 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             return
         command = " ".join(args)
         self._log(f"[setup] running Slicer pip install: {command}\n")
-        slicer.util.pip_install(command)
+        slicer_pip_install(command)
         for name in list(sys.modules):
             if name == "motionscore" or name.startswith("motionscore."):
                 sys.modules.pop(name, None)
@@ -1636,7 +1637,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._pip_install(
                 *self._core_pip_requirements(),
                 upgrade=True,
-                extra_args=["--force-reinstall", "--no-cache-dir"],
+                extra_args=["--no-cache-dir"],
+            )
+            self._pip_install(
+                f"{CORE_PYPI_PACKAGE}>={MIN_CORE_VERSION}",
+                upgrade=True,
+                extra_args=["--force-reinstall", "--no-deps", "--no-cache-dir"],
             )
             if not (self._core_package_ready() or self._core_package_ready_in_subprocess()):
                 detail = getattr(self, "_last_core_import_error", "")

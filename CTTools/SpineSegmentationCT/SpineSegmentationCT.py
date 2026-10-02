@@ -35,6 +35,7 @@ from SlicerBoneImagingToolboxLib.spine_segmentation_batch import (
     write_spine_segmentation_manifest,
 )
 from SlicerBoneImagingToolboxLib.vertebra_labels import format_verse_label
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install
 
 
 OUTPUT_SPECS = (
@@ -193,7 +194,7 @@ class SpineSegmentationCTLogic(ScriptedLoadableModuleLogic):
             return False
 
     def install_or_update_core(self):
-        slicer.util.pip_install("spine-segment>=0.1.0")
+        slicer_pip_install("spine-segment>=0.1.0")
         for name in list(sys.modules):
             if name == "spine_segment" or name.startswith("spine_segment."):
                 sys.modules.pop(name, None)

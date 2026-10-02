@@ -25,6 +25,7 @@ if str(MODULE_DIR) not in sys.path:
 TOOLBOX_ROOT = MODULE_DIR.parents[1]
 if str(TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLBOX_ROOT))
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install
 
 
 AIM_METADATA_ATTRIBUTE = "HRpQCT.AIMMetadata"
@@ -140,7 +141,7 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         return _aim_io_module().is_aimio_available()
 
     def install_or_update_core(self):
-        slicer.util.pip_install("aimio-py>=0.1.8 numpy>=1.26,<3.0")
+        slicer_pip_install("aimio-py>=0.1.8 numpy>=1.26,<3.0")
 
     def import_aim(
         self,

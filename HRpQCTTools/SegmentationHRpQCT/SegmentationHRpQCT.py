@@ -53,6 +53,7 @@ from SlicerBoneImagingToolboxLib.segmentation_methods import (
     selected_parameter_groups,
 )
 from SlicerBoneImagingToolboxLib.contouring_presets import detect_site
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -458,10 +459,10 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
     def install_or_update_pipeline(self):
         self._remove_incompatible_optional_packages()
         if _BONE_CONTOURING_LOCAL_REPO.exists():
-            slicer.util.pip_install(f"--no-deps -e {_BONE_CONTOURING_LOCAL_REPO}")
+            slicer_pip_install(f"--no-deps -e {_BONE_CONTOURING_LOCAL_REPO}")
         else:
             packages = " ".join(["bone-contouring", *BONE_CONTOURING_PIP_CONSTRAINTS])
-            slicer.util.pip_install(f"--upgrade --force-reinstall --no-cache-dir {packages}")
+            slicer_pip_install(f"--upgrade --no-cache-dir {packages}")
 
     def _remove_incompatible_optional_packages(self):
         if not hasattr(slicer.util, "pip_uninstall"):
@@ -473,10 +474,10 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
 
     def install_or_update_geodesic_contour(self):
         if _GEODESIC_CONTOUR_LOCAL_REPO.exists():
-            slicer.util.pip_install("edt>=2.4")
-            slicer.util.pip_install(f"--no-deps -e {_GEODESIC_CONTOUR_LOCAL_REPO}")
+            slicer_pip_install("edt>=2.4")
+            slicer_pip_install(f"--no-deps -e {_GEODESIC_CONTOUR_LOCAL_REPO}")
         else:
-            slicer.util.pip_install("--upgrade --force-reinstall --no-cache-dir hrpqct-geodesic-contour")
+            slicer_pip_install("--upgrade --no-cache-dir hrpqct-geodesic-contour")
         self._reload_and_validate_geodesic_contour()
 
     def install_or_update_contouring_dependencies(self):

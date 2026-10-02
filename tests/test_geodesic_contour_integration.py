@@ -232,7 +232,7 @@ def test_timelapsed_pipeline_exposes_geodesic_periosteal_contour_config():
     assert "def _local_pipeline_usable" in source
     assert "if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC)" in source
     assert "os.environ[\"PYTHONPATH\"]" in source
-    assert "slicer.util.pip_install(\"hrpqct-geodesic-contour>=0.1.1\")" in source
+    assert "slicer_pip_install(\"hrpqct-geodesic-contour>=0.1.1\")" in source
     assert "timelapsed-hrpqct>={MIN_PIPELINE_VERSION}" in source
     assert "outer_cfg = {" in source
     assert "\"contour_method\": periosteal_contour_method" in source

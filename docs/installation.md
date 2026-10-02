@@ -31,6 +31,12 @@ Restart Slicer after linking.
 
 The Setup module is the canonical installer for public runtime packages used by the toolbox. It checks package versions in Slicer Python and offers install/update buttons for missing or outdated packages.
 
+Toolbox installers preserve the installed SimpleITK version with a pip constraint.
+Slicer's bundled build supports fast in-memory image transfer and must not be
+replaced by a generic PyPI wheel. Dependency-wide force reinstalls are blocked;
+targeted compiled-package reinstalls use `--no-deps`. Restart Slicer after updates.
+If SimpleITK was already replaced, see [troubleshooting](troubleshooting.md#simpleitk-mrmlidimageio-warning).
+
 Common runtime packages include:
 
 - `aimio-py` / `py_aimio`

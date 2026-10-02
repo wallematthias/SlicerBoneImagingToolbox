@@ -92,20 +92,12 @@ def _decode_scene_mask_choice(value):
     return node_id, segment_id
 
 
-# Prevent Slicer-specific ITK ImageIO plugin autoloading in this process.
-# This avoids repeated MRMLIDImageIO factory noise from SimpleITK calls.
-for _itk_env_key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
-    try:
-        os.environ.pop(_itk_env_key, None)
-        os.environ[_itk_env_key] = ""
-    except Exception:
-        pass
-
 import SimpleITK as sitk
 
 _TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 if str(_TOOLBOX_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLBOX_ROOT))
+from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install
 _PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC = _resolve_local_pipeline_paths(_TOOLBOX_ROOT)
 if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC) and str(_PIPELINE_LOCAL_SRC) not in sys.path:
     sys.path.insert(0, str(_PIPELINE_LOCAL_SRC))
@@ -157,17 +149,6 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
 )
 
-def _suppress_simpleitk_warnings():
-    """Reduce known harmless ITK/SimpleITK warning noise in Slicer logs."""
-    try:
-        if hasattr(sitk, "ProcessObject_SetGlobalWarningDisplay"):
-            sitk.ProcessObject_SetGlobalWarningDisplay(False)
-        elif hasattr(sitk, "ProcessObject") and hasattr(sitk.ProcessObject, "SetGlobalWarningDisplay"):
-            sitk.ProcessObject.SetGlobalWarningDisplay(False)
-    except Exception:
-        pass
-
-
 class TimelapsedHRpQCT(ScriptedLoadableModule):
     def __init__(self, parent):
         super().__init__(parent)
@@ -192,7 +173,6 @@ Whittier DE, Walle M, Schenk D, Atkins PR, Collins CJ, Zysset P, Lippuner K, Mü
 class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
         super().__init__()
-        _suppress_simpleitk_warnings()
         self._proc = None
         self._temp_config_path = None
         self._fallback_default_config_path = None
@@ -237,11 +217,11 @@ class TimelapsedHRpQCTLogic(ScriptedLoadableModuleLogic):
         if _local_pipeline_usable(_PIPELINE_LOCAL_REPO, _PIPELINE_LOCAL_SRC):
             # Local development: import from the sibling checkout directly, and install the
             # published contour dependency without letting pip replace the local source tree.
-            slicer.util.pip_install("hrpqct-geodesic-contour>=0.1.1")
+            slicer_pip_install("hrpqct-geodesic-contour>=0.1.1")
         else:
-            # Force-refresh from PyPI so package management pulls the latest release.
-            slicer.util.pip_install(
-                f"--upgrade --force-reinstall --no-cache-dir timelapsed-hrpqct>={MIN_PIPELINE_VERSION}"
+            # Upgrade from PyPI without replacing Slicer's native dependencies.
+            slicer_pip_install(
+                f"--upgrade --no-cache-dir timelapsed-hrpqct>={MIN_PIPELINE_VERSION}"
             )
         for name in list(sys.modules):
             if name == "timelapsedhrpqct" or name.startswith("timelapsedhrpqct."):
