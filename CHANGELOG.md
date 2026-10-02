@@ -18,6 +18,24 @@ All notable changes to this extension are documented in this file.
 - Voidspace load-back imports source segmentations, analysis masks, and change maps into one Slicer segmentation node with distinct display colors.
 - Remote batch processing checks server availability before starting server-side work so missing VPN/server access fails quickly instead of hanging.
 
+## [0.3.0] - 2026-10-02
+
+### Added
+
+- Add Deep Learning Segmentation scene mode and a U-Net Bone Contours batch tool using Neeteson et al.'s published model and fixed morphology through `bone-contouring[unet]`, without Bonelab or vtkbone.
+- Import full, trabecular and cortical compartment masks into one segmentation node, with CPU/CUDA/MPS device selection and a shared, checksum-verified model cache downloaded by the runtime modules.
+- Document setup, scene/batch/SSH use, weight provisioning, applicability limits, and attribution to Nathan J. Neeteson, Bryce A. Besler, Danielle E. Whittier and Steven K. Boyd.
+
+### Changed
+
+- Require `bone-contouring>=0.3.0` with its U-Net extra and `bone-imaging-derivatives>=0.1.6` in Setup. The scientific backend is GPL-3.0-only; the Slicer wrapper remains MIT.
+- Publish U-Net masks under the standard BoneContours naming and manifest contract. Preserve existing compartments when generating missing tissue SEG/material labels.
+
+### Fixed
+
+- Withhold incomplete U-Net outputs from discovery; offer manifest-only publication retries after failed publication and block conflicting or partial existing contours.
+- Ensure local-development Slicer workers import the selected core checkout instead of an older installed package.
+
 ## [0.2.3] - 2026-10-01
 
 ### Fixed

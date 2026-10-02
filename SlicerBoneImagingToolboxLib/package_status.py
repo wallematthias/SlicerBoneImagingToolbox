@@ -51,7 +51,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.3", "bone-imaging-derivatives>=0.1.6",
                      "torch>=2.2", "scikit-image>=0.24,<0.26", "aimio-py>=0.1.8"),
         required_imports=("bone_contouring.unet.inference",),
-        notes="Standard contouring and published radius/tibia U-Net segmentation. Modules download weights on first use to HRpQCTSegmentation/models beside MotionScore. Version 0.3.0 requires the local checkout until released on PyPI.",
+        notes="Standard contouring and published radius/tibia U-Net segmentation. Modules download weights on first use to HRpQCTSegmentation/models beside MotionScore.",
     ),
     PackageSpec(
         display_name="Timelapsed HR-pQCT",

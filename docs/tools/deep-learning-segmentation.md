@@ -7,9 +7,8 @@ only owns execution and scene import. No Bonelab or vtkbone is required.
 ## Setup
 
 Install **Bone Contouring** through Toolbox Setup, which includes the U-Net extra.
-During this development preview, keep the modified `bone-contouring` and
-`bone-imaging-derivatives` checkouts alongside the Toolbox: Setup installs those
-local packages. Versions 0.3.0 and 0.1.6 respectively are not yet published on PyPI.
+Requires `bone-contouring>=0.3.0` and `bone-imaging-derivatives>=0.1.6` from PyPI.
+Setup can also use sibling local checkouts for development.
 Restart Slicer after dependency installation.
 
 Runtime dependencies are PyTorch, NumPy, scikit-image and aimio-py. The first run
@@ -70,8 +69,7 @@ using the other tool's force option).
 The same core runs without Slicer on another computer, including over SSH:
 
 ```bash
-python -m pip install -e /path/to/bone-imaging-derivatives
-python -m pip install -e '/path/to/bone-contouring[unet]'
+python -m pip install --upgrade 'bone-contouring[unet]>=0.3.0'
 bone-contouring unet /data/raw --output /data/unet-results --device auto
 ssh host 'bone-contouring unet /data/raw --output /data/unet-results --device cuda'
 ```
