@@ -2,7 +2,7 @@
 
 All notable changes to this extension are documented in this file.
 
-## [0.3.2] - 2026-10-02
+## [0.3.3] - 2026-10-02
 
 ### Fixed
 
@@ -24,7 +24,7 @@ All notable changes to this extension are documented in this file.
 
 ### Changed
 
-- Require bone-contouring 0.3.2, bone-imaging-derivatives 0.1.7, bone-microarchitecture 0.2.5, and voidspace 0.1.4 in Setup.
+- Require bone-contouring 0.3.3, bone-imaging-derivatives 0.1.7, bone-microarchitecture 0.2.5, and voidspace 0.1.4 in Setup.
 - Registered voidspace now stays in native segmentation space and applies the matching native common region for restricted reporting.
 - Dynamic voidspace writes baseline/follow-up intermediate maps inside the dynamic pair output folder so Registered voidspace remains an independent profile.
 - Voidspace load-back imports source segmentations, analysis masks, and change maps into one Slicer segmentation node with distinct display colors.

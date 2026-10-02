@@ -8,7 +8,7 @@ in detail here.
 
 ## 1. Update and restart
 
-Use Toolbox **0.3.2** or newer. Updating Python packages does not update an old
+Use Toolbox **0.3.3** or newer. Updating Python packages does not update an old
 toolbox checkout: update the extension through your installation method first
 (Extension Manager or the linked Git checkout), then open
 `Bone Imaging > Setup > Toolbox Setup` and update the runtime packages.
@@ -18,7 +18,7 @@ For this release, check these minimum versions in Setup:
 | Package | Minimum version |
 | --- | --- |
 | bone-imaging-derivatives | 0.1.7 |
-| bone-contouring | 0.3.2 |
+| bone-contouring | 0.3.3 |
 | voidspace | 0.1.4 |
 | bone-microarchitecture | 0.2.5 |
 

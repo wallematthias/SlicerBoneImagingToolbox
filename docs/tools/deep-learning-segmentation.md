@@ -8,7 +8,7 @@ there is no separate Deep Learning Segmentation module. No Bonelab or vtkbone is
 ## Setup
 
 Install **Bone Contouring** through Toolbox Setup, which includes the U-Net extra.
-Requires `bone-contouring>=0.3.2` and `bone-imaging-derivatives>=0.1.7` from PyPI.
+Requires `bone-contouring>=0.3.3` and `bone-imaging-derivatives>=0.1.7` from PyPI.
 Setup can also use sibling local checkouts for development.
 Restart Slicer after dependency installation.
 
@@ -78,7 +78,7 @@ profiles can still fill missing SEG/material without replacing existing contours
 The same core runs without Slicer on another computer, including over SSH:
 
 ```bash
-python -m pip install --upgrade 'bone-contouring[unet]>=0.3.2'
+python -m pip install --upgrade 'bone-contouring[unet]>=0.3.3'
 bone-contouring unet /data/raw --output /data/unet-results --device auto
 ssh host 'bone-contouring unet /data/raw --output /data/unet-results --device cuda'
 ```

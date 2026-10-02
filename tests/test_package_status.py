@@ -165,7 +165,7 @@ def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["bone-contouring"].display_name == "Bone Contouring"
     assert specs["bone-contouring"].import_name == "bone_contouring"
-    assert specs["bone-contouring"].minimum_version == "0.3.2"
+    assert specs["bone-contouring"].minimum_version == "0.3.3"
     assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 

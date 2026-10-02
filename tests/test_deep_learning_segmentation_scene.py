@@ -130,4 +130,4 @@ def test_setup_installs_core_and_compatible_numpy_torch():
     assert spec is not None
     command = install_command(spec, installed=False)
     assert "torch>=2.2" in command
-    assert "bone-contouring[unet]>=0.3.2" in command
+    assert "bone-contouring[unet]>=0.3.3" in command
