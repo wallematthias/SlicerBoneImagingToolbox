@@ -1449,7 +1449,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._build_segmentation_section()
         self._build_log_section()
         self.layout.addStretch(1)
-        self._apply_modality_preset()
         self._apply_preset_values(update_segmentation_method=False)
         self._refresh_method_dependent_ui()
         self._update_dependency_ui()
@@ -2064,6 +2063,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         if self._scannerPreset == "custom":
             self._set_combo_by_data(self.siteCombo, "none")
             return  # Manual mode keeps edited settings and applies no site calibration.
+        self._apply_modality_preset()
         self._apply_segmentation_preset()
         self._apply_site_preset()
 
@@ -2113,11 +2113,16 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._suppressMethodCustomSwitch = previous_suppression
 
     def _apply_modality_preset(self):
+        """Set the tissue default when selecting a built-in scanner profile.
+
+        This is independent of whether generation reads the visible controls.
+        Saved recipes and manual custom profiles retain their selected method.
+        """
         if not hasattr(self, "segmentationMethodCombo"):
             return
-        if not self._use_site_preset_params():
+        modality = getattr(self, "_scannerPreset", None)
+        if modality not in {"xct1", "xct2"}:
             return
-        modality = self._effective_modality()
         target_method = "laplace_hamming" if modality == "xct1" else "seg_gauss"
         if str(self.segmentationMethodCombo.currentData) != target_method:
             self._set_combo_by_data(self.segmentationMethodCombo, target_method)

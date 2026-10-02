@@ -33,7 +33,7 @@ Use this tool when you need to:
 1. Select the input image.
 2. Choose **Profile**: XCTI, XCTII, Custom, or a saved profile. There is no separate scanner selector and no resolution-based scanner detection. Leave **Site preset** on Auto (AIM header), or choose the site explicitly.
 3. Choose **Contouring**: dual threshold (standard), geodesic with standard inner contour, published U-Net (Neeteson et al.), or None.
-4. Independently choose **Tissue segmentation**: Gaussian, Laplace-Hamming, adaptive, or None.
+4. Independently choose **Tissue segmentation**: Gaussian, Laplace-Hamming, adaptive, or None. Selecting XCTI initializes Laplace-Hamming; selecting XCTII initializes Gaussian. You can override the method afterward. Custom profiles retain the current method, and saved profiles restore their saved method.
 5. Adjust **Contouring advanced settings** directly below Contouring, or **Tissue segmentation advanced settings** directly below Tissue segmentation. Load/save named profiles under **Custom profiles**.
 6. Click `Generate`.
 7. Review the loaded segmentation and masks in Slicer.
@@ -80,16 +80,23 @@ Standard uses the same topology-first compartment contouring for XCTI and XCTII,
 including radius, tibia, and knee. XCTII radius/tibia use outer threshold 320 and
 inner threshold 380 in calibrated mg HA/cm³; other presets retain their existing
 density settings. All envelopes are independent of tissue-segmentation thresholds.
-The fragile pre-fill opening is removed. Axial hole filling/closing repairs the compartment
-envelopes; modest 3D signed-distance smoothing uses XYZ sigmas
+The fragile pre-fill opening is removed. The standard outer contour dilates in XY,
+fills the dilated shell, then erodes with the same radius. Filling **before erosion**
+prevents a narrow sealed bridge from reopening before the interior is filled.
+There is one shared Standard/Dual Threshold implementation; the package's
+`stable_3d` name is an alias, not another standard method. Modest 3D signed-distance smoothing uses XYZ sigmas
 `(0.03, 0.03, 0.06)` mm. This is not full-3D morphological closing or a literal
 Buie/native IPL reproduction. Native-mask comparisons currently cover XCTII
 radius/tibia only. Largest-component selection still assumes one target bone;
 this is not a multi-bone knee segmentation method.
+Before selecting the marrow component, the standard inner method restricts its
+low-density seed to full eroded in XY by `Peel` (default 3 voxels). This excludes
+the peripheral low-density layer, which can otherwise connect through cortical
+pores and swallow dense cortex during dilation and filling.
 Final axial filling after smoothing prevents reintroduced enclosed envelope
 holes; the final trabecular ROI is constrained to full eroded in XY by `Peel`
 (default 3 voxels for all standard profiles) before cortical subtraction.
-This minimum cortical compartment rim is applied after smoothing/filling and
+The same minimum cortical compartment rim is reapplied after smoothing/filling and
 does not peel Z end slices. It is not measured cortical bone thickness or an
 original Buie requirement; an explicit peel of 0 disables the constraint.
 
