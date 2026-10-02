@@ -2,6 +2,13 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.3.4] - 2026-10-02
+
+### Fixed
+
+- Selecting XCTI initializes Laplace–Hamming tissue segmentation and XCTII initializes Gaussian; custom and saved profiles preserve their configured method.
+- Require bone-contouring 0.3.4 in Setup for repaired standard outer filling and endosteal marrow-seed restriction. Document the shared contour path; existing saved masks must be explicitly regenerated to use the repair.
+
 ## [0.3.3] - 2026-10-02
 
 ### Fixed

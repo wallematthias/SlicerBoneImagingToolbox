@@ -46,7 +46,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Contouring",
         package_name="bone-contouring",
         import_name="bone_contouring",
-        minimum_version="0.3.3",
+        minimum_version="0.3.4",
         extras=("unet",),
         constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.3", "bone-imaging-derivatives>=0.1.7",
                      "torch>=2.2", "scikit-image>=0.24,<0.26", "aimio-py>=0.1.8"),
