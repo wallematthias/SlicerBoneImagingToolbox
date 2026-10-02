@@ -21,6 +21,7 @@ class PackageSpec:
     constraints: tuple[str, ...] = ()
     required_imports: tuple[str, ...] = ()
     notes: str = ""
+    extras: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,16 +39,19 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Imaging Derivative Contract",
         package_name="bone-imaging-derivatives",
         import_name="bone_imaging_derivatives",
-        minimum_version="0.1.4",
+        minimum_version="0.1.6",
         notes="Shared derivative manifests, discovery, and prerequisite planning.",
     ),
     PackageSpec(
         display_name="Bone Contouring",
         package_name="bone-contouring",
         import_name="bone_contouring",
-        minimum_version="0.2.1",
-        constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.3"),
-        notes="Standalone bone segmentation and full/trab/cort contour generation package.",
+        minimum_version="0.3.0",
+        extras=("unet",),
+        constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.3", "bone-imaging-derivatives>=0.1.6",
+                     "torch>=2.2", "scikit-image>=0.24,<0.26", "aimio-py>=0.1.8"),
+        required_imports=("bone_contouring.unet.inference",),
+        notes="Standard contouring and published radius/tibia U-Net segmentation. Modules download weights on first use to HRpQCTSegmentation/models beside MotionScore. Version 0.3.0 requires the local checkout until released on PyPI.",
     ),
     PackageSpec(
         display_name="Timelapsed HR-pQCT",
@@ -297,7 +301,8 @@ def package_status_rows(
 
 
 def install_command(spec: PackageSpec, *, installed: bool) -> str:
-    requirement = f"{spec.package_name}>={spec.minimum_version}"
+    extras = f"[{','.join(spec.extras)}]" if spec.extras else ""
+    requirement = f"{spec.package_name}{extras}>={spec.minimum_version}"
     args = ["--upgrade"] if installed else []
     args.extend(spec.install_options)
     args.extend([requirement, *spec.constraints])
@@ -355,7 +360,8 @@ def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
         toolbox_root = Path(__file__).resolve().parents[1]
         local_repo = resolve_local_editable_repo(toolbox_root, spec.package_name)
         if local_repo is not None:
-            package_command = " ".join([*upgrade, "--no-deps", "-e", str(local_repo)])
+            extras = f"[{','.join(spec.extras)}]" if spec.extras else ""
+            package_command = " ".join([*upgrade, "--no-deps", "-e", str(local_repo) + extras])
         else:
             package_command = install_command(spec, installed=installed)
         if spec.package_name == "bone-imaging-derivatives":

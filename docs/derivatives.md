@@ -19,7 +19,8 @@ creating scientific inputs in another tool's namespace.
 ## Derivatives
 
 - `ImportedContours`: Scanco/IPL masks imported with a dataset, such as full, trabecular, cortical, and registration masks. These are preferred over generated masks when both are available.
-- `BoneContours`: toolbox-generated bone segmentations, periosteal/endosteal masks, trabecular/cortical masks, generic ROI masks, and FEA material label maps.
+- `BoneContours`: toolbox-generated bone segmentations, periosteal/endosteal masks, trabecular/cortical masks, generic ROI masks, and FEA material label maps. Published HR-pQCT U-Net compartments use the same naming/roles and retain their model provenance. Bone Contouring can reuse them to add missing tissue SEG and material labels without overwriting the compartments.
+- `Segmentation`: other model-generated segmentations, such as CT vertebral labels.
 - `Registration`: pairwise and composed transforms for longitudinal scans.
 - `CommonRegion`: scan/FOV common-region masks derived from registered scan support.
 - `Microarchitecture`: native maps, native measurements, and common-region-restricted measurements.

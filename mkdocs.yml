@@ -41,6 +41,7 @@ nav:
       - Scanco I/O: tools/scanco-io.md
       - Dataset Naming Helper: tools/dataset-naming-helper.md
       - Contouring: tools/segmentation-and-contours.md
+      - Deep Learning Segmentation: tools/deep-learning-segmentation.md
       - Mask and Label Algebra: tools/mask-and-label-algebra.md
       - Motion Scoring: tools/motion-scoring.md
       - Timelapsed Remodelling: tools/timelapsed-hrpqct.md

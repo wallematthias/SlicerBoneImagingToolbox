@@ -61,6 +61,301 @@ def _import_batch_processor_module(monkeypatch):
     return module
 
 
+def _write_complete_unet_case(logic, root, row):
+    targets = logic._deep_learning_targets(root, row)
+    targets["provenance"].parent.mkdir(parents=True, exist_ok=True)
+    masks = {}
+    for role in ("full", "trab", "cort"):
+        targets[role].write_bytes(b"complete mask fixture")
+        targets[f"{role}_sidecar"].write_text(json.dumps({
+            "method": "unet", "short_role": role,
+            "software": {"name": "bone-contouring", "version": "0.3.0"}}))
+        masks[role] = targets[role].name
+    targets["provenance"].write_text(json.dumps({
+        "masks": masks, "method": "unet", "version": "0.3.0",
+        "model": "radius_tibia_final", "device": "mps"}))
+
+
+@pytest.mark.parametrize("publication_fails", [True, False])
+def test_unet_manifest_failure_is_not_reported_done_or_load(monkeypatch, tmp_path, publication_fails):
+    module = _import_batch_processor_module(monkeypatch)
+    events = []
+    def failed_publication(*args):
+        if publication_fails:
+            raise OSError("read-only manifest")
+    process = types.SimpleNamespace(exitCode=lambda: 0)
+    shell = types.SimpleNamespace(
+        _append_process_output=lambda proc: None, _batchProcessOutput={},
+        _batchProcess=process, _batchCancelled=False,
+        profileCombo=types.SimpleNamespace(currentData="published"),
+        _job_matches_current_row=lambda *args: True,
+        logic=types.SimpleNamespace(publish_deep_learning_manifest=failed_publication),
+        _append_log=lambda message: events.append(message),
+        _set_row_status=lambda i, status: events.append(status),
+        _set_row_action=lambda i, action: events.append(action),
+        _refresh_row_output_paths=lambda *args, **kwargs: None,
+        _set_group_action_load_if_outputs_are_ready=lambda *args: None,
+        _start_next_batch_job=lambda: events.append("next"))
+    module.BatchProcessorWidget._batch_process_finished(shell, 0, process,
+        {"tool": "deep_learning_segmentation", "local_root": str(tmp_path)})
+    assert "Done" not in events and "Load" not in events
+    assert ("Publish" if publication_fails else "Missing") in events and events[-1] == "next"
+
+
+def test_complete_marker_without_manifest_offers_publication_not_load(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    raw = tmp_path / "sub-001/ses-1/xct/sub-001_ses-1_voi-radiusleft_xct.AIM"
+    raw.parent.mkdir(parents=True)
+    raw.touch()
+    logic = module.BatchProcessorLogic()
+    row = logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)[0][0]
+    _write_complete_unet_case(logic, tmp_path, row)
+    assert logic._deep_learning_output_paths(tmp_path, row) == []
+    row = logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)[0][0]
+    assert row["action"] == "Publish"
+    logic.publish_deep_learning_manifest(tmp_path, row)
+    assert logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)[0][0]["action"] == "Load"
+
+
+def test_publish_action_retries_manifest_only(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    row = dict(action="Publish")
+    events = []
+    shell = types.SimpleNamespace(_batchRows=[row],
+        _effective_row_action=lambda row: row["action"],
+        logic=types.SimpleNamespace(publish_deep_learning_manifest=lambda *args: events.append("publish")),
+        _current_local_dataset_root=lambda: tmp_path,
+        _refresh_row_output_paths=lambda *args, **kwargs: events.append("refresh") or ["mask.AIM"],
+        _set_row_status=lambda i, value: events.append(value),
+        _set_row_action=lambda i, value: events.append(value),
+        _queue_row=lambda i: pytest.fail("Must not rerun inference"))
+    module.BatchProcessorWidget._on_row_action(shell, 0)
+    assert events == ["publish", "refresh", "Done", "Load"]
+
+
+def test_publish_conflicting_outputs_never_become_loadable(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    row = dict(subject="001", session_value="1", voi_value="radiusleft",
+               stack_index=None, image_path=str(tmp_path/"sub-001/ses-1/xct/scan.AIM"), action="Publish")
+    logic = module.BatchProcessorLogic()
+    _write_complete_unet_case(logic, tmp_path, row)
+    full = logic._deep_learning_targets(tmp_path, row)["full"].with_suffix(".nrrd")
+    full.write_bytes(b"preserved older cortex method")
+    record = DerivativeRecord("BoneContours", "periosteal_mask", "001", "radiusleft", "1",
+                              None, "native", full, "generated", content_type="mask")
+    target = tmp_path/"derivatives/BoneContours/manifest.json"
+    write_manifest(DerivativeManifest.create("BoneContours", tmp_path,
+        {"name":"test", "version":"1"}, records=(record,)), target)
+    events = []
+    shell = types.SimpleNamespace(_batchRows=[row], logic=logic,
+        _effective_row_action=lambda row: row["action"],
+        _current_local_dataset_root=lambda: tmp_path,
+        _refresh_row_output_paths=lambda *args, **kwargs: logic._deep_learning_output_paths(tmp_path, row),
+        _set_row_status=lambda i, value: events.append(value),
+        _set_row_action=lambda i, value: events.append(value),
+        _append_log=lambda value: events.append(value))
+    module.BatchProcessorWidget._on_row_action(shell, 0)
+    assert "Load" not in events and "Done" not in events
+    assert full.read_bytes() == b"preserved older cortex method"
+
+
+def test_unet_blocks_partial_other_format_compartments(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    source = tmp_path/"sub-001/ses-1/xct/sub-001_ses-1_voi-radiusleft_xct.AIM"
+    source.parent.mkdir(parents=True)
+    source.touch()
+    full = tmp_path/"derivatives/BoneContours/sub-001/ses-1/xct/sub-001_ses-1_voi-radiusleft_desc-full_mask.nrrd"
+    full.parent.mkdir(parents=True)
+    full.write_bytes(b"preserve")
+    logic = module.BatchProcessorLogic()
+    row = logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)[0][0]
+    assert row["action"] == "Missing"
+    with pytest.raises(FileExistsError):
+        logic.command_for_row(tmp_path, tool="deep_learning_segmentation", profile="published", row=row)
+
+
+def test_unet_batch_discovers_aim_only_and_uses_device_without_science_options(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    raw = tmp_path/"sub-001"/"ses-1"/"xct"
+    raw.mkdir(parents=True)
+    image = raw/"sub-001_ses-1_voi-radiusleft_xct.AIM"
+    image.touch()
+    (raw/"sub-001_ses-1_voi-radiusleft_xct.nii.gz").touch()
+    logic = module.BatchProcessorLogic()
+    rows, _ = logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)
+    assert len(rows) == 1
+    assert rows[0]["action"] == "Run"
+    assert rows[0]["image_path"] == str(image)
+    rows[0]["device"] = "cuda"
+    args = logic.command_for_row(tmp_path, tool="deep_learning_segmentation", profile="published", row=rows[0])
+    assert args[:3] == ["-m", "bone_contouring.unet.cli", str(image)]
+    assert args[-2:] == ["--device", "cuda"]
+    assert Path(args[args.index("--output")+1]) == tmp_path/"derivatives"/"BoneContours"/"sub-001"/"ses-1"/"xct"
+
+
+def test_unet_completed_outputs_have_discoverable_bone_contours_manifest(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    raw = tmp_path/"sub-001"/"ses-1"/"xct"
+    raw.mkdir(parents=True)
+    image = raw/"sub-001_ses-1_voi-radiusleft_xct.AIM"
+    image.touch()
+    logic = module.BatchProcessorLogic()
+    rows, _ = logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)
+    row = rows[0]
+    output = logic._deep_learning_output_directory(tmp_path, row)
+    output.mkdir(parents=True)
+    for role in ("full", "trab", "cort"):
+        (output/f"sub-001_ses-1_voi-radiusleft_desc-{role}_mask.AIM").touch()
+    assert logic._deep_learning_output_paths(tmp_path, row) == []
+    _write_complete_unet_case(logic, tmp_path, row)
+    logic.publish_deep_learning_manifest(tmp_path, row)
+    manifest = json.loads((tmp_path/"derivatives"/"BoneContours"/"manifest.json").read_text())
+    assert len(manifest["records"]) == 3
+    assert all(not Path(record["path"]).is_absolute() for record in manifest["records"])
+    assert {record["role"] for record in manifest["records"]} == {"periosteal_mask", "trabecular_mask", "cortical_mask"}
+    from bone_contouring.batch import discover_bone_contouring_batch
+    downstream = discover_bone_contouring_batch(tmp_path)
+    assert {artifact.role for artifact in downstream[0].outputs} == {"full", "trab", "cort"}
+    assert downstream[0].status == "ready"  # missing tissue SEG and material labels
+    rows, _ = logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)
+    assert rows[0]["action"] == "Load"
+
+
+def test_unet_partial_existing_contours_are_blocked_without_overwrite(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    raw = tmp_path/"sub-001"/"ses-1"/"xct"
+    raw.mkdir(parents=True)
+    (raw/"sub-001_ses-1_voi-radiusleft_xct.AIM").touch()
+    output = tmp_path/"derivatives"/"BoneContours"/"sub-001"/"ses-1"/"xct"
+    output.mkdir(parents=True)
+    existing = output/"sub-001_ses-1_voi-radiusleft_desc-cort_mask.AIM"
+    existing.write_bytes(b"keep existing cortex")
+    logic = module.BatchProcessorLogic()
+    rows,_ = logic.discover_rows(tmp_path, tool="deep_learning_segmentation", profile="published", registered=False)
+    assert rows[0]["action"] == "Missing"
+    with pytest.raises(FileExistsError):
+        logic.command_for_row(tmp_path, tool="deep_learning_segmentation", profile="published", row=rows[0])
+    assert existing.read_bytes() == b"keep existing cortex"
+
+
+def test_unet_remote_ui_points_to_ssh_cli_without_submitting(monkeypatch):
+    module = _import_batch_processor_module(monkeypatch)
+    shell = types.SimpleNamespace()
+    rows,message = module.BatchProcessorWidget._discover_remote_rows(shell,"/local","/remote","deep_learning_segmentation","published",False)
+    assert rows == []
+    assert "SSH" in message
+
+
+def test_unet_complete_other_method_contours_are_loadable_and_preserved(monkeypatch,tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    raw = tmp_path/"sub-001"/"ses-1"/"xct"
+    raw.mkdir(parents=True)
+    (raw/"sub-001_ses-1_voi-radiusleft_xct.AIM").touch()
+    output = tmp_path/"derivatives"/"BoneContours"/"sub-001"/"ses-1"/"xct"
+    output.mkdir(parents=True)
+    records=[]
+    for short,role in (("full","periosteal_mask"),("trab","trabecular_mask"),("cort","cortical_mask")):
+        path=output/f"sub-001_ses-1_voi-radiusleft_desc-{short}_mask.AIM"
+        path.write_bytes(b"other method contour")
+        records.append(DerivativeRecord("BoneContours",role,"001","radiusleft","1",None,"native",path,"generated",content_type="mask",software={"name":"bone-contouring","version":"0.2.3"}))
+    write_manifest(DerivativeManifest.create("BoneContours",tmp_path,{"name":"test","version":"1"},records=records),tmp_path/"derivatives"/"BoneContours"/"manifest.json")
+    logic=module.BatchProcessorLogic()
+    rows,_=logic.discover_rows(tmp_path,tool="deep_learning_segmentation",profile="published",registered=False)
+    assert rows[0]["action"] == "Load"
+    with pytest.raises(FileExistsError):
+        logic.command_for_row(tmp_path,tool="deep_learning_segmentation",profile="published",row=rows[0])
+
+
+@pytest.mark.parametrize("unet", [False, True])
+def test_unet_load_row_uses_correct_importer_without_misattribution(monkeypatch,tmp_path,unet):
+    module=_import_batch_processor_module(monkeypatch)
+    row=dict(subject="001",session_value="1",voi_value="radiusleft",stack_index=None,
+             output_paths=[str(tmp_path/"mask.AIM")])
+    logic=module.BatchProcessorLogic()
+    marker=logic._deep_learning_targets(tmp_path,row)["provenance"]
+    if unet:
+        marker.parent.mkdir(parents=True)
+        marker.write_text("{}")
+    loaded=[]
+    shell=types.SimpleNamespace(_batchRows=[row],logic=logic,
+        _selected_tool_key=lambda:"deep_learning_segmentation",_selected_backend_key=lambda:"local",
+        _current_local_dataset_root=lambda:tmp_path,_deduplicated_paths=lambda paths:paths,
+        _load_deep_learning_outputs=lambda row,paths:loaded.append("unet"),
+        _load_bone_contour_outputs_as_segmentation=lambda row,paths:loaded.append("existing"))
+    module.BatchProcessorWidget._load_row_outputs(shell,0)
+    assert loaded == (["unet"] if unet else ["existing"])
+
+
+def test_unet_discovery_preserves_stack_identity(monkeypatch,tmp_path):
+    module=_import_batch_processor_module(monkeypatch)
+    raw=tmp_path/"sub-001"/"ses-1"/"xct"
+    raw.mkdir(parents=True)
+    for stack in (1,2):
+        (raw/f"sub-001_ses-1_voi-radiusleft_stack-{stack:02d}_xct.AIM").touch()
+    rows,_=module.BatchProcessorLogic().discover_rows(tmp_path,tool="deep_learning_segmentation",profile="published",registered=False)
+    assert {row["stack_index"] for row in rows} == {1,2}
+
+
+def test_unet_virtual_stack_is_not_mistaken_for_full_scan(monkeypatch,tmp_path):
+    module=_import_batch_processor_module(monkeypatch)
+    raw=tmp_path/"sub-001"/"ses-1"/"xct"
+    raw.mkdir(parents=True)
+    image=raw/"sub-001_ses-1_voi-radiusleft_xct.AIM"
+    image.touch()
+    image.with_suffix(".AIM.json").write_text(json.dumps({"virtual_stacks":[{"stack_index":1,"slice_start":0,"slice_stop":3}]}))
+    logic=module.BatchProcessorLogic()
+    rows,_=logic.discover_rows(tmp_path,tool="deep_learning_segmentation",profile="published",registered=False)
+    assert rows[0]["action"] == "Missing"
+    with pytest.raises(ValueError):
+        logic.command_for_row(tmp_path,tool="deep_learning_segmentation",profile="published",row=rows[0])
+
+
+def test_native_unet_handoff_only_adds_missing_seg_and_material(monkeypatch,tmp_path):
+    """Catches contour recomputation/overwrite and loss of U-Net provenance."""
+    py_aimio=pytest.importorskip("py_aimio")
+    pytest.importorskip("bone_contouring.unet")
+    from bone_contouring.unet.aim import write_masks
+    from bone_contouring import batch as contour_batch
+    module=_import_batch_processor_module(monkeypatch)
+    raw=tmp_path/"sub-001"/"ses-1"/"xct"
+    raw.mkdir(parents=True)
+    source=raw/"sub-001_ses-1_voi-radiusleft_xct.AIM"
+    full=np.zeros((5,30,32),dtype=np.uint8)
+    full[:,4:26,4:28]=1
+    trab=np.zeros_like(full)
+    trab[:,7:23,7:25]=1
+    cort=full-trab
+    metadata=dict(position=(0,0,0),offset=(0,0,0),element_size=(.061,)*3,
+                  processing_log="Mu_Scaling 8192\nHU: mu water 0.24\nDensity: slope 1500\nDensity: intercept -100\n")
+    py_aimio.write_aim(str(source),full.astype(np.int16)*8000,metadata,unit="native")
+    logic=module.BatchProcessorLogic()
+    row=logic.discover_rows(tmp_path,tool="deep_learning_segmentation",profile="published",registered=False)[0][0]
+    output=logic._deep_learning_output_directory(tmp_path,row)
+    paths=write_masks(output,source.stem,dict(full=full,trab=trab,cort=cort),metadata,source=source,device="cpu")
+    original={path:path.read_bytes() for path in paths.values()}
+    logic.publish_deep_learning_manifest(tmp_path,row)
+    def no_recontouring(*args,**kwargs):
+        raise AssertionError("Existing U-Net compartments must be reused")
+    monkeypatch.setattr(contour_batch,"generate_masks_from_image",no_recontouring)
+    generated=contour_batch.run_bone_contouring_batch(tmp_path,modality="xct2",site="radius",segmentation="gauss")
+    assert {record.role for record in generated} == {"bone_segmentation","material_labelmap"}
+    assert all(path.read_bytes() == before for path,before in original.items())
+    manifest=read_manifest(tmp_path/"derivatives"/"BoneContours"/"manifest.json")
+    assert len(manifest.records)==5
+    assert sum(record.metadata.get("method") == "unet" for record in manifest.records)==3
+    assert contour_batch.discover_bone_contouring_batch(tmp_path)[0].status=="loadable"
+
+
+def test_source_lookup_with_duplicate_names_requires_exact_path(monkeypatch,tmp_path):
+    module=_import_batch_processor_module(monkeypatch)
+    first,second=tmp_path/"one"/"scan.AIM",tmp_path/"two"/"scan.AIM"
+    def node(path):
+        return types.SimpleNamespace(GetName=lambda:"scan",GetAttribute=lambda key:str(path),GetStorageNode=lambda:None)
+    one,two=node(first),node(second)
+    module.slicer.util.getNodesByClass=lambda name:[one,two]
+    assert module.BatchProcessorWidget._find_loaded_source_volume(second,require_source_path=True) is two
+
+
 def test_batch_processor_module_is_registered_in_toolbox() -> None:
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
@@ -239,7 +534,7 @@ def test_batch_processor_remote_fea_rows_use_remote_artifact_memory() -> None:
     assert "registerCheck" not in source
     assert 'action = str(row.get("action") or "")' in source
     assert 'button = qt.QPushButton(action)' in source
-    assert 'button.enabled = action in {"Run", "Load"}' in source
+    assert 'button.enabled = action in {"Run", "Load", "Publish"}' in source
     assert "self.table.setSpan(row_index, 0, span, 1)" in source
     assert "def _table_rows_for_tool(" in source
     assert "def command_for_row(" in source
@@ -3195,7 +3490,8 @@ def test_queued_batch_jobs_snapshot_tool_profile_and_row() -> None:
     assert "def _batch_job_for_row(self, row_index):" in source
     assert '"tool": self._selected_tool_key()' in source
     assert '"profile": str(self.profileCombo.currentData or "")' in source
-    assert '"row": dict(self._batchRows[row_index])' in source
+    assert 'row = dict(self._batchRows[row_index])' in source
+    assert '"row": row' in source
     assert "job = self._batch_job_for_row(child_index)" in source
     assert "self._batchQueue.append(job)" in source
     assert "job = self._batchQueue.pop(0)" in source
@@ -3602,7 +3898,7 @@ def test_bone_contour_outputs_load_as_segmentation_nodes() -> None:
     assert "slicer.util.loadLabelVolume" in source
     assert 'row.get("image_path")' in source
     assert '"image_path": str(record.path)' in source
-    assert "def _ensure_loaded_source_volume(self, image_path):" in source
+    assert "def _ensure_loaded_source_volume(self, image_path, *, require_source_path=False):" in source
     assert 'ScancoIOLogic().import_image(image_path, scaling="density"' in source
 
 

@@ -68,7 +68,7 @@ def test_local_link_helper_removes_extra_modules_from_sibling_toolbox_checkout()
     helper = _load_helper()
     stale_path = (
         ROOT.parent
-        / "SlicerBoneImagingToolbox-deep-learning-segmentation-scene"
+        / "SlicerBoneImagingToolbox-stale-test-checkout"
         / "HRpQCTTools"
         / "DeepLearningSegmentationHRpQCT"
     )
@@ -81,7 +81,7 @@ def test_use_current_checkout_helper_removes_sibling_toolbox_checkout_paths() ->
     helper = _load_use_current_helper()
     stale_path = (
         ROOT.parent
-        / "SlicerBoneImagingToolbox-deep-learning-segmentation-scene"
+        / "SlicerBoneImagingToolbox-stale-test-checkout"
         / "HRpQCTTools"
         / "TimelapsedHRpQCT"
     )
@@ -94,7 +94,7 @@ def test_use_current_checkout_helper_removes_extra_modules_from_sibling_toolbox_
     helper = _load_use_current_helper()
     stale_path = (
         ROOT.parent
-        / "SlicerBoneImagingToolbox-deep-learning-segmentation-scene"
+        / "SlicerBoneImagingToolbox-stale-test-checkout"
         / "HRpQCTTools"
         / "DeepLearningSegmentationHRpQCT"
     )

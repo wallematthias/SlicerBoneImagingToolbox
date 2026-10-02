@@ -331,10 +331,12 @@ class MotionScoreHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.modelVersionEdit.setText(self._settings().value("MotionScore/ModelVersion", "v1"))
 
         self.licenseFlowHelpLabel = qt.QLabel(
-            "MotionScore package and model weights are managed from the Setup module."
+            "Install or update the MotionScore package in Toolbox Setup. "
+            "This module downloads missing model weights when batch prediction starts "
+            "and reuses local models."
         )
         self.licenseFlowHelpLabel.setWordWrap(True)
-        self._tip(self.licenseFlowHelpLabel, "Setup status and expected model-installation path.")
+        self._tip(self.licenseFlowHelpLabel, "Package setup and module-managed model weights.")
         licenseLayout.addWidget(self.licenseFlowHelpLabel)
 
         self.licenseStatusLabel = qt.QLabel("Models: not checked")

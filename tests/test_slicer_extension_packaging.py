@@ -119,7 +119,7 @@ def test_timelapsed_release_smoke_tests_skip_optional_runtime_dependencies() -> 
     assert "PyYAML is not available" in test_class_source
 
 
-def test_public_bone_imaging_modules_credit_matthias_walle_as_author() -> None:
+def test_public_bone_imaging_modules_credit_their_actual_authors() -> None:
     manifest = json.loads((ROOT / "toolbox_modules.json").read_text(encoding="utf-8"))
 
     for module in manifest["modules"]:
@@ -127,5 +127,10 @@ def test_public_bone_imaging_modules_credit_matthias_walle_as_author() -> None:
         module_name = module_dir.name
         source = (module_dir / f"{module_name}.py").read_text(encoding="utf-8")
 
-        assert 'parent.contributors = ["Matthias Walle"]' in source, module["path"]
-        assert "Author: Matthias Walle" in source, module["path"]
+        if module_name == "DeepLearningSegmentationHRpQCT":
+            for author in ("Nathan J. Neeteson", "Bryce A. Besler", "Danielle E. Whittier", "Steven K. Boyd"):
+                assert author in source
+            assert "Matthias Walle" not in source
+        else:
+            assert 'parent.contributors = ["Matthias Walle"]' in source, module["path"]
+            assert "Author: Matthias Walle" in source, module["path"]

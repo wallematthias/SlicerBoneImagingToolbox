@@ -47,6 +47,7 @@ try:
     from bone_imaging_derivatives import (  # noqa: E402
         BatchArtifact,
         CaseKey,
+        completed_unet_masks,
         DerivativeManifest,
         DerivativeRecord,
         discover_derivative_artifacts,
@@ -71,6 +72,7 @@ except Exception as exc:
         ) from _DERIVATIVES_IMPORT_ERROR
 
     discover_derivative_artifacts = _missing_derivatives_runtime
+    completed_unet_masks = _missing_derivatives_runtime
     discover_manifests = _missing_derivatives_runtime
     discover_raw_xct_images = _missing_derivatives_runtime
     manifest_path = _missing_derivatives_runtime
@@ -116,6 +118,7 @@ from slicer.ScriptedLoadableModule import (  # noqa: E402
 MODULE_VERSION = "0.1.0"
 _BONE_CONTOUR_OUTPUT_ROLES = frozenset({"segmentation", "full", "trab", "cort", "material_labelmap"})
 TOOL_PROFILES = {
+    "deep_learning_segmentation": (("Published radius/tibia", "published", False),),
     "bone_contouring": (
         ("XtremeCT I", "XtremeCTI", False),
         ("XtremeCT II", "XtremeCTII", False),
@@ -657,6 +660,28 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             return [], message
         if tool == "mask_label_algebra":
             return self._mask_label_algebra_table_rows(root)
+        if tool == "deep_learning_segmentation":
+            rows = []
+            for record in discover_raw_xct_images(root):
+                if not re.search(r"\.aim(?:;\d+)?$", record.path.name, re.IGNORECASE):
+                    continue
+                row = dict(subject=record.key.subject_id, session=record.key.session_id,
+                           session_value=record.key.session_id, voi=self._voi_text(record.key),
+                           stack_index=record.key.stack_index,
+                           voi_value=record.key.voi, registered=False, image_path=str(record.path),
+                           input=str(record.path), action="Run", status="Ready", profile="published")
+                outputs = self._deep_learning_output_paths(root, row)
+                if outputs:
+                    row.update(action="Load", status="Complete", output_paths=outputs)
+                elif completed_unet_masks(self._deep_learning_targets(root, row)["provenance"]):
+                    row.update(action="Publish", status="Masks complete; manifest publication needed")
+                elif (any(path.exists() for path in self._deep_learning_targets(root, row).values())
+                      or self._deep_learning_existing_compartments(root, row)):
+                    row.update(action="Missing", status="Existing/incomplete contours; preserved (no overwrite)")
+                if record.source == "virtual" or record.metadata.get("review_reason"):
+                    row.update(action="Missing", status="U-Net requires a physical AIM stack, not a virtual slice view")
+                rows.append(row)
+            return rows, f"Discovered {len(rows)} AIM row(s); published radius/tibia weights."
         images = discover_raw_xct_images(root)
         contour_artifacts = (
             *discover_derivative_artifacts(root, "IPLContours"),
@@ -708,6 +733,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     def _output_family_for_tool(tool: str) -> str:
         return {
             "bone_contouring": "BoneContours",
+            "deep_learning_segmentation": "BoneContours",
             "mask_label_algebra": "BoneContours",
             "microarchitecture": "Microarchitecture",
             "timelapse": "Timelapse",
@@ -719,7 +745,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
 
     @staticmethod
     def _required_roles_for_tool(tool: str, profile: str) -> tuple[str, ...]:
-        if tool in {"bone_contouring", "mask_label_algebra"}:
+        if tool in {"bone_contouring", "mask_label_algebra", "deep_learning_segmentation"}:
             return ()
         if tool == "timelapse":
             return ("segmentation", "full", "trab", "cort")
@@ -1464,6 +1490,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     def rediscover_row_output_paths(self, dataset_root, tool: str, row: dict) -> list[str]:
         """Return output paths currently available on disk for one displayed row."""
         root = self._dataset_root(dataset_root)
+        if tool == "deep_learning_segmentation":
+            return self._deep_learning_output_paths(root, row)
         if tool == "timelapse":
             return self._timelapse_output_paths_for_row(root, row)
         if tool == "mask_label_algebra":
@@ -1778,6 +1806,19 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     def command_for_row(self, dataset_root, *, tool: str, profile: str, row: dict, force: bool = False) -> list[str]:
         """Return a core-package CLI command for one batch row."""
         tool_key = str(tool)
+        if tool_key == "deep_learning_segmentation":
+            root = self._dataset_root(dataset_root).resolve()
+            image = Path(str(row.get("image_path") or "")).resolve()
+            output = self._deep_learning_output_directory(root, row)
+            prefix = re.sub(r"_xct$", "", re.sub(r"\.aim(?:;\d+)?$", "", image.name, flags=re.IGNORECASE), flags=re.IGNORECASE)
+            expected = self._deep_learning_targets(root,row)["provenance"].stem.removesuffix("_UNET")
+            if (any(path.exists() for path in self._deep_learning_targets(root, row).values())
+                    or self._deep_learning_existing_compartments(root, row)):
+                raise FileExistsError("Existing BoneContours are preserved; U-Net will not overwrite or mix masks.")
+            if prefix != expected or row.get("action") == "Missing":
+                raise ValueError("U-Net requires a normalized physical AIM stack matching the row identity.")
+            return ["-m", "bone_contouring.unet.cli", str(image), "--output", str(output),
+                    "--device", str(row.get("device") or "auto")]
         if tool_key == "fea":
             return self._fea_command_for_row(self._dataset_root(dataset_root), profile, row, force=force)
         if tool_key == "mechanoregulation":
@@ -1816,6 +1857,73 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if force:
             args.append("--force")
         return args
+
+    @staticmethod
+    def _deep_learning_output_directory(root, row):
+        return Path(root)/"derivatives"/"BoneContours"/f"sub-{row['subject']}"/f"ses-{row['session_value']}"/"xct"
+
+    @staticmethod
+    def _deep_learning_targets(root, row):
+        output = BatchProcessorLogic._deep_learning_output_directory(root, row)
+        stack = f"_stack-{int(row['stack_index']):02d}" if row.get("stack_index") is not None else ""
+        voi = re.sub(r"[^A-Za-z0-9]+", "", str(row['voi_value'])).lower()
+        prefix = f"sub-{row['subject']}_ses-{row['session_value']}_voi-{voi}{stack}"
+        paths = {role: output/f"{prefix}_desc-{role}_mask.AIM" for role in ("full", "trab", "cort")}
+        paths.update({f"{role}_sidecar": path.with_suffix(".AIM.json") for role,path in list(paths.items())})
+        paths["provenance"] = output/f"{prefix}_UNET.json"
+        return paths
+
+    @staticmethod
+    def _deep_learning_existing_compartments(root, row):
+        candidates = [artifact for artifact in discover_derivative_artifacts(root, "BoneContours")
+                      if artifact.role in {"full", "trab", "cort"}]
+        return bool(preferred_contours(candidates, BatchProcessorLogic._row_case_key(row)))
+
+    @staticmethod
+    def _deep_learning_output_paths(root, row):
+        targets = BatchProcessorLogic._deep_learning_targets(root, row)
+        if targets["provenance"].exists() and not completed_unet_masks(targets["provenance"]):
+            return []
+        manifest = manifest_path(Path(root), "BoneContours")
+        if not manifest.is_file():
+            return []
+        published = {record.path.resolve() for record in read_manifest(manifest).records}
+        selection = preferred_contours([artifact for artifact in discover_derivative_artifacts(root, "BoneContours")
+                                        if artifact.path.resolve() in published],
+                                       BatchProcessorLogic._row_case_key(row))
+        if selection.review_roles:
+            return []
+        selected = selection.selected
+        return ([str(selected[role].path) for role in ("full", "trab", "cort")]
+                if {"full", "trab", "cort"} <= set(selected) else [])
+
+    @staticmethod
+    def publish_deep_learning_manifest(root, row):
+        root = Path(root).resolve()
+        marker = BatchProcessorLogic._deep_learning_targets(root, row)["provenance"]
+        paths = completed_unet_masks(marker)
+        if not paths:
+            raise ValueError("U-Net outputs are incomplete; no manifest was published.")
+        source = Path(row["image_path"]).resolve()
+        provenance = json.loads(marker.read_text())
+        if provenance.get("source") and Path(provenance["source"]).resolve() != source:
+            raise ValueError("U-Net provenance does not match the selected source.")
+        roles = ("periosteal_mask", "trabecular_mask", "cortical_mask")
+        software = {"name": "bone-contouring", "version": str(provenance.get("version", "0+unknown"))}
+        records = [DerivativeRecord(
+            "BoneContours", role, str(row["subject"]), str(row["voi_value"]),
+            str(row["session_value"]), row.get("stack_index"), "native", Path(path), "generated",
+            inputs=(source.relative_to(root).as_posix(),),
+            metadata={"method": "unet", "model": provenance["model"], "device": provenance["device"],
+                      "weights_sha256": provenance.get("weights_sha256"),
+                      "source_geometry": provenance.get("source_geometry")},
+            content_type="mask", software=software,
+        ) for role,path in zip(roles,paths)]
+        target = manifest_path(root, "BoneContours")
+        existing = list(read_manifest(target).records) if target.exists() else []
+        replacements = {record.path for record in records}
+        records = [record for record in existing if record.path not in replacements]+records
+        write_manifest(DerivativeManifest.create("BoneContours", root, software, records=tuple(records)),target)
 
     @staticmethod
     def _microarchitecture_case_dirs(root: Path, row: dict) -> tuple[Path, Path]:
@@ -2434,6 +2542,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.toolCombo = qt.QComboBox()
         for label, value in (
             ("Bone Contouring", "bone_contouring"),
+            ("U-Net Bone Contours", "deep_learning_segmentation"),
             ("Mask And Label Algebra", "mask_label_algebra"),
             ("Microarchitecture", "microarchitecture"),
             ("Timelapsed Remodelling", "timelapse"),
@@ -2449,6 +2558,13 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.profileCombo = qt.QComboBox()
         self.profileCombo.currentIndexChanged.connect(self._on_profile_changed)
         workflow_form.addRow("Profile", self.profileCombo)
+
+        self.unetDeviceCombo = qt.QComboBox()
+        for label, value in (("Automatic", "auto"), ("CPU", "cpu"), ("CUDA", "cuda"), ("Apple MPS", "mps")):
+            self.unetDeviceCombo.addItem(label, value)
+        self.unetDeviceLabel = qt.QLabel("Device")
+        self.unetDeviceCombo.visible = self.unetDeviceLabel.visible = False
+        workflow_form.addRow(self.unetDeviceLabel, self.unetDeviceCombo)
 
         self.profileHintLabel = qt.QLabel()
         self.profileHintLabel.wordWrap = True
@@ -2630,6 +2746,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
 
     def _on_tool_changed(self, *args):
         del args
+        if hasattr(self, "unetDeviceCombo"):
+            visible = self._selected_tool_key() == "deep_learning_segmentation"
+            self.unetDeviceCombo.visible = self.unetDeviceLabel.visible = visible
         self._populate_profile_combo()
         self._update_profile_hint()
         if self._has_active_batch():
@@ -2850,6 +2969,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._populate_rows(rows)
 
     def _discover_remote_rows(self, local_root, remote_root, tool, profile, registered):
+        if tool == "deep_learning_segmentation":
+            return [], "U-Net server submission is not integrated yet. Run bone-contouring unet over SSH, or use Local batch mode."
         backend = self._remote_backend(local_root=local_root, remote_root=remote_root)
         if backend is None:
             return [], f"Set {SLICER_BONE_BATCH_REMOTE_CONFIG} to a private ARC/SLURM backend config."
@@ -3152,7 +3273,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
                 self.table.setSpan(row_index, 0, span, 1)
             if action:
                 button = qt.QPushButton(action)
-                button.enabled = action in {"Run", "Load"}
+                button.enabled = action in {"Run", "Load", "Publish"}
                 button.clicked.connect(lambda _checked=False, index=row_index: self._on_row_action(index))
                 self.table.setCellWidget(row_index, 0, button)
             else:
@@ -3235,6 +3356,10 @@ print(json.dumps({"cases": rows}, sort_keys=True))
     def _process_environment(self):
         environment = qt.QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUNBUFFERED", "1")
+        if self._selected_tool_key() == "deep_learning_segmentation" and not environment.value("HRPQCT_SEGMENTATION_MODEL_DIR"):
+            from SlicerBoneImagingToolboxLib.deep_learning_segmentation_scene import model_cache_directory
+            environment.insert("HRPQCT_SEGMENTATION_MODEL_DIR", str(model_cache_directory(
+                qt.QStandardPaths.writableLocation(qt.QStandardPaths.AppDataLocation))))
         for key in ("ITK_AUTOLOAD_PATH", "SITK_AUTOLOAD_PATH"):
             if environment.contains(key):
                 environment.remove(key)
@@ -3267,6 +3392,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             return args
         module = str(args[1])
         local_sources = {
+            "bone_contouring.unet.cli": _local_repo_path("bone-contouring", "src"),
             "bone_contouring.cli": _local_repo_path("bone-contouring", "src"),
             "bone_microarchitecture.cli": _local_repo_path("bone-microarchitecture", "src"),
             "timelapsedhrpqct.cli": _local_repo_path("Timelapsed" + "HRpQCT", "src"),
@@ -3292,6 +3418,21 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             return
         row = self._batchRows[row_index]
         action = self._effective_row_action(row)
+        if action == "Publish":
+            try:
+                self.logic.publish_deep_learning_manifest(self._current_local_dataset_root(), row)
+                paths = self._refresh_row_output_paths(row_index, tool_key="deep_learning_segmentation")
+            except Exception as exc:
+                self._set_row_status(row_index, "Manifest publication failed")
+                self._append_log(f"[batch] U-Net manifest publication failed: {exc}")
+                return
+            if not paths:
+                self._set_row_status(row_index, "Output conflict; review preserved contours")
+                self._set_row_action(row_index, "Missing")
+                return
+            self._set_row_status(row_index, "Done")
+            self._set_row_action(row_index, "Load")
+            return
         if action == "Run":
             self._queue_row(row_index)
             return
@@ -3388,6 +3529,10 @@ print(json.dumps({"cases": rows}, sort_keys=True))
 
     def _batch_job_for_row(self, row_index):
         row_index = int(row_index)
+        row = dict(self._batchRows[row_index])
+        if self._selected_tool_key() == "deep_learning_segmentation":
+            device = self.unetDeviceCombo.currentData
+            row["device"] = str((device() if callable(device) else device) or "auto")
         return {
             "row_index": row_index,
             "tool": self._selected_tool_key(),
@@ -3396,7 +3541,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
             "backend": self._selected_backend_key(),
             "local_root": self._current_local_dataset_root(),
             "remote_root": self._current_remote_dataset_root(),
-            "row": dict(self._batchRows[row_index]),
+            "row": row,
         }
 
     def _job_description(self, job):
@@ -3443,7 +3588,7 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         if 0 <= row_index < len(self._batchRows):
             self._batchRows[row_index]["action"] = str(action)
         button = qt.QPushButton(str(action))
-        button.enabled = str(action) in {"Run", "Load"}
+        button.enabled = str(action) in {"Run", "Load", "Publish"}
         button.clicked.connect(lambda _checked=False, index=row_index: self._on_row_action(index))
         self.table.setCellWidget(row_index, 0, button)
 
@@ -3627,8 +3772,24 @@ print(json.dumps({"cases": rows}, sort_keys=True))
                 )
                 if published:
                     self._append_log(f"[batch] published {len(published)} FEA artifact(s)")
+            if tool_key == "deep_learning_segmentation":
+                try:
+                    self.logic.publish_deep_learning_manifest(
+                        str(job.get("local_root") or self.datasetRootEdit.text), dict(job.get("row") or {}))
+                except Exception as exc:
+                    self._append_log(f"[batch] U-Net masks saved, but manifest publication failed: {exc}")
+                    if job_visible:
+                        self._set_row_status(row_index, "Manifest publication failed")
+                        self._set_row_action(row_index, "Publish")
+                    self._start_next_batch_job()
+                    return
             if job_visible:
-                self._refresh_row_output_paths(row_index, tool_key=tool_key)
+                outputs = self._refresh_row_output_paths(row_index, tool_key=tool_key)
+                if tool_key == "deep_learning_segmentation" and not outputs:
+                    self._set_row_status(row_index, "Output conflict; review preserved contours")
+                    self._set_row_action(row_index, "Missing")
+                    self._start_next_batch_job()
+                    return
                 self._set_row_status(row_index, "Done")
                 self._set_row_action(row_index, "Load")
                 self._set_group_action_load_if_outputs_are_ready(row_index, tool_key)
@@ -4023,6 +4184,12 @@ print(str(csv_path))
                 "[batch] No output paths were discovered for this row yet. "
                 f"Click Analyze again or load from the detailed {self.toolCombo.currentText} module."
             )
+            return
+        if self._selected_tool_key() == "deep_learning_segmentation":
+            if self.logic._deep_learning_targets(self._current_local_dataset_root(),row)["provenance"].is_file():
+                self._load_deep_learning_outputs(row, output_paths)
+            else:
+                self._load_bone_contour_outputs_as_segmentation(row, output_paths)
             return
         if self._selected_tool_key() in {"bone_contouring", "mask_label_algebra"}:
             self._load_bone_contour_outputs_as_segmentation(row, output_paths)
@@ -5139,6 +5306,35 @@ print(str(csv_path))
         except Exception:
             pass
 
+    def _load_deep_learning_outputs(self, row, output_paths):
+        from DeepLearningSegmentationHRpQCT import DeepLearningSegmentationHRpQCTLogic
+        from ScancoIOLib import aim_io
+        import sitkUtils
+        reference = self._ensure_loaded_source_volume(row.get("image_path"), require_source_path=True)
+        if reference is None:
+            raise ValueError("Could not load the source volume for U-Net masks.")
+        arrays = {}
+        for path in output_paths:
+            role = BatchProcessorWidget._mask_role_from_path(Path(path))
+            role = role if role in {"full", "trab", "cort"} else None
+            if role:
+                image, metadata = aim_io.read_aim(path, scaling="native")
+                # Validate AIM physical geometry before the scene snapshot import.
+                from SlicerBoneImagingToolboxLib.deep_learning_segmentation_scene import align_native_aim_mask
+                source_metadata = json.loads(reference.GetAttribute("HRpQCT.AIMMetadata") or "{}")
+                image = align_native_aim_mask(image, metadata, sitkUtils.PullVolumeFromSlicer(reference), source_metadata)
+                native = sitk.GetArrayFromImage(image)
+                foreground = np.unique(native)
+                foreground = foreground[foreground != 0]
+                if len(foreground) != 1 or foreground[0] not in (1,127,255):
+                    raise ValueError(f"Invalid binary U-Net {role} mask: {path}")
+                arrays[role] = (native>0).astype(np.uint8)
+        with tempfile.TemporaryDirectory(prefix="unet-batch-load-") as directory:
+            output = Path(directory)/"masks.npz"
+            np.savez(output, **arrays)
+            DeepLearningSegmentationHRpQCTLogic().import_outputs(reference, output)
+        self._append_log("[batch] loaded U-Net full/trab/cort compartments.")
+
     def _load_bone_contour_outputs_as_segmentation(self, row, output_paths):
         mask_paths = [Path(path) for path in output_paths if self._is_bone_contour_segmentation_output(Path(path))]
         if not mask_paths:
@@ -5318,10 +5514,10 @@ print(str(csv_path))
             segment.SetTag("HRpQCT.Role", role)
 
     @staticmethod
-    def _find_loaded_source_volume(image_path):
+    def _find_loaded_source_volume(image_path, *, require_source_path=False):
         if not image_path:
             return None
-        target = Path(str(image_path))
+        target = Path(str(image_path)).expanduser().resolve()
         target_name = target.name
         target_stem = target.stem
         try:
@@ -5330,7 +5526,7 @@ print(str(csv_path))
             return None
         for node in nodes:
             candidates = [
-                node.GetName() if hasattr(node, "GetName") else "",
+                node.GetName() if not require_source_path and hasattr(node, "GetName") else "",
                 node.GetAttribute("HRpQCT.AIMSourcePath") if hasattr(node, "GetAttribute") else "",
             ]
             storage = node.GetStorageNode() if hasattr(node, "GetStorageNode") else None
@@ -5340,12 +5536,16 @@ print(str(csv_path))
                 if not candidate:
                     continue
                 candidate_path = Path(str(candidate))
+                if require_source_path:
+                    if candidate_path.is_absolute() and candidate_path.resolve() == target:
+                        return node
+                    continue
                 if candidate_path == target or candidate_path.name == target_name or candidate_path.stem == target_stem:
                     return node
         return None
 
-    def _ensure_loaded_source_volume(self, image_path):
-        existing = self._find_loaded_source_volume(image_path)
+    def _ensure_loaded_source_volume(self, image_path, *, require_source_path=False):
+        existing = self._find_loaded_source_volume(image_path, require_source_path=require_source_path)
         if existing is not None or not image_path:
             return existing
         image_path = Path(str(image_path))

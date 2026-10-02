@@ -30,7 +30,7 @@ https://github.com/wallematthias/MotionScoreHRpQCT
 
 The module no longer depends on a hosted license request service. The recommended model distribution is a downloadable model bundle.
 
-The automatic `Install / Download Models` button downloads the default model from the MotionScoreHRpQCT release catalog. If that automatic download is unavailable, install the same model manually:
+Toolbox Setup installs or updates the Python package only. Motion Scoring manages its own model weights: starting batch prediction with no local models triggers a download from the MotionScoreHRpQCT release catalog. Run prediction again after the download finishes. Existing local weights are reused. If automatic download is unavailable, install the same model manually:
 
 1. Download the default MotionScore base model bundle:
    - Windows-friendly zip: https://github.com/wallematthias/MotionScoreHRpQCT/releases/download/v2.5.4/motionscore-base-v1.zip

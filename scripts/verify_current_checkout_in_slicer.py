@@ -13,6 +13,7 @@ MODULES = (
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "SegmentationHRpQCT",
+    "DeepLearningSegmentationHRpQCT",
     "BoneMicroarchitecture",
     "PlateRodMorphometryHRpQCT",
     "ParOSolFEA",
@@ -40,9 +41,15 @@ def main():
             raise RuntimeError(f"{name} imported from {module_file}, expected under {repo_root}")
         imported[name] = str(module_file)
 
-    from SlicerBoneImagingToolboxLib import motionscore_scene, spine_segmentation_batch, timelapsed_scene
+    from SlicerBoneImagingToolboxLib import (
+        deep_learning_segmentation_scene,
+        motionscore_scene,
+        spine_segmentation_batch,
+        timelapsed_scene,
+    )
 
     helpers = {
+        "deep_learning_segmentation_scene": Path(deep_learning_segmentation_scene.__file__).resolve(),
         "motionscore_scene": Path(motionscore_scene.__file__).resolve(),
         "spine_segmentation_batch": Path(spine_segmentation_batch.__file__).resolve(),
         "timelapsed_scene": Path(timelapsed_scene.__file__).resolve(),

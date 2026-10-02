@@ -165,7 +165,7 @@ def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["bone-contouring"].display_name == "Bone Contouring"
     assert specs["bone-contouring"].import_name == "bone_contouring"
-    assert specs["bone-contouring"].minimum_version == "0.2.1"
+    assert specs["bone-contouring"].minimum_version == "0.3.0"
     assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 
@@ -174,9 +174,10 @@ def test_bone_contouring_install_uses_local_editable_checkout() -> None:
     commands = install_commands(specs["bone-contouring"], installed=False)
 
     assert len(commands) == 2
-    assert commands[0] == "--prefer-binary numpy>=1.26,<3.0 SimpleITK>=2.3"
+    assert "torch>=2.2" in commands[0]
+    assert "bone-imaging-derivatives>=0.1.6" in commands[0]
     assert commands[1].startswith("--no-deps -e ")
-    assert commands[1].endswith("/bone-contouring")
+    assert commands[1].endswith("/bone-contouring[unet]")
 
 
 def test_microarchitecture_runtime_package_has_user_facing_setup_name() -> None:

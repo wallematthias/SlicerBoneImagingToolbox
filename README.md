@@ -4,7 +4,7 @@
 
 # Bone Imaging Toolbox for 3D Slicer
 
-Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, longitudinal remodelling, microarchitecture, voidspace analysis, plate/rod morphometry, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
+Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, deep-learning segmentation, longitudinal remodelling, microarchitecture, voidspace analysis, plate/rod morphometry, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
 
 The toolbox appears in Slicer under the `Bone Imaging` category. Reusable scientific logic lives in focused Python packages, while this repository owns the Slicer UI, scene integration, batch orchestration, setup page, and user documentation.
 
@@ -25,6 +25,7 @@ Key pages:
 - [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md)
 - [Motion Scoring](docs/tools/motion-scoring.md)
 - [Segmentation and Contours](docs/tools/segmentation-and-contours.md)
+- [Deep Learning Segmentation](docs/tools/deep-learning-segmentation.md)
 - [Scanco I/O](docs/tools/scanco-io.md)
 - [Voidspace](docs/tools/voidspace.md)
 - [derivative workflow contract](docs/derivatives.md)
@@ -55,6 +56,7 @@ Motion Scoring requires the `PyTorch` extension from Slicer's Extension Manager;
 - Batch Processor
 - Motion Scoring
 - Contouring
+- Deep Learning Segmentation
 - Mask and Label Algebra
 - Timelapsed Remodelling
 - Mechanoregulation
@@ -70,6 +72,8 @@ The Slicer modules wrap these focused packages where possible:
 
 - [`bone-imaging-derivatives`](https://github.com/wallematthias/bone-imaging-derivatives)
 - [`bone-contouring`](https://github.com/wallematthias/bone-contouring)
+- Published U-Net inference is included in `bone-contouring[unet]`, adapted from
+  [Bonelab/HR-pQCT-Segmentation](https://github.com/Bonelab/HR-pQCT-Segmentation).
 - [`timelapsed-hrpqct`](https://github.com/wallematthias/TimelapsedHRpQCT)
 - [`bone-microarchitecture`](https://github.com/wallematthias/bone-microarchitecture)
 - [`voidspace`](https://github.com/wallematthias/voidspace)
@@ -87,6 +91,7 @@ Use the citation that matches the workflow and results you report. Tool-specific
 - Timelapsed remodelling and mechanoregulation: Walle M et al. *Bone*. 2023;172:116780. doi: [10.1016/j.bone.2023.116780](https://doi.org/10.1016/j.bone.2023.116780).
 - Multistack registration: Whittier DE et al. *Bone*. 2023;176:116893. doi: [10.1016/j.bone.2023.116893](https://doi.org/10.1016/j.bone.2023.116893).
 - Motion grading: Walle M et al. *Bone*. 2023;166:116607. doi: [10.1016/j.bone.2022.116607](https://doi.org/10.1016/j.bone.2022.116607).
+- Deep-learning HR-pQCT segmentation: Neeteson NJ et al. *Scientific Reports*. 2023;13:252. doi: [10.1038/s41598-022-27350-0](https://doi.org/10.1038/s41598-022-27350-0).
 - Plate/rod network morphometry: Walle M et al. *Front Bioeng Biotechnol*. 2024;12:1384280. doi: [10.3389/fbioe.2024.1384280](https://doi.org/10.3389/fbioe.2024.1384280).
 - Voidspace: Whittier DE, Burt LA, Boyd SK. *Bone*. 2021;143:115785. doi: [10.1016/j.bone.2020.115785](https://doi.org/10.1016/j.bone.2020.115785).
 - Dynamic voidspace: Whittier DE et al. *Journal of Bone and Mineral Research*. 2025;40(6):791-798. doi: [10.1093/jbmr/zjaf046](https://doi.org/10.1093/jbmr/zjaf046).

@@ -18,7 +18,9 @@ set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/batch_backends.py
   SlicerBoneImagingToolboxLib/common_region.py
   SlicerBoneImagingToolboxLib/derivatives.py
+  SlicerBoneImagingToolboxLib/deep_learning_segmentation_scene.py
   SlicerBoneImagingToolboxLib/fea_batch.py
+  SlicerBoneImagingToolboxLib/fea_workflow_labels.py
   SlicerBoneImagingToolboxLib/image_io.py
   SlicerBoneImagingToolboxLib/masks.py
   SlicerBoneImagingToolboxLib/motionscore_review.py
@@ -53,6 +55,7 @@ add_subdirectory(IOTools/BatchProcessor)
 add_subdirectory(HRpQCTTools/TimelapsedHRpQCT)
 add_subdirectory(HRpQCTTools/MotionScoreHRpQCT)
 add_subdirectory(HRpQCTTools/SegmentationHRpQCT)
+add_subdirectory(HRpQCTTools/DeepLearningSegmentationHRpQCT)
 add_subdirectory(HRpQCTTools/DeriveLabelsHRpQCT)
 add_subdirectory(HRpQCTTools/BoneMicroarchitecture)
 add_subdirectory(HRpQCTTools/PlateRodMorphometryHRpQCT)
