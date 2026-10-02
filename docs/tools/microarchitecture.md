@@ -8,7 +8,7 @@ Microarchitecture computes bone structure and density measurements from images, 
 https://github.com/wallematthias/bone-microarchitecture
 
 For prerequisites and step-by-step native or registered Functional Bone analysis,
-start with the [Functional Bone batch tutorial](../tutorials/functional-bone.md).
+start with the [Functional Bone guide](../tutorials/functional-bone.md).
 
 ## Required Inputs
 

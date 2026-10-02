@@ -42,7 +42,7 @@ Bone Imaging
 - Follow the recommended processing order in [Workflow Overview](workflow-overview.md).
 - Normalize cohort data with the [Dataset Naming Helper](tools/dataset-naming-helper.md).
 - Run cohort workflows through the [Batch Processor](tools/batch-processor.md).
-- Follow the [Functional Bone batch tutorial](tutorials/functional-bone.md) for prerequisites and native/registered Functional Bone analysis.
+- Follow the [Functional Bone guide](tutorials/functional-bone.md) for prerequisites and native/registered Functional Bone analysis.
 - Use scene workflows when working with loaded Slicer nodes interactively.
 - Use the [Derivative Workflow Contract](derivatives.md) when connecting outputs across tools.
 - Check [Troubleshooting](troubleshooting.md) when modules, masks, batch rows, or docs builds behave unexpectedly.

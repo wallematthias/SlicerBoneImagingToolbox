@@ -1,8 +1,11 @@
-# Functional Bone: batch tutorial
+# Functional Bone
 
-This tutorial explains how to run **Native Functional Bone** or **Registered
-Functional Bone** in the Batch Processor. Functional Bone measures
-microarchitecture after excluding large voidspace from the reporting region.
+Functional Bone measures microarchitecture after excluding large voidspace from
+the reporting region. It runs through **Batch Processor > Microarchitecture**,
+using the **Native Functional Bone** or **Registered Functional Bone** profile;
+it is not a separate Slicer module.
+
+This guide explains the prerequisites and step-by-step batch workflow.
 Contouring and Voidspace are upstream prerequisites, not separate analyses covered
 in detail here.
 

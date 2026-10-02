@@ -32,7 +32,6 @@ nav:
   - Installation: installation.md
   - Workflow Overview: workflow-overview.md
   - Tutorial Videos: tutorials/index.md
-  - Functional Bone Tutorial: tutorials/functional-bone.md
   - Dataset Format: dataset-format.md
   - Derivatives: derivatives.md
   - Scene Workflows: scene-workflows.md
@@ -47,6 +46,7 @@ nav:
       - Motion Scoring: tools/motion-scoring.md
       - Timelapsed Remodelling: tools/timelapsed-hrpqct.md
       - Microarchitecture: tools/microarchitecture.md
+      - Functional Bone: tutorials/functional-bone.md
       - Voidspace: tools/voidspace.md
       - Plate/Rod Morphometry: tools/plate-rod-morphometry.md
       - ParOsol-FEA: tools/parosol-fea.md

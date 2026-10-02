@@ -5,7 +5,7 @@ Voidspace computes void masks and measurements from binary bone segmentations. T
 https://github.com/wallematthias/voidspace
 
 To use Large voidspace maps in microarchitecture analysis, follow the
-[Functional Bone tutorial](../tutorials/functional-bone.md).
+[Functional Bone guide](../tutorials/functional-bone.md).
 
 ## Required Inputs
 
