@@ -42,6 +42,19 @@ def test_nodeps_compiled_wheel_reinstall_remains_supported(monkeypatch):
     assert "--no-deps" in calls[0]
 
 
+def test_pip_uses_python_slicer_launcher_not_unconfigured_python_real(monkeypatch, tmp_path):
+    launcher = tmp_path / "PythonSlicer"
+    launcher.touch()
+    monkeypatch.setattr(slicer_pip.sys, "executable", str(tmp_path / "python-real"))
+    monkeypatch.setattr(metadata, "version", lambda name: "2.5.2")
+    calls = []
+    monkeypatch.setattr(slicer_pip.subprocess, "run", lambda args, **kwargs: (
+        calls.append(args) or SimpleNamespace(returncode=0, stdout="Installed")
+    ))
+    slicer_pip.slicer_pip_install("--dry-run SimpleITK>=2.3")
+    assert calls[0][0] == str(launcher)
+
+
 def test_missing_simpleitk_fails_without_installing_a_generic_wheel(monkeypatch):
     def missing(name):
         raise metadata.PackageNotFoundError(name)

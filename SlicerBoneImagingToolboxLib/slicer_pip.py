@@ -58,7 +58,7 @@ def slicer_pip_install(command):
             "Use an ordinary upgrade, or --no-deps for a targeted reinstall."
         )
     with slicer_pip_constraints() as constraints:
-        args = [sys.executable, "-m", "pip", "install", "--constraint", str(constraints), *install_args]
+        args = [slicer_python_executable(), "-m", "pip", "install", "--constraint", str(constraints), *install_args]
         completed = subprocess.run(
             args,
             stdout=subprocess.PIPE,
