@@ -25,7 +25,7 @@ Key pages:
 - [Timelapsed HR-pQCT](docs/tools/timelapsed-hrpqct.md)
 - [Motion Scoring](docs/tools/motion-scoring.md)
 - [Segmentation and Contours](docs/tools/segmentation-and-contours.md)
-- [Deep Learning Segmentation](docs/tools/deep-learning-segmentation.md)
+- [Published U-Net Contouring](docs/tools/deep-learning-segmentation.md)
 - [Scanco I/O](docs/tools/scanco-io.md)
 - [Voidspace](docs/tools/voidspace.md)
 - [derivative workflow contract](docs/derivatives.md)
@@ -55,8 +55,7 @@ Motion Scoring requires the `PyTorch` extension from Slicer's Extension Manager;
 - Dataset Naming Helper
 - Batch Processor
 - Motion Scoring
-- Contouring
-- Deep Learning Segmentation
+- Contouring (standard or published U-Net)
 - Mask and Label Algebra
 - Timelapsed Remodelling
 - Mechanoregulation

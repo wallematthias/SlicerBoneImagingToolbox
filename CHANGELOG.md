@@ -18,6 +18,19 @@ All notable changes to this extension are documented in this file.
 - Voidspace load-back imports source segmentations, analysis masks, and change maps into one Slicer segmentation node with distinct display colors.
 - Remote batch processing checks server availability before starting server-side work so missing VPN/server access fails quickly instead of hanging.
 
+## [0.3.1] - 2026-10-02
+
+### Changed
+
+- Require `bone-contouring[unet]>=0.3.1` for matching custom-profile support, SEG behavior, and faster voxel-equivalent U-Net post-processing.
+- Use Gaussian tissue-segmentation sigma 1.2 voxels with trabecular/cortical thresholds 320/450 mg HA/cm³; label sigma units explicitly and preserve contour smoothing and saved custom values.
+- Remove tissue SEG's largest-component filtering/control, including legacy profile overrides; retain minimum-size noise cleanup and leave FEA's independent connectivity preprocessing intact.
+- Fold the published U-Net into Contouring as a fixed-default backend with device selection, progress/cancel, and independent optional tissue SEG; add its profile under the existing Bone Contouring batch tool and retain upstream author/citation guidance.
+- Put XCTI, XCTII, Custom and saved profiles in the first scene Profile selector, without a separate scanner selector or resolution-based scanner detection. Keep AIM-header site detection and prompt on unresolved Site Auto. Split Contouring and Tissue segmentation advanced settings beneath their respective selectors; U-Net exposes Device only. Preserve legacy scene recipes, tissue-only processing, and existing standard/custom batch profiles.
+- Remove the standalone Deep Learning Segmentation module registration; retain shared scene/batch import and cleanup of legacy module paths.
+- Honor wheel-only package installation settings before considering sibling editable checkouts, preventing Plate/Rod Morphometry updates from attempting local compilation.
+- Require `bone-microarchitecture>=0.2.4` for canonical contour-role discovery; Plate/Rod Morphometry's binary-only upgrade can now install the macOS `0.1.9` wheels with shared contour discovery.
+
 ## [0.3.0] - 2026-10-02
 
 ### Added

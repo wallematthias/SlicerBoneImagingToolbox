@@ -24,7 +24,6 @@ Bone Imaging
   Microstructural Analysis
     Motion Scoring
     Contouring
-    Deep Learning Segmentation
     Mask and Label Algebra
     Timelapsed Remodelling
     Mechanoregulation

@@ -45,13 +45,6 @@
       "source": "built-in"
     },
     {
-      "path": "HRpQCTTools/DeepLearningSegmentationHRpQCT",
-      "title": "Deep Learning Segmentation",
-      "section": "Microstructural Analysis",
-      "order": 65,
-      "source": "built-in"
-    },
-    {
       "path": "HRpQCTTools/DeriveLabelsHRpQCT",
       "title": "Mask and Label Algebra",
       "section": "Microstructural Analysis",

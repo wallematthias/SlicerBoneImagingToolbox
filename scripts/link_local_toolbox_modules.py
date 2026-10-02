@@ -11,7 +11,6 @@ DEFAULT_BUILTIN_MODULE_DIRS = (
     "IOTools/BatchProcessor",
     "HRpQCTTools/MotionScoreHRpQCT",
     "HRpQCTTools/SegmentationHRpQCT",
-    "HRpQCTTools/DeepLearningSegmentationHRpQCT",
     "HRpQCTTools/DeriveLabelsHRpQCT",
     "HRpQCTTools/TimelapsedHRpQCT",
     "HRpQCTTools/MechanoregulationHRpQCT",

@@ -1,13 +1,14 @@
-# Deep Learning Segmentation
+# Published U-Net Contouring
 
 Runs the published embedding U-Net with fixed scientific defaults. The GPL-licensed
 model and morphology live in `bone-contouring[unet]`; this Toolbox
-only owns execution and scene import. No Bonelab or vtkbone is required.
+only owns execution and scene import. Select this backend inside **Contouring**;
+there is no separate Deep Learning Segmentation module. No Bonelab or vtkbone is required.
 
 ## Setup
 
 Install **Bone Contouring** through Toolbox Setup, which includes the U-Net extra.
-Requires `bone-contouring>=0.3.0` and `bone-imaging-derivatives>=0.1.6` from PyPI.
+Requires `bone-contouring>=0.3.1` and `bone-imaging-derivatives>=0.1.6` from PyPI.
 Setup can also use sibling local checkouts for development.
 Restart Slicer after dependency installation.
 
@@ -23,14 +24,16 @@ same published `.pth` file before launching Slicer; its checksum must match.
 ## Scene mode
 
 1. Load the scan through Scanco I/O with **Density/BMD** scaling.
-2. Open **Deep Learning Segmentation**, select the BMD volume and device.
-3. Click **Generate**, then review the full, trabecular and cortical compartments.
+2. Open **Contouring**, select the BMD volume and choose **Published U-Net (Neeteson et al.)** as the contour backend.
+3. Leave scanner/site presets on Auto or select XCT-II and Radius/Tibia. Select the device and independent **Tissue segmentation** (Gaussian, adaptive, Laplace-Hamming, or None).
+4. Click **Generate**, then review the full, trabecular and cortical compartments and optional tissue SEG in one segmentation node.
 
 `auto` tries CUDA, Apple MPS, then CPU. Explicit CUDA/MPS requests fail clearly
 when unavailable; they never silently fall back. MPS requires an Apple Silicon
 Python/PyTorch runtime; Intel Slicer workers cannot use it even on an Apple Silicon
-computer. There are no model, threshold,
-smoothing, Python executable or repository selectors.
+computer. There are no U-Net model, contour-threshold, smoothing,
+Python executable or repository selectors. Standard contour settings are hidden
+while U-Net is selected; switching back restores them.
 
 The worker uses a frozen snapshot of the loaded scene voxels, not the original file.
 Transformed, HU, native-scaled and unknown-unit volumes are rejected. If the selected
@@ -41,12 +44,16 @@ after output validation, instead of adding duplicate segmentation nodes.
 
 The full mask is the exact disjoint union of trabecular and cortical masks and is
 initially hidden. Empty, overlapping or wrong-size masks are rejected. These are
-**compartment masks**, not a thresholded bone-tissue `SEG`. No extra Toolbox peel or
+**compartment masks**, not a thresholded bone-tissue `SEG`. Optional tissue SEG uses
+the chosen core algorithm within those same masks, in the worker; it does not
+rerun standard contouring or alter the predicted compartments. Laplace-Hamming
+requires native attenuation values recovered from Scanco I/O metadata/source.
+Select **None** in Tissue segmentation for compartments only. No extra Toolbox peel or
 smoothing is applied; the published post-processing includes its own 8-voxel shell.
 
 ## Batch and SSH
 
-In **Batch Processor**, choose **U-Net Bone Contours**, a normalized dataset
+In **Batch Processor**, choose **Bone Contouring**, profile **U-Net (Neeteson et al.)**, a normalized dataset
 root and device. Only raw AIM images are selected. Native AIM outputs go under
 `derivatives/BoneContours/sub-<id>/ses-<id>/xct/`, using the standard
 `_desc-full_mask.AIM`, `_desc-trab_mask.AIM`, `_desc-cort_mask.AIM` names, individual
@@ -69,7 +76,7 @@ using the other tool's force option).
 The same core runs without Slicer on another computer, including over SSH:
 
 ```bash
-python -m pip install --upgrade 'bone-contouring[unet]>=0.3.0'
+python -m pip install --upgrade 'bone-contouring[unet]>=0.3.1'
 bone-contouring unet /data/raw --output /data/unet-results --device auto
 ssh host 'bone-contouring unet /data/raw --output /data/unet-results --device cuda'
 ```
@@ -110,7 +117,7 @@ validated. Running successfully does not establish accuracy or equivalence to IP
 The original duplicated upper neighbor in the five-slice input stack is retained
 for compatibility with the published implementation and weights.
 
-Run `python -m pytest tests/test_deep_learning_segmentation_scene.py -q` for wrapper
+Run `python -m pytest tests/test_unified_contouring.py tests/test_deep_learning_segmentation_scene.py -q` for wrapper
 contracts. Run `Slicer --no-splash --no-main-window --python-script
 scripts/test_deep_learning_scene_in_slicer.py` for real worker lifecycle and MRML
 import checks. Optionally set `HRPQCT_TEST_DENSITY` to an NPZ with a calibrated
@@ -132,4 +139,5 @@ doi: [10.1038/s41598-022-27350-0](https://doi.org/10.1038/s41598-022-27350-0).
 Weights: [Zenodo record](https://zenodo.org/records/14755838).
 Original code: [Bonelab/HR-pQCT-Segmentation](https://github.com/Bonelab/HR-pQCT-Segmentation).
 The scientific backend and published weights retain their upstream GPL-3.0 license;
-the Toolbox wrapper does not replace that license.
+the MIT Toolbox wrapper does not replace that license. This is the authors'
+embedding-predicting U-Net, not nnU-Net.

@@ -46,7 +46,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Contouring",
         package_name="bone-contouring",
         import_name="bone_contouring",
-        minimum_version="0.3.0",
+        minimum_version="0.3.1",
         extras=("unet",),
         constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.3", "bone-imaging-derivatives>=0.1.6",
                      "torch>=2.2", "scikit-image>=0.24,<0.26", "aimio-py>=0.1.8"),
@@ -95,7 +95,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Microarchitecture",
         package_name="bone-microarchitecture",
         import_name="bone_microarchitecture",
-        minimum_version="0.2.3",
+        minimum_version="0.2.4",
         constraints=("numpy>=2.0,<3.0", "scipy>=1.18,<2.0"),
         notes="Bone microarchitecture measurements from masks and calibrated grayscale images.",
     ),
@@ -348,6 +348,10 @@ def resolve_local_editable_repo(toolbox_root: Path, package_name: str) -> Path |
 
 
 def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
+    # Compiled runtime requirements must not be replaced by editable source builds.
+    if any(option == "--only-binary" or option.startswith("--only-binary=")
+           for option in spec.install_options):
+        return (install_command(spec, installed=installed),)
     if spec.package_name in {
         "bone-imaging-derivatives",
         "bone-contouring",

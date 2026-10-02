@@ -52,6 +52,7 @@ from SlicerBoneImagingToolboxLib.segmentation_methods import (
     method_supports_site,
     selected_parameter_groups,
 )
+from SlicerBoneImagingToolboxLib.contouring_presets import detect_site
 
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
@@ -155,14 +156,14 @@ def _contour_site_defaults(site, modality, periosteal_method="standard", endoste
 
 METHOD_PRESETS = {
     "seg_gauss": {
-        "gaussian_sigma": 0.8,
+        "gaussian_sigma": 1.2,
         "trab_threshold": 320.0,
         "cort_threshold": 450.0,
         "adaptive_low_threshold": 100.0,
         "adaptive_high_threshold": 300.0,
         "adaptive_block_size": 13,
         "min_size_voxels": 64,
-        "keep_largest_component": True,
+        "keep_largest_component": False,
         "laplace_hamming_threshold": 15564.0,
         "laplace_hamming_backend": "cpu",
     },
@@ -174,7 +175,7 @@ METHOD_PRESETS = {
         "adaptive_high_threshold": 300.0,
         "adaptive_block_size": 13,
         "min_size_voxels": 64,
-        "keep_largest_component": True,
+        "keep_largest_component": False,
         "laplace_hamming_threshold": 15564.0,
         "laplace_hamming_backend": "cpu",
     },
@@ -191,21 +192,6 @@ METHOD_PRESETS = {
         "laplace_hamming_backend": "cpu",
     },
 }
-
-CONTOUR_PROFILE_PRESETS = (
-    ("XtremeCT I - Radius", "xct1", "radius", "laplace_hamming", "standard", "standard"),
-    ("XtremeCT I - Tibia", "xct1", "tibia", "laplace_hamming", "standard", "standard"),
-    ("XtremeCT I - Knee", "xct1", "knee", "laplace_hamming", "standard", "standard"),
-    ("XtremeCT II - Radius", "xct2", "radius", "seg_gauss", "standard", "standard"),
-    ("XtremeCT II - Tibia", "xct2", "tibia", "seg_gauss", "standard", "standard"),
-    ("XtremeCT II - Knee", "xct2", "knee", "seg_gauss", "standard", "standard"),
-    ("XtremeCT II Geodesic - Radius", "xct2", "radius", "seg_gauss", "geodesic_fracture", "standard"),
-    ("XtremeCT II Geodesic - Tibia", "xct2", "tibia", "seg_gauss", "geodesic_fracture", "standard"),
-    ("XtremeCT II Geodesic - Knee", "xct2", "knee", "seg_gauss", "geodesic_fracture", "standard"),
-    ("XtremeCT II LH - Radius", "xct2", "radius", "laplace_hamming", "standard", "standard"),
-    ("XtremeCT II LH - Tibia", "xct2", "tibia", "laplace_hamming", "standard", "standard"),
-    ("XtremeCT II LH - Knee", "xct2", "knee", "laplace_hamming", "standard", "standard"),
-)
 
 SEGMENTATION_METHODS = set(BONE_SEGMENTATION_METHODS)
 PERIOSTEAL_CONTOUR_METHOD_IDS = set(PERIOSTEAL_CONTOUR_METHODS)
@@ -436,9 +422,20 @@ class SegmentationHRpQCT(ScriptedLoadableModule):
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
             "Generate bone full, trabecular, cortical, and binary segmentation "
-            f"masks using site presets and standard segmentation methods. Module version: {MODULE_VERSION}"
+            f"masks using standard contouring or the published U-Net. Module version: {MODULE_VERSION}. "
+            "U-Net compartment prediction and bone-tissue SEG are independent."
         )
-        parent.acknowledgementText = "Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer."
+        parent.acknowledgementText = (
+            "Author: Matthias Walle (standard contouring and Slicer integration). "
+            "Published embedding-predicting U-Net: Nathan J. Neeteson, Bryce A. Besler, "
+            "Danielle E. Whittier and Steven K. Boyd, Bone Imaging Laboratory, University of Calgary. "
+            'Please cite <a href="https://doi.org/10.1038/s41598-022-27350-0">'
+            "Neeteson et al., Scientific Reports 13, 252 (2023)</a>. "
+            'Original code: <a href="https://github.com/Bonelab/HR-pQCT-Segmentation">Bonelab</a>. '
+            'Weights: <a href="https://doi.org/10.5281/zenodo.14755838">Zenodo</a>. '
+            "This is not nnU-Net. Scientific U-Net code/weights retain upstream GPL-3.0 terms "
+            "in bone-contouring; the Slicer wrapper remains MIT."
+        )
 
 
 class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
@@ -1018,7 +1015,8 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         core_defaults = bone_contouring.resolve_preset(
             modality=str(params.get("modality", "xct2")),
             site=str(site) if str(site) in SITE_PRESETS else "radius",
-            segmentation=segmentation_package_method, outer_contour=outer_method,
+            segmentation=segmentation_package_method,
+            outer_contour="standard" if outer_method == "none" else outer_method,
             inner_contour=inner_method)
         from dataclasses import replace
         buie_params = replace(core_defaults.buie, **dict(params.get("buie", {})))
@@ -1057,14 +1055,14 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             segmentation=SegmentationParameters(
                 enabled=segmentation_method != "none",
                 method=segmentation_package_method,
-                gaussian_sigma=_float_param(segmentation_params, "gaussian_sigma", 0.8),
+                gaussian_sigma=_float_param(segmentation_params, "gaussian_sigma", 1.2),
                 trab_threshold=_float_param(segmentation_params, "trab_threshold", 320.0),
                 cort_threshold=_float_param(segmentation_params, "cort_threshold", 450.0),
                 adaptive_low_threshold=_float_param(segmentation_params, "adaptive_low_threshold", 100.0),
                 adaptive_high_threshold=_float_param(segmentation_params, "adaptive_high_threshold", 300.0),
                 adaptive_block_size=_int_param(segmentation_params, "adaptive_block_size", "adaptive_block_size", 13),
                 min_size_voxels=_int_param(segmentation_params, "min_size_voxels", "min_size_voxels", 64),
-                keep_largest_component=_bool_param(segmentation_params, "keep_largest_component", True),
+                keep_largest_component=False,  # Connectivity filtering belongs to FEA, not tissue SEG.
                 laplace_hamming_low_pass_cutoff=_float_param(
                     segmentation_params, "laplace_hamming_low_pass_cutoff", 0.3
                 ),
@@ -1095,7 +1093,22 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         if segmentation_method == "laplace_hamming":
             segmentation_image, segmentation_source_meta = self._laplace_hamming_support_image(volume_node, image)
 
-        generated = generate_masks_from_image(image, contour_params, segmentation_image=segmentation_image)
+        if outer_method == "none":
+            # The field of view is an internal tissue-segmentation domain, not
+            # an anatomical compartment to export as a full/trabecular mask.
+            support = sitk.Image(image.GetSize(), sitk.sitkUInt8) + 1
+            support.CopyInformation(image)
+            empty = self._empty_mask_like(image)
+            tissue = bone_contouring.generate_bone_segmentation(
+                segmentation_image if segmentation_image is not None else image,
+                contour_params, full_mask=support, trab_mask=support, cort_mask=empty)
+            generated = bone_contouring.GeneratedMasks(
+                seg=tissue, full=empty, trab=empty, cort=empty, material=empty,
+                mask_provenance={"seg": "generated"},
+                metadata={"outer_contour": {"method": "none"},
+                          "inner_contour": {"method": "none"}})
+        else:
+            generated = generate_masks_from_image(image, contour_params, segmentation_image=segmentation_image)
         generated.metadata["effective_parameters"] = asdict(contour_params)
         generated.metadata.update(segmentation_source_meta)
 
@@ -1255,8 +1268,6 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         segmentation_method = str(segmentation_method)
         periosteal_contour_method = str(periosteal_contour_method)
         endosteal_contour_method = str(endosteal_contour_method)
-        requested_periosteal_contour_method = periosteal_contour_method
-        requested_endosteal_contour_method = endosteal_contour_method
         if segmentation_method not in SEGMENTATION_METHODS:
             raise ValueError(f"Unsupported bone segmentation method: {segmentation_method}")
         if periosteal_contour_method not in PERIOSTEAL_CONTOUR_METHOD_IDS:
@@ -1265,347 +1276,20 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             raise ValueError(f"Unsupported endosteal contour method: {endosteal_contour_method}")
         if periosteal_contour_method == "none" and endosteal_contour_method == "standard":
             raise ValueError("Standard endosteal contour requires a periosteal contour.")
-        if not method_supports_site(PERIOSTEAL_CONTOUR_METHODS[periosteal_contour_method], site):
-            raise ValueError(f"{PERIOSTEAL_CONTOUR_METHODS[periosteal_contour_method].label} only supports knee scans.")
-        if periosteal_contour_method != "none":
-            return self._generate_bone_masks_with_bone_contouring(
-                volume_node,
-                image,
-                site=site,
-                segmentation_method=segmentation_method,
-                periosteal_contour_method=periosteal_contour_method,
-                endosteal_contour_method=endosteal_contour_method,
-                output_prefix=output_prefix,
-                create_labelmaps=create_labelmaps,
-                open_segment_editor=open_segment_editor,
-                params=params,
-                debug_output_dir=debug_output_dir,
-            )
-
-        from timelapsedhrpqct.processing.contour_generation import (
-            ContourGenerationParams,
-            InnerContourParams,
-            OuterContourParams,
-            SegmentationParams,
-            _contour_support_binarization_xyz,
-            _ensure_bool,
-            _segment_bone_xyz,
-            generate_masks_from_image,
-            inner_contour,
-            numpy_xyz_to_sitk_binary,
-            outer_contour,
-            sitk_to_numpy_xyz,
+        return self._generate_bone_masks_with_bone_contouring(
+            volume_node,
+            image,
+            site=site,
+            segmentation_method=segmentation_method,
+            periosteal_contour_method=periosteal_contour_method,
+            endosteal_contour_method=endosteal_contour_method,
+            output_prefix=output_prefix,
+            create_labelmaps=create_labelmaps,
+            open_segment_editor=open_segment_editor,
+            params=params,
+            debug_output_dir=debug_output_dir,
         )
 
-        params = dict(params or {})
-        site_defaults = SITE_PRESETS.get(str(site), SITE_PRESETS["radius"])
-        method_defaults = METHOD_PRESETS.get(segmentation_method, METHOD_PRESETS["seg_gauss"])
-
-        inner_params = dict(site_defaults["inner"])
-        outer_params = dict(site_defaults["outer"])
-        segmentation_params = dict(method_defaults)
-        segmentation_params.update(params.get("segmentation", {}))
-        segmentation_params["method"] = "seg_gauss" if segmentation_method == "none" else segmentation_method
-        segmentation_params["enabled"] = segmentation_method != "none"
-
-        inner_params.update(params.get("inner", {}))
-        outer_params.update(params.get("outer", {}))
-        inner_params["site"] = str(site)
-        compartment_split_requested = endosteal_contour_method == "standard"
-
-        contour_params = ContourGenerationParams(
-            outer=OuterContourParams(**outer_params),
-            inner=InnerContourParams(**inner_params),
-            segmentation=SegmentationParams(**segmentation_params),
-        )
-        outer_options = asdict(contour_params.outer)
-        inner_options = asdict(contour_params.inner)
-        segmentation_support_params = contour_params.segmentation
-        use_aligned_support = bool(segmentation_support_params.use_segmentation_aligned_contour_support)
-
-        segmentation_image = None
-        segmentation_source_meta = {}
-        if segmentation_method == "laplace_hamming":
-            segmentation_image, segmentation_source_meta = self._laplace_hamming_support_image(volume_node, image)
-
-        if (
-            periosteal_contour_method == "standard"
-            and endosteal_contour_method == "standard"
-            and segmentation_method != "none"
-        ):
-            generated = generate_masks_from_image(
-                image,
-                contour_params,
-                segmentation_image=segmentation_image,
-                verbose=False,
-            )
-        else:
-            image_xyz = sitk_to_numpy_xyz(image)
-            contour_support_source = (
-                segmentation_image
-                if use_aligned_support and segmentation_image is not None
-                else image
-            )
-            contour_support_image_xyz = sitk_to_numpy_xyz(contour_support_source)
-            segmentation_source = segmentation_image if segmentation_image is not None else image
-            segmentation_image_xyz = sitk_to_numpy_xyz(segmentation_source)
-            spacing_xyz = tuple(float(value) for value in image.GetSpacing())
-
-            geodesic_support_count = 0
-            outer_refine_meta = {}
-            if periosteal_contour_method == "geodesic_fracture":
-                full_xyz, geodesic_support_count = self._geodesic_full_mask_xyz(
-                    image,
-                    params=params,
-                    progress_callback=progress_callback,
-                    cancel_callback=cancel_callback,
-                )
-            elif periosteal_contour_method == "standard":
-                outer_support_xyz = _contour_support_binarization_xyz(
-                    contour_support_image_xyz,
-                    params=segmentation_support_params,
-                    spacing_xyz=spacing_xyz,
-                    role="outer",
-                )
-                full_xyz, outer_refine_meta = outer_contour(
-                    image_xyz,
-                    spacing_xyz=spacing_xyz,
-                    options=outer_options,
-                    support_mask_xyz=outer_support_xyz,
-                    verbose=False,
-                )
-            else:
-                full_xyz = np.ones_like(image_xyz, dtype=bool)
-
-            inner_support_xyz = _contour_support_binarization_xyz(
-                contour_support_image_xyz,
-                params=segmentation_support_params,
-                spacing_xyz=spacing_xyz,
-                full_mask_xyz=full_xyz,
-                role="inner",
-            )
-            if endosteal_contour_method == "standard":
-                trab_xyz, cort_xyz = inner_contour(
-                    image_xyz,
-                    full_xyz,
-                    site=str(site),
-                    spacing_xyz=spacing_xyz,
-                    options=inner_options,
-                    support_mask_xyz=inner_support_xyz,
-                    verbose=False,
-                )
-            else:
-                trab_xyz = np.zeros_like(full_xyz, dtype=bool)
-                cort_xyz = np.zeros_like(full_xyz, dtype=bool)
-
-            full_xyz = _ensure_bool(full_xyz)
-            trab_xyz = _ensure_bool(trab_xyz) & full_xyz
-            cort_xyz = _ensure_bool(cort_xyz) & full_xyz
-            global_threshold_without_compartments = (
-                segmentation_method == "seg_gauss" and not compartment_split_requested
-            )
-            if segmentation_method == "none":
-                seg_xyz = np.zeros_like(full_xyz, dtype=bool)
-            elif (
-                use_aligned_support
-                and segmentation_method == "laplace_hamming"
-                and inner_support_xyz is not None
-            ):
-                seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
-            elif (
-                use_aligned_support
-                and segmentation_method == "adaptive"
-                and inner_support_xyz is not None
-            ):
-                seg_xyz = _ensure_bool(inner_support_xyz) & full_xyz
-            elif global_threshold_without_compartments:
-                trab_threshold = float(segmentation_support_params.trab_threshold)
-                seg_xyz = (segmentation_image_xyz >= trab_threshold) & full_xyz
-            else:
-                seg_xyz = _segment_bone_xyz(
-                    image_xyz=segmentation_image_xyz,
-                    full_mask_xyz=full_xyz,
-                    trab_mask_xyz=trab_xyz,
-                    cort_mask_xyz=cort_xyz,
-                    params=segmentation_support_params,
-                    spacing_xyz=spacing_xyz,
-                )
-                seg_xyz = _ensure_bool(seg_xyz) & full_xyz
-
-            generated = SimpleNamespace(
-                full=numpy_xyz_to_sitk_binary(full_xyz, image),
-                trab=numpy_xyz_to_sitk_binary(trab_xyz, image),
-                cort=numpy_xyz_to_sitk_binary(cort_xyz, image),
-                seg=numpy_xyz_to_sitk_binary(seg_xyz, image),
-                metadata={
-                    "contour_method": "split_contour_generation",
-                    "segmentation_method": segmentation_method,
-                    "segmentation_aligned_contour_support": bool(use_aligned_support),
-                    "periosteal_contour_method": periosteal_contour_method,
-                    "endosteal_contour_method": endosteal_contour_method,
-                    "geodesic_support_mask_count": geodesic_support_count,
-                    "outer_edge_refinement": outer_refine_meta,
-                    "voxel_counts": {
-                        "seg": int(seg_xyz.sum()),
-                        "full": int(full_xyz.sum()),
-                        "trab": int(trab_xyz.sum()),
-                        "cort": int(cort_xyz.sum()),
-                    },
-                },
-            )
-            if global_threshold_without_compartments:
-                generated.metadata["segmentation_warning"] = (
-                    "No cortical mask was provided; Gaussian segmentation used the trabecular threshold "
-                    f"{trab_threshold:g} globally."
-                )
-                generated.metadata["segmentation_threshold_applied_global"] = float(trab_threshold)
-
-        periosteal_contour_generated = periosteal_contour_method != "none"
-        compartment_split_generated = compartment_split_requested
-        if not compartment_split_generated:
-            full_xyz = sitk_to_numpy_xyz(generated.full) > 0
-            empty_xyz = np.zeros_like(full_xyz, dtype=bool)
-            generated.trab = numpy_xyz_to_sitk_binary(empty_xyz, image)
-            generated.cort = numpy_xyz_to_sitk_binary(empty_xyz, image)
-
-        if (
-            use_aligned_support
-            and segmentation_method == "laplace_hamming"
-            and segmentation_image is not None
-        ):
-            full_xyz = sitk_to_numpy_xyz(generated.full) > 0
-            segmentation_image_xyz = sitk_to_numpy_xyz(segmentation_image)
-            spacing_xyz = tuple(float(value) for value in image.GetSpacing())
-            lh_support_xyz = _contour_support_binarization_xyz(
-                segmentation_image_xyz,
-                params=segmentation_support_params,
-                spacing_xyz=spacing_xyz,
-                full_mask_xyz=full_xyz,
-                role="inner",
-            )
-            if lh_support_xyz is not None:
-                seg_xyz = _ensure_bool(lh_support_xyz) & full_xyz
-                generated.seg = numpy_xyz_to_sitk_binary(seg_xyz, image)
-                generated.metadata.setdefault("voxel_counts", {})
-                generated.metadata["voxel_counts"]["seg"] = int(seg_xyz.sum())
-
-        generated.metadata["segmentation_method"] = segmentation_method
-        generated.metadata["processing_image_reader"] = str(
-            getattr(self, "_lastProcessingImageReader", "selected_slicer_volume")
-        )
-        generated.metadata["segmentation_aligned_contour_support"] = bool(use_aligned_support)
-        generated.metadata["periosteal_contour_method"] = requested_periosteal_contour_method
-        generated.metadata["endosteal_contour_method"] = requested_endosteal_contour_method
-        generated.metadata["internal_periosteal_contour_method"] = periosteal_contour_method
-        generated.metadata["internal_endosteal_contour_method"] = endosteal_contour_method
-        generated.metadata["periosteal_contour_generated"] = bool(periosteal_contour_generated)
-        generated.metadata["compartment_split_generated"] = bool(compartment_split_generated)
-        if not periosteal_contour_generated:
-            full_xyz = sitk_to_numpy_xyz(generated.full) > 0
-            empty_xyz = np.zeros_like(full_xyz, dtype=bool)
-            generated.full = numpy_xyz_to_sitk_binary(empty_xyz, image)
-            generated.metadata["periosteal_contour_reason"] = "periosteal_contour_method_none"
-            generated.metadata.setdefault("voxel_counts", {})
-            generated.metadata["voxel_counts"]["full"] = 0
-        if not compartment_split_generated:
-            generated.metadata["compartment_split_reason"] = "endosteal_contour_method_none"
-            generated.metadata.setdefault("voxel_counts", {})
-            generated.metadata["voxel_counts"]["trab"] = 0
-            generated.metadata["voxel_counts"]["cort"] = 0
-        if segmentation_method == "laplace_hamming":
-            generated.metadata["segmentation_method"] = "laplace_hamming"
-            generated.metadata.update(segmentation_source_meta)
-            generated.metadata["voxel_counts"]["seg"] = int(
-                sitk.GetArrayFromImage(generated.seg).astype(bool, copy=False).sum()
-            )
-            if generated.metadata["voxel_counts"]["seg"] == 0:
-                raise RuntimeError(
-                    "Laplace-Hamming produced an empty bone segmentation. "
-                    "Check that the selected volume has valid AIM calibration metadata "
-                    "or an original AIM source, and that LH parameters match native Scanco units."
-                )
-
-        if debug_output_dir is not None:
-            prefix = output_prefix.strip() if output_prefix else volume_node.GetName()
-            debug_config = {
-                "site": str(site),
-                "segmentation_method": str(segmentation_method),
-                "periosteal_contour_method": str(requested_periosteal_contour_method),
-                "endosteal_contour_method": str(requested_endosteal_contour_method),
-                "parameters": dict(params or {}),
-            }
-            generated.metadata["scene_debug_manifest"] = self._write_scene_debug_artifacts(
-                debug_output_dir,
-                prefix=prefix,
-                source_path=self._volume_source_aim_path(volume_node),
-                image=image,
-                segmentation_input_image=segmentation_image,
-                generated=generated,
-                roles=["full", "trab", "cort", "seg"],
-                config=debug_config,
-                metadata=generated.metadata,
-            )
-        prefix = output_prefix.strip() if output_prefix else volume_node.GetName()
-        segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
-            "vtkMRMLSegmentationNode",
-            f"{prefix}_HRpQCT_segmentation",
-        )
-        segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
-        segmentation_node.CreateDefaultDisplayNodes()
-        self._configure_segmentation_display(segmentation_node)
-        self._copy_aim_attributes(volume_node, segmentation_node)
-        for key in (
-            "segmentation_method",
-            "processing_image_reader",
-            "segmentation_input_unit",
-            "segmentation_input_reader",
-            "segmentation_input_path",
-            "segmentation_aligned_contour_support",
-            "segmentation_warning",
-            "segmentation_threshold_applied_global",
-            "periosteal_contour_method",
-            "periosteal_contour_generated",
-            "periosteal_contour_reason",
-            "endosteal_contour_method",
-            "internal_periosteal_contour_method",
-            "internal_endosteal_contour_method",
-            "compartment_split_generated",
-        ):
-            if key in generated.metadata:
-                segmentation_node.SetAttribute(f"HRpQCT.{key}", str(generated.metadata[key]))
-
-        outputs = {}
-        output_specs = [
-            ("full", generated.full, "Full mask"),
-            ("trab", generated.trab, "Trabecular mask"),
-            ("cort", generated.cort, "Cortical mask"),
-            ("seg", generated.seg, "Bone segmentation"),
-        ]
-        if not periosteal_contour_generated:
-            output_specs = [spec for spec in output_specs if spec[0] != "full"]
-        if not compartment_split_generated:
-            output_specs = [spec for spec in output_specs if spec[0] in {"full", "seg"}]
-        generated.metadata["emitted_roles"] = [role for role, _image_out, _segment_name in output_specs]
-        generated.metadata["emitted_label_roles"] = ["fea-input"]
-        for role, image_out, segment_name in output_specs:
-            self._add_sitk_segment(image_out, segmentation_node, segment_name, volume_node, role)
-            if create_labelmaps:
-                label_node = self._sitk_to_labelmap(image_out, f"{prefix}_{role}", volume_node)
-                outputs[role] = label_node
-        if create_labelmaps:
-            outputs["fea-input"] = self._sitk_to_labelmap(
-                generated.material,
-                f"{prefix}_fea-input",
-                volume_node,
-                binary=False,
-            )
-
-        self._remove_empty_duplicate_segmentation_nodes(segmentation_node)
-
-        if open_segment_editor:
-            slicer.util.selectModule("SegmentEditor")
-
-        return segmentation_node, outputs, generated.metadata
 
     def generate_hrpqct_masks(self, *args, **kwargs):
         return self.generate_bone_masks(*args, **kwargs)
@@ -1756,6 +1440,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
     def setup(self):
         super().setup()
         self.logic = SegmentationHRpQCTLogic()
+        from SlicerBoneImagingToolboxLib.deep_learning_contouring import DeepLearningSegmentationHRpQCTLogic
+        self._unet_logic = DeepLearningSegmentationHRpQCTLogic()
+        self._closed = False
         self._geodesic_cancel_requested = False
         self._suppressMethodCustomSwitch = False
         self._build_segmentation_section()
@@ -1791,28 +1478,51 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._tip(self.volumeSelector, "Input volume used to generate masks and bone segmentation.")
         form.addRow("Input volume", self.volumeSelector)
 
+        self._scannerPreset = "xct1"
         self.contourProfileCombo = qt.QComboBox()
         self._populate_contour_profile_combo()
         self.contourProfileCombo.currentIndexChanged.connect(self._apply_preset_values)
         self.contourProfileCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
-        self._tip(self.contourProfileCombo, "Named contouring profile. Expert settings below can be edited after a profile is selected.")
+        self._tip(self.contourProfileCombo, "Choose XCTI, XCTII, Custom (manual settings), or a saved profile. Scanner selection never depends on resolution. Contouring and tissue segmentation remain independent.")
         form.addRow("Profile", self.contourProfileCombo)
-        self._topRows["profile"] = (form.labelForField(self.contourProfileCombo), self.contourProfileCombo)
-
-        self.modalityCombo = qt.QComboBox()
-        for label, value in [("XtremeCT I", "xct1"), ("XtremeCT II", "xct2")]:
-            self.modalityCombo.addItem(label, value)
-        self.modalityCombo.currentIndexChanged.connect(self._on_modality_changed)
-        self.modalityCombo.currentIndexChanged.connect(self._update_batch_options_summary)
-        self._tip(self.modalityCombo, "Applies scanner-specific defaults while keeping the segmentation method names general.")
 
         self.siteCombo = qt.QComboBox()
-        for label, value in [("Auto", "auto"), ("Radius", "radius"), ("Tibia", "tibia"), ("Knee", "knee")]:
+        for label, value in [("Auto (AIM header)", "auto"), ("Radius", "radius"), ("Tibia", "tibia"), ("Knee", "knee"), ("None (custom settings)", "none")]:
             self.siteCombo.addItem(label, value)
         self.siteCombo.currentIndexChanged.connect(self._apply_site_preset)
         self.siteCombo.currentIndexChanged.connect(self._refresh_method_dependent_ui)
         self.siteCombo.currentIndexChanged.connect(self._update_batch_options_summary)
-        self._tip(self.siteCombo, "Auto detects radius, tibia, or knee from loaded/discovered filenames; concrete sites apply that site everywhere.")
+        self._tip(self.siteCombo, "Auto uses the AIM header's Site code, then normalized filenames. None keeps edited settings without a site preset.")
+        form.addRow("Site preset", self.siteCombo)
+        self.presetDetectionLabel = qt.QLabel()
+        self.presetDetectionLabel.wordWrap = True
+        form.addRow(self.presetDetectionLabel)
+
+        self.contourBackendCombo = qt.QComboBox()
+        for label, value in (("Dual threshold (standard)", "standard"),
+                             ("Geodesic + standard inner contour", "geodesic"),
+                             ("U-Net (Neeteson et al.)", "unet"), ("None", "none")):
+            self.contourBackendCombo.addItem(label, value)
+        form.addRow("Contouring", self.contourBackendCombo)
+        self.contourBackendCombo.currentIndexChanged.connect(self._on_contouring_changed)
+        self.contourSettingsButton = ctk.ctkCollapsibleButton()
+        self.contourSettingsButton.text = "Contouring advanced settings"
+        self.contourSettingsButton.collapsed = True
+        form.addRow(self.contourSettingsButton)
+        contour_layout = qt.QVBoxLayout(self.contourSettingsButton)
+        device_form = qt.QFormLayout()
+        contour_layout.addLayout(device_form)
+        self.unetDeviceCombo = qt.QComboBox()
+        for label, value in (("Automatic", "auto"), ("CPU", "cpu"), ("CUDA", "cuda"), ("Apple MPS", "mps")):
+            self.unetDeviceCombo.addItem(label, value)
+        device_form.addRow("Device", self.unetDeviceCombo)
+        self._topRows["unet_device"] = (device_form.labelForField(self.unetDeviceCombo), self.unetDeviceCombo)
+        self.unetInfoLabel = qt.QLabel(
+            "Neeteson et al. (2023): published 61 µm radius/tibia U-Net with fixed defaults. "
+            "Requires XCT-II radius/tibia. Tissue settings affect SEG only; "
+            "no extra contour smoothing or peel is applied. Weights download on first use.")
+        self.unetInfoLabel.wordWrap = True
+        contour_layout.addWidget(self.unetInfoLabel)
 
         self.segmentationMethodCombo = qt.QComboBox()
         for value, descriptor in BONE_SEGMENTATION_METHODS.items():
@@ -1825,6 +1535,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             "Bone binarization method. Laplace-Hamming uses native Scanco attenuation values from AIM metadata/source.",
         )
         self.periostealContourCombo = qt.QComboBox()
+        form.addRow("Tissue segmentation", self.segmentationMethodCombo)
         for value, descriptor in PERIOSTEAL_CONTOUR_METHODS.items():
             self.periostealContourCombo.addItem(_clean_method_label(descriptor.label), value)
         self.periostealContourCombo.currentIndexChanged.connect(self._on_contour_method_changed)
@@ -1838,51 +1549,41 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.endostealContourCombo.currentIndexChanged.connect(self._update_batch_options_summary)
         self._tip(self.endostealContourCombo, "Inner contour method used to split full mask into trabecular and cortical compartments.")
 
-        self.expertSettingsButton = ctk.ctkCollapsibleButton()
-        self.expertSettingsButton.text = "Expert Settings"
-        self.expertSettingsButton.collapsed = True
-        generate_layout.addWidget(self.expertSettingsButton)
         self._expertRows = {}
         self._expertSections = {}
-
-        expert_layout = qt.QVBoxLayout(self.expertSettingsButton)
-
-        segmentation_expert = ctk.ctkCollapsibleButton()
-        segmentation_expert.text = "Segmentation Settings"
-        segmentation_expert.collapsed = False
-        expert_layout.addWidget(segmentation_expert)
-        segmentation_form = qt.QFormLayout(segmentation_expert)
-        self._expertSections["Bone segmentation"] = segmentation_expert
-        segmentation_form.addRow("Method", self.segmentationMethodCombo)
+        self.segmentationSettingsButton = ctk.ctkCollapsibleButton()
+        self.segmentationSettingsButton.text = "Tissue segmentation advanced settings"
+        self.segmentationSettingsButton.collapsed = True
+        form.addRow(self.segmentationSettingsButton)
+        segmentation_form = qt.QFormLayout(self.segmentationSettingsButton)
+        self._expertSections["Bone segmentation"] = self.segmentationSettingsButton
 
         periosteal_expert = ctk.ctkCollapsibleButton()
         periosteal_expert.text = "Periosteal Contour Settings"
         periosteal_expert.collapsed = False
-        expert_layout.addWidget(periosteal_expert)
+        contour_layout.addWidget(periosteal_expert)
         periosteal_form = qt.QFormLayout(periosteal_expert)
         self._expertSections["Periosteal contour"] = periosteal_expert
-        periosteal_form.addRow("Method", self.periostealContourCombo)
 
         endosteal_expert = ctk.ctkCollapsibleButton()
         endosteal_expert.text = "Endosteal Contour Settings"
         endosteal_expert.collapsed = False
-        expert_layout.addWidget(endosteal_expert)
+        contour_layout.addWidget(endosteal_expert)
         endosteal_form = qt.QFormLayout(endosteal_expert)
         self._expertSections["Endosteal contour"] = endosteal_expert
-        endosteal_form.addRow("Method", self.endostealContourCombo)
         self._expertForm = segmentation_form
 
         self.trabThresholdSpin = self._double_spin(0, 5000, 1, 320.0)
         self.cortThresholdSpin = self._double_spin(0, 5000, 1, 450.0)
-        self.gaussSigmaSpin = self._double_spin(0, 10, 2, 0.8)
-        self._tip(self.trabThresholdSpin, "Trabecular threshold used by Gaussian/adaptive segmentation support generation.")
-        self._tip(self.cortThresholdSpin, "Cortical threshold used by Gaussian/adaptive segmentation support generation.")
-        self._tip(self.gaussSigmaSpin, "Gaussian smoothing sigma applied before threshold-based segmentation.")
+        self.gaussSigmaSpin = self._double_spin(0, 10, 2, 1.2)
+        self._tip(self.trabThresholdSpin, "Trabecular tissue threshold in input image units (mg HA/cm³ for calibrated HR-pQCT), applied after Gaussian smoothing.")
+        self._tip(self.cortThresholdSpin, "Cortical tissue threshold in input image units (mg HA/cm³ for calibrated HR-pQCT), applied after Gaussian smoothing.")
+        self._tip(self.gaussSigmaSpin, "Gaussian tissue smoothing sigma in voxels (scaled by the smallest voxel spacing). Applied once to the original image, independently of contour smoothing.")
         segmentation_form.addRow("Trab threshold", self.trabThresholdSpin)
         self._remember_expert_row("trab_threshold", self.trabThresholdSpin, form=segmentation_form, group="Bone segmentation")
         segmentation_form.addRow("Cort threshold", self.cortThresholdSpin)
         self._remember_expert_row("cort_threshold", self.cortThresholdSpin, form=segmentation_form, group="Bone segmentation")
-        segmentation_form.addRow("Gaussian sigma", self.gaussSigmaSpin)
+        segmentation_form.addRow("Gaussian sigma (voxels)", self.gaussSigmaSpin)
         self._remember_expert_row("gaussian_sigma", self.gaussSigmaSpin, form=segmentation_form, group="Bone segmentation")
 
         self.adaptiveLowSpin = self._double_spin(-1000, 5000, 1, 100.0)
@@ -1933,14 +1634,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.minSizeSpin.minimum = 0
         self.minSizeSpin.maximum = 1000000
         self.minSizeSpin.value = 64
-        self.keepLargestCheck = qt.QCheckBox()
-        self.keepLargestCheck.checked = True
         self._tip(self.minSizeSpin, "Remove connected bone components smaller than this voxel count.")
-        self._tip(self.keepLargestCheck, "Keep only the largest connected segmentation component.")
         segmentation_form.addRow("Min component voxels", self.minSizeSpin)
         self._remember_expert_row("min_size_voxels", self.minSizeSpin, form=segmentation_form, group="Bone segmentation")
-        segmentation_form.addRow("Keep largest", self.keepLargestCheck)
-        self._remember_expert_row("keep_largest_component", self.keepLargestCheck, form=segmentation_form, group="Bone segmentation")
 
         self.segmentationAlignedSupportCheck = qt.QCheckBox()
         self.segmentationAlignedSupportCheck.checked = False
@@ -2040,7 +1736,12 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         custom_recipe_layout.addWidget(self.deleteProfileButton)
         custom_recipe_layout.addStretch(1)
         profile_form.addRow(profile_button_widget)
-        expert_layout.addWidget(self.customRecipeRowWidget)
+        self.profileSettingsButton = ctk.ctkCollapsibleButton()
+        self.profileSettingsButton.text = "Custom profiles"
+        self.profileSettingsButton.collapsed = True
+        profile_layout = qt.QVBoxLayout(self.profileSettingsButton)
+        profile_layout.addWidget(self.customRecipeRowWidget)
+        generate_layout.addWidget(self.profileSettingsButton)
 
         self.createButton = qt.QPushButton("Generate")
         self.createButton.clicked.connect(self._create_segmentation)
@@ -2053,10 +1754,17 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             "QPushButton:disabled { background:#9aaec8; border-color:#8fa2ba; }"
         )
         generate_layout.addWidget(self.createButton)
+        self.unetCancelButton = qt.QPushButton("Cancel")
+        self.unetCancelButton.enabled = False
+        self.unetCancelButton.clicked.connect(self._cancel_unet)
+        generate_layout.addWidget(self.unetCancelButton)
+        self.unetOutputText = qt.QPlainTextEdit()
+        self.unetOutputText.readOnly = True
+        self.unetOutputText.maximumBlockCount = 1000
+        self.unetOutputText.setMaximumHeight(180)
+        generate_layout.addWidget(self.unetOutputText)
 
-        default_profile_index = self.contourProfileCombo.findText("XtremeCT II - Radius")
-        if default_profile_index >= 0:
-            self.contourProfileCombo.setCurrentIndex(default_profile_index)
+        self.volumeSelector.currentNodeChanged.connect(self._on_input_volume_changed)
         self._apply_preset_values(update_segmentation_method=False)
 
     def _labelmap_selector(self):
@@ -2133,7 +1841,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         selected_supported = True
         for index in range(self._combo_count(combo)):
             method_id = str(combo.itemData(index))
-            supported = True if site == "auto" else method_supports_site(descriptors[method_id], site)
+            supported = True if site in {"auto", "none"} else method_supports_site(descriptors[method_id], site)
             model = combo.model()
             item = model.item(index) if hasattr(model, "item") else None
             if item is not None:
@@ -2149,11 +1857,24 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _refresh_method_dependent_ui(self):
         if not hasattr(self, "_expertRows"):
             return
+        unet = self._uses_unet()
+        for widget in (self.unetInfoLabel, self.unetCancelButton, self.unetOutputText):
+            widget.visible = unet
+        for widget in self._topRows["unet_device"]:
+            widget.visible = unet
+        self.contourSettingsButton.visible = str(self.contourBackendCombo.currentData) != "none"
+        self.customRecipeRowWidget.visible = True
+        self.exportProfileButton.toolTip = (
+            "Export a scene U-Net recipe. Batch uses the fixed U-Net profile."
+            if unet else "Export a segmentation-only scene recipe; batch uses contour profiles."
+            if str(self.contourBackendCombo.currentData) == "none"
+            else "Export these methods and edited settings as a reusable scene/batch profile.")
+        self._update_detected_preset_label()
         self._refresh_site_limited_combo(self.periostealContourCombo, PERIOSTEAL_CONTOUR_METHODS)
         periosteal_method = str(self.periostealContourCombo.currentData)
         extra_inputs = PERIOSTEAL_CONTOUR_METHODS[periosteal_method].extra_inputs
         for input_id, (label, widget) in self._extraInputRows.items():
-            visible = input_id in extra_inputs
+            visible = not unet and input_id in extra_inputs
             if label is not None:
                 label.visible = bool(visible)
             widget.visible = bool(visible)
@@ -2162,15 +1883,20 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             bone_method=str(self.segmentationMethodCombo.currentData),
             periosteal_method=periosteal_method,
             endosteal_method=str(self.endostealContourCombo.currentData),
-            modality=str(self.modalityCombo.currentData),
+            modality=self._effective_modality(),
             site=self._effective_contour_site(),
         )
+        if unet:
+            groups = {"Bone segmentation": groups.get("Bone segmentation", ())}
         visible_parameters = {parameter for parameters in groups.values() for parameter in parameters}
+        if unet:
+            visible_parameters.discard("segmentation_aligned_contour_support")
         for parameter_id in self._expertRows:
             self._set_expert_row_visible(parameter_id, parameter_id in visible_parameters)
         for group_name, section in getattr(self, "_expertSections", {}).items():
             group_parameters = set(groups.get(group_name, ()))
-            section.visible = any(parameter in visible_parameters for parameter in group_parameters)
+            section.visible = any(
+                parameter in visible_parameters for parameter in group_parameters)
 
     def _refresh_parameter_mode_ui(self):
         return
@@ -2200,21 +1926,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         previous = self.contourProfileCombo.blockSignals(True)
         try:
             self.contourProfileCombo.clear()
-            for label, modality, site, segmentation_method, periosteal_method, endosteal_method in CONTOUR_PROFILE_PRESETS:
-                self.contourProfileCombo.addItem(
-                    label,
-                    json.dumps(
-                        {
-                            "display_name": label,
-                            "modality": modality,
-                            "site": site,
-                            "segmentation_method": segmentation_method,
-                            "periosteal_method": periosteal_method,
-                            "endosteal_method": endosteal_method,
-                        },
-                        sort_keys=True,
-                    ),
-                )
+            for label, value in (("XCTI", "xct1"), ("XCTII", "xct2"),
+                                 ("Custom", "custom")):
+                self.contourProfileCombo.addItem(label, value)
             self._add_user_contour_profiles()
         finally:
             self.contourProfileCombo.blockSignals(previous)
@@ -2253,13 +1967,67 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 return True
         return False
 
-    def _on_modality_changed(self):
-        self._apply_preset_values(update_segmentation_method=True)
-
     def _on_segmentation_method_changed(self):
         self._mark_contour_methods_custom()
         self._apply_segmentation_preset()
+        if str(self.segmentationMethodCombo.currentData) == "laplace_hamming":
+            self.lhThresholdSpin.value = self._lh_threshold(self._effective_contour_site(), self._effective_modality())
         self._refresh_method_dependent_ui()
+
+    def _on_contouring_changed(self):
+        selected = str(self.contourBackendCombo.currentData)
+        outer, inner = {"standard": ("standard", "standard"),
+                        "geodesic": ("geodesic_fracture", "standard"),
+                        "none": ("none", "none"), "unet": ("none", "none")}[selected]
+        for combo, value in ((self.periostealContourCombo, outer), (self.endostealContourCombo, inner)):
+            previous = combo.blockSignals(True)
+            self._set_combo_by_data(combo, value)
+            combo.blockSignals(previous)
+        self._apply_site_preset()
+        self._lastContourMethods = (outer, inner)
+        self._refresh_method_dependent_ui()
+
+    def _volume_metadata(self, volume_node):
+        if volume_node is None:
+            return {}
+        try:
+            value = json.loads(volume_node.GetAttribute(AIM_METADATA_ATTRIBUTE) or "{}")
+            return value if isinstance(value, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+
+    def _effective_modality(self):
+        return self._scannerPreset
+
+    def _update_detected_preset_label(self):
+        if not hasattr(self, "presetDetectionLabel"):
+            return
+        volume = self.volumeSelector.currentNode()
+        site = self._resolve_site_from_volume(volume) if volume else ""
+        if self._scannerPreset == "custom":
+            self.presetDetectionLabel.text = "Custom: configure thresholds in your input image's units, then save a named profile. No Scanco site calibration is applied."
+        else:
+            self.presetDetectionLabel.text = (
+                f"Detected site: {site.title() if site else 'unresolved'}. "
+                "Site Auto uses this; scanner is selected manually under Profile.")
+
+    def _on_input_volume_changed(self, *args):
+        self._update_detected_preset_label()
+        if not getattr(self, "_customProfileActive", False):
+            self._apply_site_preset()
+        self._refresh_method_dependent_ui()
+
+    def _validate_preset_selection(self):
+        volume = self.volumeSelector.currentNode()
+        if volume is None:
+            raise ValueError("Please select an input volume.")
+        if str(self.contourBackendCombo.currentData) == "none" and str(self.segmentationMethodCombo.currentData) == "none":
+            raise ValueError("Please select contouring or tissue segmentation; both are None.")
+        if str(self.siteCombo.currentData) == "auto":
+            self._selected_site(volume_node=volume, strict=True)
+        if self._uses_unet():
+            if self._effective_modality() != "xct2" or self._selected_site(volume_node=volume) not in {"radius", "tibia"}:
+                raise ValueError("Published U-Net weights require XCT-II radius/tibia. Please select the correct presets or another contouring method.")
 
     def _on_contour_method_changed(self):
         self._mark_contour_methods_custom()
@@ -2267,8 +2035,8 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         previous = getattr(self, "_lastContourMethods", (None, None))
         if not getattr(self, "_suppressMethodCustomSwitch", False):
             site = self._effective_contour_site()
-            modality = str(self.modalityCombo.currentData)
-            if site in SITE_PRESETS:
+            modality = self._effective_modality()
+            if site in SITE_PRESETS and modality != "custom":
                 defaults = _contour_site_defaults(site, modality)
                 for index, stage, threshold, sigma, key in (
                     (0, "outer", self.periostealThresholdSpin, self.outerGaussSigmaSpin, "periosteal_threshold"),
@@ -2283,17 +2051,18 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _mark_contour_methods_custom(self):
         if getattr(self, "_suppressMethodCustomSwitch", False):
             return
-        if hasattr(self, "expertSettingsButton"):
-            self.expertSettingsButton.collapsed = False
+        # Algorithm settings stay collapsed until explicitly opened by the user.
 
     def _apply_preset_values(self, *args, update_segmentation_method=False):
         profile = self._current_contour_profile()
         if profile.get("schema") == "bone-contour-recipe-v1":
             self._apply_recipe(profile)
             return
-        self._apply_profile_preset()
-        if update_segmentation_method and not hasattr(self, "contourProfileCombo"):
-            self._apply_modality_preset()
+        self._customProfileActive = False
+        self._scannerPreset = profile.get("scanner_preset", "xct1")
+        if self._scannerPreset == "custom":
+            self._set_combo_by_data(self.siteCombo, "none")
+            return  # Manual mode keeps edited settings and applies no site calibration.
         self._apply_segmentation_preset()
         self._apply_site_preset()
 
@@ -2301,6 +2070,8 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not hasattr(self, "contourProfileCombo"):
             return {}
         data = self.contourProfileCombo.currentData
+        if str(data) in {"xct1", "xct2", "custom"}:
+            return {"scanner_preset": str(data)}
         try:
             return json.loads(str(data or "{}"))
         except Exception:
@@ -2324,7 +2095,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self._suppressMethodCustomSwitch = True
         try:
             for combo, key in (
-                (getattr(self, "modalityCombo", None), "modality"),
                 (getattr(self, "siteCombo", None), "site"),
                 (getattr(self, "segmentationMethodCombo", None), "segmentation_method"),
                 (getattr(self, "periostealContourCombo", None), "periosteal_method"),
@@ -2342,36 +2112,40 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             self._suppressMethodCustomSwitch = previous_suppression
 
     def _apply_modality_preset(self):
-        if not hasattr(self, "modalityCombo") or not hasattr(self, "segmentationMethodCombo"):
+        if not hasattr(self, "segmentationMethodCombo"):
             return
         if not self._use_site_preset_params():
             return
-        modality = str(self._combo_data(self.modalityCombo, "xct2"))
+        modality = self._effective_modality()
         target_method = "laplace_hamming" if modality == "xct1" else "seg_gauss"
         if str(self.segmentationMethodCombo.currentData) != target_method:
             self._set_combo_by_data(self.segmentationMethodCombo, target_method)
 
+    def _recipe_payload(self, display_name):
+        site = str(self._combo_data(self.siteCombo, "auto"))
+        parameters = self._collect_params(site=site, use_site_defaults=False)
+        parameters["segmentation"]["enabled"] = str(self.segmentationMethodCombo.currentData) != "none"
+        return {
+            "schema": "bone-contour-recipe-v1", "display_name": display_name,
+            "modality": self._effective_modality(),
+            "scanner_preset": self._scannerPreset,
+            "site": site, "kind": "contour-recipe",
+            "contouring_method": str(self.contourBackendCombo.currentData),
+            "device": str(self.unetDeviceCombo.currentData),
+            "methods": {
+                "bone_segmentation": str(self.segmentationMethodCombo.currentData),
+                "periosteal_contour": str(self.periostealContourCombo.currentData),
+                "endosteal_contour": str(self.endostealContourCombo.currentData),
+            },
+            "parameters": parameters,
+        }
+
     def _save_custom_recipe(self):
         try:
-            site = self._selected_site(volume_node=self.volumeSelector.currentNode(), strict=False)
-            if site == "unparsed":
-                site = str(self._combo_data(self.siteCombo, "auto"))
             display_name = str(self.workflowDisplayNameEdit.text or "").strip()
             if not display_name:
                 display_name = self._combo_label(self.contourProfileCombo) if hasattr(self, "contourProfileCombo") else "Custom contour profile"
-            recipe = {
-                "schema": "bone-contour-recipe-v1",
-                "display_name": display_name,
-                "modality": str(self._combo_data(self.modalityCombo, "xct2")),
-                "site": str(site),
-                "kind": "contour-recipe",
-                "methods": {
-                    "bone_segmentation": str(self.segmentationMethodCombo.currentData),
-                    "periosteal_contour": str(self.periostealContourCombo.currentData),
-                    "endosteal_contour": str(self.endostealContourCombo.currentData),
-                },
-                "parameters": self._collect_params(site=site, use_site_defaults=False),
-            }
+            recipe = self._recipe_payload(display_name)
             default_path = str(self._default_recipe_dir() / f"{_sanitize_filename(display_name)}.json")
             selected = qt.QFileDialog.getSaveFileName(
                 slicer.util.mainWindow(),
@@ -2398,6 +2172,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                     metadata={"kind": "contour-recipe", "display_name": display_name},
                 )
                 self._populate_contour_profile_combo()
+                self.contourProfileCombo.setCurrentIndex(self.contourProfileCombo.findText(display_name))
             except Exception as registry_exc:
                 self._log(f"Saved profile, but could not update shared registry: {registry_exc}")
             self._log(f"Saved custom profile: {path}")
@@ -2430,6 +2205,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                     metadata={"kind": "contour-recipe", "display_name": display_name},
                 )
                 self._populate_contour_profile_combo()
+                self.contourProfileCombo.setCurrentIndex(self.contourProfileCombo.findText(display_name))
             except Exception as registry_exc:
                 self._log(f"Loaded profile, but could not update shared registry: {registry_exc}")
             self._log(f"Loaded custom profile: {path}")
@@ -2454,9 +2230,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             except Exception as registry_exc:
                 self._log(f"Deleted profile file, but could not update shared registry: {registry_exc}")
             self._populate_contour_profile_combo()
-            default_profile_index = self.contourProfileCombo.findText("XtremeCT II - Radius")
-            if default_profile_index >= 0:
-                self.contourProfileCombo.setCurrentIndex(default_profile_index)
+            self.contourProfileCombo.setCurrentIndex(0)
             self._log(f"Deleted custom profile: {path}")
         except Exception as exc:
             self._error(exc)
@@ -2464,10 +2238,23 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _apply_recipe(self, recipe):
         if recipe.get("schema") != "bone-contour-recipe-v1":
             raise ValueError("Profile is not a bone-contour-recipe-v1 JSON file.")
+        self._customProfileActive = True
+        self._scannerPreset = str(recipe.get("scanner_preset", recipe.get("modality", "xct2")))
+        if self._scannerPreset in {"auto", "none"}:
+            # Old recipes already recorded the resolved scanner. Restore it,
+            # never infer a scanner from the newly loaded volume's resolution.
+            self._scannerPreset = str(recipe.get("modality") or "xct2")
+        if self._scannerPreset not in {"xct1", "xct2", "custom"}:
+            raise ValueError("Custom profile scanner must be xct1, xct2 or custom.")
         changed_combos = []
         try:
+            previous = self.contourProfileCombo.blockSignals(True)
+            changed_combos.append((self.contourProfileCombo, previous))
+            data = json.dumps(recipe, sort_keys=True)
+            if not self._set_combo_by_data(self.contourProfileCombo, data):
+                self.contourProfileCombo.addItem(str(recipe.get("display_name") or "Custom profile (loaded)"), data)
+                self.contourProfileCombo.setCurrentIndex(self.contourProfileCombo.count - 1)
             for combo, value in (
-                (getattr(self, "modalityCombo", None), recipe.get("modality")),
                 (getattr(self, "siteCombo", None), recipe.get("site")),
             ):
                 if combo is None or not value:
@@ -2478,6 +2265,14 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             if recipe.get("display_name") and hasattr(self, "workflowDisplayNameEdit"):
                 self.workflowDisplayNameEdit.text = str(recipe["display_name"])
             methods = dict(recipe.get("methods") or {})
+            contouring = recipe.get("contouring_method") or (
+                "none" if methods.get("periosteal_contour") == "none" else
+                "geodesic" if methods.get("periosteal_contour") == "geodesic_fracture" else "standard")
+            for combo, value in ((self.contourBackendCombo, contouring),
+                                 (self.unetDeviceCombo, recipe.get("device", "auto"))):
+                previous = combo.blockSignals(True)
+                changed_combos.append((combo, previous))
+                self._set_combo_by_data(combo, value)
             for combo, value in (
                 (getattr(self, "segmentationMethodCombo", None), methods.get("bone_segmentation")),
                 (getattr(self, "periostealContourCombo", None), methods.get("periosteal_contour")),
@@ -2519,8 +2314,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             self.adaptiveBlockSpin.value = int(segmentation["adaptive_block_size"])
         if "min_size_voxels" in segmentation:
             self.minSizeSpin.value = int(segmentation["min_size_voxels"])
-        if "keep_largest_component" in segmentation:
-            self.keepLargestCheck.checked = bool(segmentation["keep_largest_component"])
         if "use_segmentation_aligned_contour_support" in segmentation:
             self.segmentationAlignedSupportCheck.checked = bool(segmentation["use_segmentation_aligned_contour_support"])
         if "laplace_hamming_threshold" in segmentation:
@@ -2562,16 +2355,15 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         site = str(self.siteCombo.currentData)
         if site not in SITE_PRESETS:
             site = self._selected_site(volume_node=self.volumeSelector.currentNode(), strict=False)
-        if site not in SITE_PRESETS:
-            site = "radius"
-        modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
+        modality = self._effective_modality()
+        if site not in SITE_PRESETS or str(self.siteCombo.currentData) == "none" or modality == "custom":
+            return
         preset = _contour_site_defaults(site, modality,
             str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
         self._contourRegularizationParams = {}
         self._lastContourMethods = (str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
         inner = preset["inner"]
         outer = preset["outer"]
-        modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
         self.periostealThresholdSpin.value = float(outer["periosteal_threshold"])
         self.endostealThresholdSpin.value = float(inner["endosteal_threshold"])
         self.outerGaussSigmaSpin.value = float(outer["gaussian_sigma"])
@@ -2605,7 +2397,6 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.adaptiveHighSpin.value = float(preset["adaptive_high_threshold"])
         self.adaptiveBlockSpin.value = int(preset["adaptive_block_size"])
         self.minSizeSpin.value = int(preset["min_size_voxels"])
-        self.keepLargestCheck.checked = bool(preset["keep_largest_component"])
         self.lhThresholdSpin.value = float(preset["laplace_hamming_threshold"])
         self.lhLowPassSpin.value = float(preset.get("laplace_hamming_low_pass_cutoff", 0.3))
         self.lhEpsilonSpin.value = float(preset.get("laplace_hamming_epsilon", 0.45))
@@ -2620,12 +2411,11 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 break
 
     def _site_contour_params(self, site):
-        modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
+        modality = self._effective_modality()
         preset = _contour_site_defaults(site, modality,
             str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
         inner = dict(preset["inner"])
         outer = dict(preset["outer"])
-        modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
         if modality == "xct1":
             outer["periosteal_kernelsize"] = 12
             outer["periosteal_open_radius"] = 1
@@ -2652,7 +2442,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         block_size = int(self.adaptiveBlockSpin.value)
         if block_size % 2 == 0:
             block_size += 1
-        modality = str(self.modalityCombo.currentData) if hasattr(self, "modalityCombo") else "xct2"
+        modality = self._effective_modality()
         selected_site = str(site) if site else str(self.siteCombo.currentData) if hasattr(self, "siteCombo") else "radius"
         lh_threshold = self._lh_threshold(selected_site, modality) if use_site_defaults else float(self.lhThresholdSpin.value)
         params = {
@@ -2665,7 +2455,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
                 "adaptive_high_threshold": float(self.adaptiveHighSpin.value),
                 "adaptive_block_size": block_size,
                 "min_size_voxels": int(self.minSizeSpin.value),
-                "keep_largest_component": bool(self.keepLargestCheck.checked),
+                "keep_largest_component": False,
                 "use_segmentation_aligned_contour_support": bool(self.segmentationAlignedSupportCheck.checked),
                 "laplace_hamming_threshold": float(lh_threshold),
                 "laplace_hamming_low_pass_cutoff": float(self.lhLowPassSpin.value),
@@ -2761,24 +2551,22 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
     def _resolve_site_from_volume(self, volume_node):
         if volume_node is None:
             return ""
-        for value in (
-            volume_node.GetAttribute(AIM_SOURCE_ATTRIBUTE),
-            volume_node.GetName(),
-        ):
-            site = self._site_from_text(value)
-            if site:
-                return site
+        candidates = [volume_node.GetAttribute(AIM_SOURCE_ATTRIBUTE), volume_node.GetName()]
         storage_node = volume_node.GetStorageNode()
         if storage_node is not None:
-            site = self._site_from_text(storage_node.GetFileName())
-            if site:
-                return site
-        return ""
+            candidates.append(storage_node.GetFileName())
+        return detect_site(self._volume_metadata(volume_node), candidates) or ""
 
     def _selected_site(self, *, item=None, volume_node=None, strict=False):
         selected = str(self._combo_data(self.siteCombo, "auto"))
         if selected in SITE_PRESETS:
             return selected
+        if selected == "none":
+            return "unparsed"
+        if volume_node is not None:
+            detected = self._resolve_site_from_volume(volume_node)
+            if detected:
+                return detected
         candidates = []
         if item is not None:
             candidates.extend([item.get("site"), item.get("path")])
@@ -2857,7 +2645,90 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         except Exception:
             pass
 
+    def _uses_unet(self):
+        return str(self._combo_data(getattr(self, "contourBackendCombo", None), "standard")) == "unet"
+
+    def cleanup(self):
+        self._closed = True
+        self._unet_logic.detach_callbacks()
+        self._unet_logic.interrupt()
+
+    def _set_unet_busy(self, busy):
+        for widget in (self.createButton, self.volumeSelector, self.contourBackendCombo,
+                       self.contourProfileCombo, self.contourSettingsButton, self.segmentationSettingsButton,
+                       self.profileSettingsButton, self.unetDeviceCombo, self.siteCombo, self.segmentationMethodCombo):
+            widget.enabled = not busy
+        self.unetCancelButton.enabled = busy
+
+    def _append_unet_output(self, text):
+        if not self._closed:
+            self.unetOutputText.appendPlainText(str(text).rstrip())
+
+    def _start_unet(self):
+        if self._unet_logic.is_running():
+            return
+        try:
+            reference = self.volumeSelector.currentNode()
+            method = str(self._combo_data(self.segmentationMethodCombo))
+            tissue_image, settings, provenance = None, None, {}
+            if method != "none":
+                import sitkUtils
+                tissue_image = sitkUtils.PullVolumeFromSlicer(reference)
+                if method == "laplace_hamming":
+                    tissue_image, provenance = self.logic._laplace_hamming_support_image(reference, tissue_image)
+                site = self._selected_site(volume_node=reference, strict=self._use_site_preset_params())
+                settings = dict(self._collect_params(site=site, use_site_defaults=self._use_site_preset_params())["segmentation"])
+                settings.update(enabled=True, method="gauss" if method == "seg_gauss" else method,
+                                use_segmentation_aligned_contour_support=False)
+            self.unetOutputText.clear()
+            self._set_unet_busy(True)
+            self._log("Running published U-Net defaults...")
+            self._unet_logic.run_segmentation(
+                reference, str(self._combo_data(self.unetDeviceCombo, "auto")),
+                tissue_image=tissue_image, segmentation=settings,
+                on_output=self._append_unet_output, on_finished=self._unet_finished)
+            self._unet_logic.context.update(segmentation_method=method, segmentation_parameters=settings,
+                                            segmentation_provenance=provenance)
+        except Exception as exc:
+            self._set_unet_busy(False)
+            self._log(f"Could not start U-Net: {exc}")
+
+    def _cancel_unet(self):
+        if self._unet_logic.interrupt():
+            self._log("Cancelling U-Net...")
+
+    def _unet_finished(self, code, status, cancelled=False):
+        if self._closed:
+            return
+        self._set_unet_busy(False)
+        if cancelled:
+            self._log("Cancelled. Existing scene results were not changed.")
+        elif code != 0 or status != qt.QProcess.NormalExit:
+            self._log("U-Net/SEG worker failed. See the output log; install/update bone-contouring [unet] through Toolbox Setup.")
+        else:
+            try:
+                context = self._unet_logic.context
+                node = self._unet_logic.import_outputs(
+                    context["reference"], context["output"], expected_geometry=context["geometry"],
+                    expected_digest=context["digest"])
+                node.SetAttribute("HRpQCT.SegmentationMethod", context["segmentation_method"])
+                node.SetAttribute("HRpQCT.SegmentationParameters", json.dumps(context["segmentation_parameters"]))
+                node.SetAttribute("HRpQCT.SegmentationProvenance", json.dumps(context["segmentation_provenance"]))
+                self._log(f"Loaded {node.GetName()}: {node.GetAttribute('BoneImaging.MaskRoles')}. "
+                          "Contours: Neeteson et al. published U-Net; tissue SEG: "
+                          f"{context['segmentation_method']}.")
+            except Exception as exc:
+                self._log(f"U-Net output validation/import failed: {exc}")
+
     def _create_segmentation(self):
+        try:
+            self._validate_preset_selection()
+        except ValueError as exc:
+            self._error(exc)
+            return
+        if self._uses_unet():
+            self._start_unet()
+            return
         try:
             segmentation_method = str(self.segmentationMethodCombo.currentData)
             periosteal_method = str(self.periostealContourCombo.currentData)

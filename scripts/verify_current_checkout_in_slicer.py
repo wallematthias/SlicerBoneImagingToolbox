@@ -13,7 +13,6 @@ MODULES = (
     "TimelapsedHRpQCT",
     "MotionScoreHRpQCT",
     "SegmentationHRpQCT",
-    "DeepLearningSegmentationHRpQCT",
     "BoneMicroarchitecture",
     "PlateRodMorphometryHRpQCT",
     "ParOSolFEA",
@@ -42,17 +41,21 @@ def main():
         imported[name] = str(module_file)
 
     from SlicerBoneImagingToolboxLib import (
+        deep_learning_contouring,
         deep_learning_segmentation_scene,
         motionscore_scene,
         spine_segmentation_batch,
         timelapsed_scene,
+        unet_contouring_worker,
     )
 
     helpers = {
+        "deep_learning_contouring": Path(deep_learning_contouring.__file__).resolve(),
         "deep_learning_segmentation_scene": Path(deep_learning_segmentation_scene.__file__).resolve(),
         "motionscore_scene": Path(motionscore_scene.__file__).resolve(),
         "spine_segmentation_batch": Path(spine_segmentation_batch.__file__).resolve(),
         "timelapsed_scene": Path(timelapsed_scene.__file__).resolve(),
+        "unet_contouring_worker": Path(unet_contouring_worker.__file__).resolve(),
     }
     for name, path in helpers.items():
         if not path.is_relative_to(repo_root):

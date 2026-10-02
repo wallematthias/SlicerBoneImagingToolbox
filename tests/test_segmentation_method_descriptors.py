@@ -146,24 +146,8 @@ def test_contouring_module_has_single_generate_workflow_without_scene_batch_tabs
     assert 'form.addRow("Output prefix", self.outputPrefixEdit)' not in builder
     assert 'form.addRow("Parameters", self.parameterModeCombo)' not in builder
     assert 'form.addRow("Modality preset", self.modalityCombo)' not in builder
-    assert 'form.addRow("Site preset", self.siteCombo)' not in builder
+    assert 'form.addRow("Site preset", self.siteCombo)' in builder
 
-
-def test_contouring_scene_uses_combined_scanner_site_profiles() -> None:
-    source = (
-        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
-    ).read_text(encoding="utf-8")
-
-    assert "CONTOUR_PROFILE_PRESETS = (" in source
-    assert '"XtremeCT I - Radius", "xct1", "radius", "laplace_hamming", "standard", "standard"' in source
-    assert '"XtremeCT II - Radius", "xct2", "radius", "seg_gauss", "standard", "standard"' in source
-    assert '"XtremeCT II Geodesic - Radius", "xct2", "radius", "seg_gauss", "geodesic_fracture", "standard"' in source
-    assert '"XtremeCT II LH - Radius", "xct2", "radius", "laplace_hamming", "standard", "standard"' in source
-    assert '"periosteal_method": periosteal_method' in source
-    assert '"endosteal_method": endosteal_method' in source
-    assert "def _apply_profile_preset(self):" in source
-    assert "def _current_contour_profile(self):" in source
-    assert 'default_profile_index = self.contourProfileCombo.findText("XtremeCT II - Radius")' in source
 
 
 def test_contouring_module_keeps_live_profile_summary_callback() -> None:
@@ -174,31 +158,6 @@ def test_contouring_module_keeps_live_profile_summary_callback() -> None:
     assert "def _update_batch_options_summary(self" in source
     assert source.count("._update_batch_options_summary)") >= 1
 
-
-def test_contouring_method_selectors_live_inside_expert_sections() -> None:
-    source = (
-        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
-    ).read_text(encoding="utf-8")
-    builder = source[
-        source.index("    def _build_segmentation_section(self):")
-        : source.index("    def _labelmap_selector(self):")
-    ]
-
-    assert 'form.addRow("Bone segmentation", self.segmentationMethodCombo)' not in builder
-    assert 'form.addRow("Periosteal (outer) contour", self.periostealContourCombo)' not in builder
-    assert 'form.addRow("Endosteal (inner) contour", self.endostealContourCombo)' not in builder
-    assert 'segmentation_form.addRow("Method", self.segmentationMethodCombo)' in builder
-    assert 'periosteal_form.addRow("Method", self.periostealContourCombo)' in builder
-    assert 'endosteal_form.addRow("Method", self.endostealContourCombo)' in builder
-    assert builder.index('segmentation_form.addRow("Method", self.segmentationMethodCombo)') < builder.index(
-        'segmentation_form.addRow("Trab threshold", self.trabThresholdSpin)'
-    )
-    assert builder.index('periosteal_form.addRow("Method", self.periostealContourCombo)') < builder.index(
-        'periosteal_form.addRow("Aligned contour support", self.segmentationAlignedSupportCheck)'
-    )
-    assert builder.index('endosteal_form.addRow("Method", self.endostealContourCombo)') < builder.index(
-        'endosteal_form.addRow("Trab close radius", self.trabCloseSpin)'
-    )
 
 
 def test_manual_contouring_method_changes_do_not_reapply_profile_or_toggle_modes() -> None:
@@ -229,29 +188,6 @@ def test_manual_contouring_method_changes_do_not_reapply_profile_or_toggle_modes
     ]
     assert "self._suppressMethodCustomSwitch = True" in profile_apply
     assert "self._suppressMethodCustomSwitch = previous_suppression" in profile_apply
-
-
-def test_contouring_profile_export_is_visible_above_generate() -> None:
-    source = (
-        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
-    ).read_text(encoding="utf-8")
-    builder = source[
-        source.index("    def _build_segmentation_section(self):")
-        : source.index("    def _labelmap_selector(self):")
-    ]
-    assert 'form.addRow("Profiles", self.customRecipeRowWidget)' not in builder
-    assert "expert_layout.addWidget(self.customRecipeRowWidget)" in builder
-    assert 'self.exportProfileButton = qt.QPushButton("Export Profile")' in builder
-    assert 'self.workflowDisplayNameEdit = qt.QLineEdit()' in builder
-    assert 'profile_form.addRow("Workflow display name", self.workflowDisplayNameEdit)' in builder
-    assert builder.index('endosteal_form.addRow("Endosteal threshold", self.endostealThresholdSpin)') < builder.index(
-        'profile_form.addRow("Workflow display name", self.workflowDisplayNameEdit)'
-    )
-    assert builder.index("generate_layout.addWidget(self.expertSettingsButton)") < builder.index(
-        'self.createButton = qt.QPushButton("Generate")'
-    )
-    assert "self.customRecipeRowWidget.visible = not preset_mode" not in source
-    assert "self.customRecipeLabel.visible = not preset_mode" not in source
 
 
 def test_contouring_scene_uses_input_volume_name_without_output_prefix_field() -> None:
@@ -289,69 +225,6 @@ def test_contouring_module_does_not_expose_duplicate_batch_runner() -> None:
     assert "self.batchKeepLoadedCheck" not in source
 
 
-def test_contour_batch_can_use_row_site_specific_defaults() -> None:
-    source = (
-        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
-    ).read_text(encoding="utf-8")
-
-    assert "def _site_contour_params(self, site):" in source
-    assert 'for label, value in [("Auto", "auto"), ("Radius", "radius"), ("Tibia", "tibia"), ("Knee", "knee")]' in source
-    assert 'for label, value in [("Preset", "preset"), ("Custom", "custom")]' not in source
-    assert "self.modalityCombo.currentIndexChanged.connect(self._on_modality_changed)" in source
-    assert "self.segmentationMethodCombo.currentIndexChanged.connect(self._on_segmentation_method_changed)" in source
-    assert "def _apply_modality_preset(self):" in source
-    assert "def _apply_preset_values(self, *args, update_segmentation_method=False):" in source
-    preset_start = source.index("    def _apply_preset_values(self, *args, update_segmentation_method=False):")
-    preset_end = source.index("    def _apply_modality_preset(self):", preset_start)
-    preset_method = source[preset_start:preset_end]
-    assert preset_method.index("self._apply_profile_preset()") < preset_method.index("self._apply_segmentation_preset()")
-    assert preset_method.index("self._apply_segmentation_preset()") < preset_method.index("self._apply_site_preset()")
-    assert 'target_method = "laplace_hamming" if modality == "xct1" else "seg_gauss"' in source
-    assert "self._set_combo_by_data(self.segmentationMethodCombo, target_method)" in source
-    assert source.index('form.addRow("Input volume", self.volumeSelector)') < source.index('form.addRow("Profile", self.contourProfileCombo)')
-    assert 'form.addRow("Parameters", self.parameterModeCombo)' not in source
-    assert 'form.addRow("Modality preset", self.modalityCombo)' not in source
-    assert 'form.addRow("Site preset", self.siteCombo)' not in source
-    assert "def _refresh_parameter_mode_ui(self):" in source
-    assert "widget.visible = bool(preset_mode)" not in source
-    assert "self.expertSettingsButton = ctk.ctkCollapsibleButton()" in source
-    assert "self.expertSettingsButton.collapsed = True" in source
-    assert "self.expertSettingsButton.collapsed = False" in source
-    assert "self.openEditorCheck" not in source
-    assert "Open Segment Editor" not in source
-    assert "open_segment_editor=False" in source
-    assert 'self.createButton = qt.QPushButton("Generate")' in source
-    assert "background:#1f6feb" in source
-    assert source.index("generate_layout.addWidget(self.expertSettingsButton)") < source.index(
-        'self.createButton = qt.QPushButton("Generate")'
-    )
-    assert "form.addRow(self.createButton)" not in source
-    assert "generate_layout.addWidget(self.createButton)" in source
-    assert source.index("generate_layout.addWidget(self.expertSettingsButton)") < source.index(
-        "generate_layout.addWidget(self.createButton)"
-    )
-    assert 'site_defaults = SITE_PRESETS.get(str(site), SITE_PRESETS["radius"])' in source
-    assert 'self.outerKernelSpin.value = 12 if modality == "xct1" else int(outer["periosteal_kernelsize"])' in source
-    assert 'site = self._selected_site(volume_node=self.volumeSelector.currentNode(), strict=False)' in source
-    assert 'if site not in SITE_PRESETS:\n            site = "radius"' in source
-    assert 'outer["periosteal_kernelsize"] = 12' in source
-    assert 'outer["periosteal_open_radius"] = 1' in source
-    assert "def _lh_threshold(self, site, modality):" in source
-    assert 'if str(modality) == "xct1" and str(site) in {"radius", "tibia"}:' in source
-    assert "return 15000.0" in source
-    assert "lh_threshold = self._lh_threshold(selected_site, modality) if use_site_defaults else float(self.lhThresholdSpin.value)" in source
-    assert "def _lh_threshold(self, site, modality):" in source
-    assert 'if str(modality) == "xct1" and str(site) in {"radius", "tibia"}:' in source
-    assert "return 15000.0" in source
-    assert "lh_threshold = self._lh_threshold(selected_site, modality) if use_site_defaults else float(self.lhThresholdSpin.value)" in source
-    assert '"use_adaptive_threshold": bool(outer["use_adaptive_threshold"])' in source
-    assert '"use_adaptive_threshold": bool(inner["use_adaptive_threshold"])' in source
-    assert '"use_adaptive_threshold": False' in source
-    assert "self.segmentationAlignedSupportCheck.checked = True" in source
-    assert "def _collect_params(self, site=None, use_site_defaults=False):" in source
-    assert "if use_site_defaults and site in SITE_PRESETS:" in source
-    assert "params.update(self._site_contour_params(site))" in source
-
 
 def test_contour_custom_parameters_can_be_saved_as_user_profiles() -> None:
     source = (
@@ -362,7 +235,6 @@ def test_contour_custom_parameters_can_be_saved_as_user_profiles() -> None:
     assert 'self.exportProfileButton = qt.QPushButton("Export Profile")' in source
     assert 'self.deleteProfileButton = qt.QPushButton("Delete Profile")' in source
     assert 'form.addRow("Profiles", self.customRecipeRowWidget)' not in source
-    assert "expert_layout.addWidget(self.customRecipeRowWidget)" in source
     assert 'self.workflowDisplayNameEdit = qt.QLineEdit()' in source
     assert '"display_name": display_name' in source
     assert 'display_name = str(self.workflowDisplayNameEdit.text or "").strip()' in source
@@ -382,33 +254,15 @@ def test_contour_custom_parameters_can_be_saved_as_user_profiles() -> None:
     assert '"user_profile_path": str(record.path)' in source
     assert "if profile.get(\"schema\") == \"bone-contour-recipe-v1\":" in source
     assert "self._apply_recipe(profile)" in source
-    assert "return\n        self._apply_profile_preset()" in source
     assert '"schema": "bone-contour-recipe-v1"' in source
     assert '"methods": {' in source
-    assert '"parameters": self._collect_params(site=site, use_site_defaults=False)' in source
+    assert 'parameters = self._collect_params(site=site, use_site_defaults=False)' in source
+    assert '"parameters": parameters' in source
     assert "def _apply_recipe(self, recipe):" in source
     assert "self._set_combo_by_data(self.parameterModeCombo, \"custom\")" not in source
     assert "def _apply_params_to_widgets(self, params):" in source
     assert "self.customRecipeRowWidget.visible = not preset_mode" not in source
-    assert source.index('endosteal_form.addRow("Endosteal threshold", self.endostealThresholdSpin)') < source.index(
-        "expert_layout.addWidget(self.customRecipeRowWidget)"
-    )
 
-
-def test_contour_default_profile_is_applied_after_expert_controls_exist() -> None:
-    source = (
-        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
-    ).read_text(encoding="utf-8")
-    builder = source[
-        source.index("    def _build_segmentation_section(self):")
-        : source.index("    def _labelmap_selector(self):")
-    ]
-
-    assert 'default_profile_index = self.contourProfileCombo.findText("XtremeCT II - Radius")' in builder
-    assert builder.index("self.gaussSigmaSpin = self._double_spin") < builder.index(
-        'default_profile_index = self.contourProfileCombo.findText("XtremeCT II - Radius")'
-    )
-    assert "self._apply_preset_values(update_segmentation_method=False)" in builder
 
 
 def test_contour_module_does_not_duplicate_setup_update_controls() -> None:
@@ -581,35 +435,6 @@ def test_contouring_scene_generation_has_site_preset_param_policy() -> None:
     assert "use_site_defaults=self._use_site_preset_params()" in source
 
 
-def test_xct2_gaussian_standard_contours_take_full_compartment_generation_path() -> None:
-    source = (
-        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
-    ).read_text(encoding="utf-8")
-
-    standard_path_start = source.index(
-        'if (\n            periosteal_contour_method == "standard"'
-    )
-    standard_path_end = source.index("        else:", standard_path_start)
-    standard_path = source[standard_path_start:standard_path_end]
-
-    assert 'endosteal_contour_method == "standard"' in standard_path
-    assert 'segmentation_method != "none"' in standard_path
-    assert "generate_masks_from_image(" in standard_path
-    assert "generated.metadata[\"emitted_roles\"]" in source
-    assert "emitted_roles = metadata.get(\"emitted_roles\", [])" in source
-
-
-def test_xct2_gaussian_with_no_contour_outputs_uses_global_trab_threshold() -> None:
-    source = (
-        ROOT / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
-    ).read_text(encoding="utf-8")
-
-    assert "internal_compartment_only" not in source
-    assert "global_threshold_without_compartments = (" in source
-    assert 'segmentation_method == "seg_gauss"' in source
-    assert "not compartment_split_requested" in source
-    assert "seg_xyz = (segmentation_image_xyz >= trab_threshold) & full_xyz" in source
-    assert "No cortical mask was provided; Gaussian segmentation used the trabecular threshold" in source
 
 
 def test_slicer_extension_has_no_external_segmentation_workflow_references() -> None:

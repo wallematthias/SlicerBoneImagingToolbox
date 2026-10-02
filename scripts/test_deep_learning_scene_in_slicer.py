@@ -5,6 +5,7 @@ run. With it, three middle slices run the actual published weights in Slicer's
 Python. This is an integration check, not cohort/model accuracy validation.
 """
 from pathlib import Path
+import json
 import os
 import sys
 import tempfile
@@ -20,7 +21,7 @@ import slicer
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT/"HRpQCTTools"/"DeepLearningSegmentationHRpQCT"))
+sys.path.insert(0, str(ROOT/"HRpQCTTools"/"SegmentationHRpQCT"))
 sys.path.insert(0, str(ROOT/"IOTools"/"ScancoIO"))
 sys.path.insert(0, str(ROOT/"IOTools"/"BatchProcessor"))
 
@@ -34,10 +35,11 @@ def wait(logic, seconds=180):
 
 
 def main():
-    from DeepLearningSegmentationHRpQCT import (
-        DeepLearningSegmentationHRpQCTLogic, DeepLearningSegmentationHRpQCTWidget,
+    from SlicerBoneImagingToolboxLib.deep_learning_contouring import (
+        DeepLearningSegmentationHRpQCTLogic,
         reference_geometry, voxel_digest, slicer_python,
     )
+    from SegmentationHRpQCT import SegmentationHRpQCTWidget
     from SlicerBoneImagingToolboxLib.deep_learning_segmentation_scene import SceneCommand
     logic = DeepLearningSegmentationHRpQCTLogic()
     with tempfile.TemporaryDirectory(prefix="unet-slicer-check-") as temporary:
@@ -163,6 +165,58 @@ def main():
         batch.BatchProcessorWidget._load_deep_learning_outputs(shell,{"image_path":"fixture.AIM"},native_paths)
         assert slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLSegmentationNode")==count+1
 
+        # One Contouring UI, with independent tissue SEG and no hidden contour knobs.
+        slicer.modules.segmentationhrpqct = SimpleNamespace(
+            path=str(ROOT/"HRpQCTTools"/"SegmentationHRpQCT"/"SegmentationHRpQCT.py"))
+        widget = SegmentationHRpQCTWidget()
+        widget._set_combo_by_data(widget.contourProfileCombo, "xct2")
+        widget.contourSettingsButton.collapsed = False
+        widget.segmentationSettingsButton.collapsed = False
+        widget.contourBackendCombo.setCurrentIndex(widget.contourBackendCombo.findData("unet"))
+        assert widget._uses_unet() and widget._expertSections["Endosteal contour"].isHidden()
+        assert widget._expertSections["Periosteal contour"].isHidden()
+        assert not widget._expertSections["Bone segmentation"].isHidden() and not widget.unetDeviceCombo.isHidden(), (
+            widget._expertSections["Bone segmentation"].isHidden(), widget.unetDeviceCombo.isHidden())
+        widget.contourBackendCombo.setCurrentIndex(0)
+        assert widget.unetDeviceCombo.isHidden() and not widget._expertSections["Endosteal contour"].isHidden()
+        widget.contourBackendCombo.setCurrentIndex(widget.contourBackendCombo.findData("unet"))
+        widget.volumeSelector.setCurrentNode(reference)
+        reference.SetAttribute("HRpQCT.AIMScaling", "density")
+        reference.SetAttribute("HRpQCT.AIMMetadata", json.dumps(
+            {"element_size": [0.0607] * 3, "processing_log": {"Site": 20}}))
+        real_run = widget._unet_logic.run_segmentation
+        captured = []
+        def fake_run(selected, device, **kwargs):
+            captured.append(kwargs)
+            np.savez(output, full=full, trab=trab, cort=cort,
+                     **({"seg": cort} if kwargs["segmentation"] is not None else {}))
+            widget._unet_logic.context = dict(reference=selected, output=output,
+                geometry=reference_geometry(selected), digest=voxel_digest(selected))
+            qt.QTimer.singleShot(0, lambda: kwargs["on_finished"](0, qt.QProcess.NormalExit, False))
+        widget._unet_logic.run_segmentation = fake_run
+        for method, roles in (("none", "full,trab,cort"), ("seg_gauss", "full,trab,cort,seg")):
+            widget.segmentationMethodCombo.setCurrentIndex(widget._combo_value_index(widget.segmentationMethodCombo, method))
+            widget._create_segmentation()
+            assert not widget.createButton.enabled and widget.unetCancelButton.enabled
+            slicer.app.processEvents()
+            assert str(widget.messageLabel.text).startswith("Loaded "), str(widget.messageLabel.text)
+            assert node.GetAttribute("BoneImaging.MaskRoles") == roles
+            assert widget.createButton.enabled and not widget.unetCancelButton.enabled
+        assert captured[0]["segmentation"] is None
+        assert captured[1]["segmentation"]["method"] == "gauss"
+        assert captured[1]["tissue_image"].GetSpacing() == reference.GetSpacing()
+        # Malformed optional tissue masks are rejected before replacing valid results.
+        np.savez(output, full=full, trab=trab, cort=cort, seg=np.ones_like(full))
+        try:
+            logic.import_outputs(reference, output)
+        except ValueError as error:
+            assert "Bone-tissue SEG" in str(error)
+        else:
+            raise AssertionError("Out-of-compartment tissue SEG accepted")
+        assert node.GetAttribute("BoneImaging.MaskRoles") == "full,trab,cort,seg"
+        widget._unet_logic.run_segmentation = real_run
+        print("UNIFIED_CONTOURING_UI_PASSED", flush=True)
+
         fixture=os.environ.get("HRPQCT_TEST_DENSITY")
         if fixture:
             with np.load(fixture,allow_pickle=False) as data:
@@ -172,17 +226,17 @@ def main():
             actual.SetSpacing((.061,)*3)
             volume=sitkUtils.PushVolumeToSlicer(actual,name="Real radius UNet test")
             volume.SetAttribute("HRpQCT.AIMScaling","density")
-            slicer.modules.deeplearningsegmentationhrpqct=SimpleNamespace(
-                path=str(ROOT/"HRpQCTTools"/"DeepLearningSegmentationHRpQCT"/"DeepLearningSegmentationHRpQCT.py"))
-            widget=DeepLearningSegmentationHRpQCTWidget()
-            widget.inputVolumeSelector.setCurrentNode(volume)
-            widget.deviceCombo.setCurrentIndex(1)
-            widget._on_run()
-            wait(widget.logic)
-            assert str(widget.statusLabel.text).startswith("Loaded "), str(widget.statusLabel.text)+"\n"+str(widget.outputText.toPlainText())
-            assert widget.logic.context is None and widget.logic._workspace is None
-            widget.cleanup()
+            widget.volumeSelector.setCurrentNode(volume)
+            widget.unetDeviceCombo.setCurrentIndex(1)
+            widget._create_segmentation()
+            wait(widget._unet_logic)
+            assert str(widget.messageLabel.text).startswith("Loaded "), str(widget.messageLabel.text)+"\n"+str(widget.unetOutputText.toPlainText())
+            assert widget._unet_logic.context is None and widget._unet_logic._workspace is None
+            result=next(n for n in slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
+                        if n.GetNodeReferenceID("DeepLearningSegmentationHRpQCT.InputVolume") == volume.GetID())
+            assert result.GetAttribute("BoneImaging.MaskRoles") == "full,trab,cort,seg"
             print("ACTUAL_PUBLISHED_WEIGHTS_SLICER_CPU_PASSED",flush=True)
+        widget.cleanup()
     print("DEEP_LEARNING_SLICER_SMOKE_PASSED",flush=True)
 
 

@@ -31,15 +31,49 @@ Use this tool when you need to:
 ## Scene Workflow
 
 1. Select the input image.
-2. Select a shipped or custom profile.
-3. Adjust segmentation, periosteal contour, or endosteal contour settings if needed.
-4. Export a custom profile if the settings should be reused.
-5. Click `Generate`.
-6. Review the loaded segmentation and masks in Slicer.
+2. Choose **Profile**: XCTI, XCTII, Custom, or a saved profile. There is no separate scanner selector and no resolution-based scanner detection. Leave **Site preset** on Auto (AIM header), or choose the site explicitly.
+3. Choose **Contouring**: dual threshold (standard), geodesic with standard inner contour, published U-Net (Neeteson et al.), or None.
+4. Independently choose **Tissue segmentation**: Gaussian, Laplace-Hamming, adaptive, or None.
+5. Adjust **Contouring advanced settings** directly below Contouring, or **Tissue segmentation advanced settings** directly below Tissue segmentation. Load/save named profiles under **Custom profiles**.
+6. Click `Generate`.
+7. Review the loaded segmentation and masks in Slicer.
+
+Scanner selection is always manual and never changes with voxel spacing or a new
+input volume. Auto site detection prefers the AIM header stored by Scanco I/O,
+then uses recognized volume/file names. If Auto cannot resolve the site, Generate
+asks you to select it explicitly. **Custom** retains edited settings and initially
+sets Site to **None (custom settings)**, without applying scanner/site calibration.
+For example, micro-CT users can enter thresholds in their image's units and save
+their own named profile for scene or batch use; there is no built-in micro-CT profile.
+Selecting **None (custom settings)** under Site likewise retains edited values.
+**Contouring: None** generates only tissue SEG, without inventing compartment masks.
+**Tissue segmentation: None** generates contours only; both cannot be None.
+
+For U-Net, select XCTII with radius/tibia, a Density/BMD volume, and Device under
+**Contouring advanced settings**; Device is its only runtime control. Published contour defaults are
+fixed, with no extra Toolbox smoothing or peel. Tissue settings
+control only the independent SEG; select None for compartments only.
+Both inference and tissue SEG run asynchronously with progress and cancellation,
+and all outputs load into one segmentation node. See
+[Published U-Net Contouring](deep-learning-segmentation.md) for weights, applicability,
+batch/SSH use and the required Neeteson et al. citation. The separate DL module
+has been folded into Contouring.
 
 Expert settings are grouped by algorithm. Gaussian settings appear for Gaussian segmentation, Laplace-Hamming settings appear for Laplace-Hamming segmentation, and geodesic settings appear only when the geodesic periosteal contour is selected.
 
-Toolbox release `v0.2.3` requires `bone-contouring>=0.2.1`. Update the toolbox
+Gaussian tissue segmentation defaults to **sigma 1.2 voxels**, **trabecular
+threshold 320** and **cortical threshold 450 mg HA/cm³**. Sigma is scaled by the
+smallest voxel spacing. This is one filter of the original density image;
+contour prefilters and boundary smoothing do not feed a second smoothed image
+into tissue segmentation. These defaults apply in scene mode (including optional
+tissue SEG after U-Net) and standard batch profiles. Saved custom values remain
+unchanged, except the obsolete `keep_largest_component` tissue setting is
+ignored. Tissue SEG retains disconnected bone; its largest-component control
+has been removed. The separate minimum-size noise filter remains. FEA can
+still select its largest connected component during model preparation without
+changing the reusable tissue segmentation or its material labelmap.
+
+The current toolbox requires `bone-contouring[unet]>=0.3.1`. Update the toolbox
 and the Bone Contouring runtime package through Setup, then restart Slicer.
 
 Standard uses the same topology-first compartment contouring for XCTI and XCTII,
@@ -71,11 +105,16 @@ contours.
 
 ## Batch Workflow
 
-Use `Bone Imaging > I/O > Batch Processor` for cohort contouring. Each row corresponds to one image. Batch contouring writes generated masks under `derivatives/BoneContours/` and records how they were generated in sidecars and manifests.
+Use `Bone Imaging > I/O > Batch Processor` for cohort contouring. Each row corresponds to one image. Batch contouring writes generated masks under `derivatives/BoneContours/` and records how they were generated in sidecars and manifests. Select **Bone Contouring → U-Net (Neeteson et al.)** for published compartment masks. Existing standard and custom batch profiles remain available; batch does not duplicate the scene's method selectors.
 
 ## Profiles
 
-Shipped profiles provide scanner/site defaults. Custom profiles can be exported from the scene UI and reused later.
+Scene scanner/site presets and algorithm choices are independent, avoiding a long
+list of combinations. Saved custom scene profiles retain edited numerical settings
+and automatic site selection. Existing saved profiles still load.
+
+Batch retains its shipped scanner profiles and standard custom profiles. U-Net and
+segmentation-only scene recipes are scene-only; batch U-Net uses its fixed profile.
 
 Common profile families include:
 
@@ -97,7 +136,7 @@ Advanced settings expose the algorithm choices that are normally fixed by a prof
 | Endosteal contour | Inner contour extraction and trabecular/cortical separation behavior. |
 | Mask and material outputs | Generation of full, trabecular, cortical, and FEA material label outputs. |
 
-To reuse edited settings, enter a workflow display name and export a custom profile. Custom profiles are stored outside the shipped package profiles and are discovered by the Batch Processor.
+To reuse edited settings, enter a workflow display name and export a custom profile. Custom profiles are stored outside the shipped package profiles; standard contour recipes are also discovered by the Batch Processor.
 
 ## Output Roles
 
@@ -114,3 +153,9 @@ To reuse edited settings, enter a workflow display name and export a custom prof
 The contouring workflow builds on profile definitions and processing conventions developed with the Galateia Kazakia lab.
 
 Credit Bone Imaging Toolbox and `bone-contouring` for generated masks. Cite study-specific segmentation or contouring definitions required by the analysis protocol or target journal.
+
+For the published U-Net, credit Nathan J. Neeteson, Bryce A. Besler, Danielle E.
+Whittier and Steven K. Boyd, and cite their
+[Scientific Reports paper (2023)](https://doi.org/10.1038/s41598-022-27350-0).
+Their embedding-predicting U-Net is not nnU-Net; its scientific code and weights
+retain GPL-3.0 terms in the core package, independently of the MIT Slicer wrapper.

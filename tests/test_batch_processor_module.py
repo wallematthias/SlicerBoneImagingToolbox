@@ -76,6 +76,59 @@ def _write_complete_unet_case(logic, root, row):
         "model": "radius_tibia_final", "device": "mps"}))
 
 
+def test_unet_is_a_bone_contouring_profile_and_routes_to_published_worker(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    assert any(value == "unet" for _label, value, _registered in logic.profiles_for_tool("bone_contouring"))
+    image = tmp_path / "sub-01_ses-01_voi-radiusleft_xct.AIM"
+    image.write_bytes(b"aim fixture")
+    row = dict(subject="01", session_value="01", voi_value="radiusleft", image_path=str(image), device="cpu")
+    command = logic.command_for_row(tmp_path, tool="bone_contouring", profile="unet", row=row)
+    assert command[:2] == ["-m", "bone_contouring.unet.cli"]
+    assert command[command.index("--device") + 1] == "cpu"
+
+
+def test_batch_unet_profile_selects_existing_pipeline_without_replacing_profile_list(monkeypatch):
+    module = _import_batch_processor_module(monkeypatch)
+    widget = types.SimpleNamespace(toolCombo=types.SimpleNamespace(currentData="bone_contouring"),
+                                   profileCombo=types.SimpleNamespace(currentData="unet"))
+    assert module.BatchProcessorWidget._selected_tool_key(widget) == "deep_learning_segmentation"
+    widget.profileCombo.currentData = "my-custom-profile"
+    assert module.BatchProcessorWidget._selected_tool_key(widget) == "bone_contouring"
+
+
+def test_batch_custom_standard_profiles_remain_available_but_scene_cnn_recipes_are_not_misrun(monkeypatch):
+    module = _import_batch_processor_module(monkeypatch)
+    records = [types.SimpleNamespace(name="My LH", kind="json"),
+               types.SimpleNamespace(name="My scene CNN", kind="json"),
+               types.SimpleNamespace(name="My tissue-only scene", kind="json"),
+               types.SimpleNamespace(name="Legacy tissue-only", kind="json"),
+               types.SimpleNamespace(name="Broken recipe", kind="json"),
+               types.SimpleNamespace(name="Other standard", kind="json")]
+    monkeypatch.setattr(module, "list_profiles", lambda tool: records)
+    def payload(record):
+        if record.name == "Broken recipe":
+            raise ValueError("Invalid JSON")
+        if record.name == "My LH":
+            return {"schema": "bone-contour-recipe-v1",
+                    "methods": {"periosteal_contour": "standard", "endosteal_contour": "standard",
+                                "bone_segmentation": "laplace_hamming"}}
+        if record.name == "Legacy tissue-only":
+            return {"schema": "bone-contour-recipe-v1",
+                    "methods": {"periosteal_contour": "none", "endosteal_contour": "none",
+                                "bone_segmentation": "laplace_hamming"}}
+        return {"contouring_method": {"My scene CNN": "unet", "My tissue-only scene": "none"}.get(record.name, "standard")}
+    monkeypatch.setattr(module, "load_profile_payload", payload, raising=False)
+    widget = types.SimpleNamespace(logic=module.BatchProcessorLogic())
+    profiles = module.BatchProcessorWidget._profiles_for_tool(widget, "bone_contouring")
+    values = [value for _label, value, _registered in profiles]
+    assert "My LH" in values and "unet" in values
+    assert "My scene CNN" not in values
+    assert "My tissue-only scene" not in values and "Broken recipe" not in values
+    assert "Legacy tissue-only" not in values
+    assert "Other standard" in values
+
+
 @pytest.mark.parametrize("publication_fails", [True, False])
 def test_unet_manifest_failure_is_not_reported_done_or_load(monkeypatch, tmp_path, publication_fails):
     module = _import_batch_processor_module(monkeypatch)

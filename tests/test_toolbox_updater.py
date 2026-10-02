@@ -141,7 +141,6 @@ def test_builtin_modules_use_expected_slicer_subcategories() -> None:
         "HRpQCTTools/TimelapsedHRpQCT": "Microstructural Analysis",
         "HRpQCTTools/MotionScoreHRpQCT": "Microstructural Analysis",
         "HRpQCTTools/SegmentationHRpQCT": "Microstructural Analysis",
-        "HRpQCTTools/DeepLearningSegmentationHRpQCT": "Microstructural Analysis",
         "HRpQCTTools/DeriveLabelsHRpQCT": "Microstructural Analysis",
         "HRpQCTTools/BoneMicroarchitecture": "Microstructural Analysis",
         "HRpQCTTools/PlateRodMorphometryHRpQCT": "Microstructural Analysis",
@@ -168,7 +167,6 @@ def test_public_tool_manifest_locks_human_workflow_order() -> None:
         "IOTools/BatchProcessor",
         "HRpQCTTools/MotionScoreHRpQCT",
         "HRpQCTTools/SegmentationHRpQCT",
-        "HRpQCTTools/DeepLearningSegmentationHRpQCT",
         "HRpQCTTools/DeriveLabelsHRpQCT",
         "HRpQCTTools/TimelapsedHRpQCT",
         "HRpQCTTools/MechanoregulationHRpQCT",
@@ -178,7 +176,7 @@ def test_public_tool_manifest_locks_human_workflow_order() -> None:
         "HRpQCTTools/ParOSolFEA",
         "CTTools/SpineSegmentationCT",
     ]
-    assert [module["order"] for module in modules] == [10, 20, 30, 40, 50, 60, 65, 70, 80, 90, 100, 110, 115, 120, 130]
+    assert [module["order"] for module in modules] == [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 115, 120, 130]
 
 
 def test_registry_orders_manifest_modules_by_explicit_order(tmp_path: Path) -> None:

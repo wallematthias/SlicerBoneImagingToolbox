@@ -54,6 +54,15 @@ def test_setup_module_is_registered_with_extension_packaging() -> None:
     assert '"section": "Setup"' in manifest
 
 
+def test_unet_is_a_contouring_backend_not_a_standalone_module() -> None:
+    manifest = json.loads((ROOT / "toolbox_modules.json").read_text())
+    paths = {module["path"] for module in manifest["modules"]}
+    assert "HRpQCTTools/SegmentationHRpQCT" in paths
+    assert "HRpQCTTools/DeepLearningSegmentationHRpQCT" not in paths
+    assert "add_subdirectory(HRpQCTTools/DeepLearningSegmentationHRpQCT)" not in (ROOT / "CMakeLists.txt").read_text()
+    assert not (ROOT / "HRpQCTTools/DeepLearningSegmentationHRpQCT/DeepLearningSegmentationHRpQCT.py").exists()
+
+
 def test_bone_microarchitecture_module_is_registered_with_extension_packaging() -> None:
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     manifest = (ROOT / "toolbox_modules.json").read_text(encoding="utf-8")
@@ -127,10 +136,11 @@ def test_public_bone_imaging_modules_credit_their_actual_authors() -> None:
         module_name = module_dir.name
         source = (module_dir / f"{module_name}.py").read_text(encoding="utf-8")
 
-        if module_name == "DeepLearningSegmentationHRpQCT":
+        if module_name == "SegmentationHRpQCT":
             for author in ("Nathan J. Neeteson", "Bryce A. Besler", "Danielle E. Whittier", "Steven K. Boyd"):
                 assert author in source
-            assert "Matthias Walle" not in source
+            assert "10.1038/s41598-022-27350-0" in source
+            assert "Bonelab/HR-pQCT-Segmentation" in source
         else:
             assert 'parent.contributors = ["Matthias Walle"]' in source, module["path"]
             assert "Author: Matthias Walle" in source, module["path"]

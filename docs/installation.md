@@ -48,6 +48,11 @@ Motion Scoring and Spine Segmentation may also require Slicer's `PyTorch` extens
 
 ## Local Development Check
 
+Setup may use sibling editable checkouts for Python-only development packages.
+Wheel-only compiled requirements, including Plate/Rod Morphometry, always use
+the configured binary install command even when a sibling checkout exists. This
+avoids triggering a local compiler build during normal Slicer package updates.
+
 For a quick local wrapper check:
 
 ```bash

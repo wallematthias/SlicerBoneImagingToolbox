@@ -165,7 +165,7 @@ def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["bone-contouring"].display_name == "Bone Contouring"
     assert specs["bone-contouring"].import_name == "bone_contouring"
-    assert specs["bone-contouring"].minimum_version == "0.3.0"
+    assert specs["bone-contouring"].minimum_version == "0.3.1"
     assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 
@@ -211,14 +211,20 @@ def test_voidspace_runtime_package_has_user_facing_setup_name() -> None:
     assert "analysis-domain masks" in spec.notes
 
 
-def test_plate_rod_install_commands_do_not_emit_empty_dependency_install() -> None:
+def test_plate_rod_install_commands_honor_wheel_only_with_sibling_checkout(monkeypatch, tmp_path) -> None:
+    from SlicerBoneImagingToolboxLib import package_status
+    monkeypatch.setattr(package_status, "resolve_local_editable_repo", lambda *args: tmp_path)
     specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
     commands = install_commands(specs["plate-rod-thinning"], installed=False)
 
-    assert len(commands) == 1
-    assert commands[0].startswith("--no-deps -e ")
-    assert commands[0].endswith("/bone-plate-rod-thinning")
-    assert "--prefer-binary" not in commands[0]
+    assert commands == (install_command(specs["plate-rod-thinning"], installed=False),)
+    assert "--only-binary :all:" in commands[0]
+    assert " -e " not in commands[0]
+
+
+def test_microarchitecture_minimum_includes_canonical_contour_discovery() -> None:
+    spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "bone-microarchitecture")
+    assert spec.minimum_version == "0.2.4"
 
 
 def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:

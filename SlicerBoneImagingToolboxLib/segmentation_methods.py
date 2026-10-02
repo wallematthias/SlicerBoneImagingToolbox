@@ -37,7 +37,6 @@ BONE_SEGMENTATION_METHODS = {
             "adaptive_high_threshold",
             "adaptive_block_size",
             "min_size_voxels",
-            "keep_largest_component",
         ),
     ),
     "none": MethodDescriptor(label="None"),

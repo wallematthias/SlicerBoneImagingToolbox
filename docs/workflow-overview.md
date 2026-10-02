@@ -17,7 +17,7 @@ raw scans
 | --- | --- | --- |
 | 1 | Dataset Naming Helper | normalized `sub-* / ses-* / xct/` dataset |
 | 2 | Scanco I/O | loaded AIM/ISQ/SCV/GOBJ nodes when working in scene mode |
-| 3 | Contouring or Deep Learning Segmentation | Contouring: tissue segmentation, ROIs and material labels; U-Net: full/trab/cort compartments only |
+| 3 | Contouring (standard or published U-Net) | full/trab/cort compartments, optional independent tissue SEG; standard batch also generates material labels |
 | 4 | Timelapsed Remodelling | transforms, common region, remodelling maps |
 | 5 | Microarchitecture | thickness, spacing, BMD, volume, and porosity measurements |
 | 6 | Voidspace | all-void, large-void, and longitudinal void change maps |
@@ -40,7 +40,7 @@ Batch Processor rows should report missing prerequisites before a job is launche
 
 The toolbox is designed so downstream tools reuse upstream derivatives:
 
-- Timelapsed Remodelling can consume `ImportedContours`, `BoneContours`, or scene-loaded masks prepared by Contouring or Deep Learning Segmentation.
+- Timelapsed Remodelling can consume `ImportedContours`, `BoneContours`, or scene-loaded masks prepared by either Contouring backend.
 - Microarchitecture and Plate/Rod Morphometry can reuse native maps and apply common regions only during measurement.
 - Voidspace consumes existing segmentations and masks. Registered voidspace uses native segmentations with Timelapsed native common regions; dynamic voidspace uses Timelapsed registered segmentations for voxelwise pair comparison. Voidspace does not create registrations.
 - Mechanoregulation consumes Timelapsed remodelling maps and ParOsol-FEA SED fields.

@@ -1,8 +1,65 @@
 from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import SimpleITK as sitk
+import bone_contouring
+
+from test_standard_contour_defaults import adapter_namespace
 
 
 MODULE = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "SegmentationHRpQCT" / "SegmentationHRpQCT.py"
 PIPELINE_MODULE = Path(__file__).resolve().parents[1] / "HRpQCTTools" / "TimelapsedHRpQCT" / "TimelapsedHRpQCT.py"
+
+
+def _run_real_adapter(*, outer="standard", inner="none", segmentation="seg_gauss", aligned=False):
+    """Run real scientific logic, stopping before the first MRML scene mutation."""
+    y, x = np.ogrid[:81, :81]
+    radius = (x - 40) ** 2 + (y - 40) ** 2
+    plane = np.where(radius < 25 ** 2, 340, 0).astype(np.float32)
+    plane[(radius >= 25 ** 2) & (radius < 30 ** 2)] = 900
+    image = sitk.GetImageFromArray(np.broadcast_to(plane, (9, 81, 81)).copy())
+    image.SetSpacing((.0607,) * 3)
+    native = image * 30
+    captured = []
+
+    class SceneBoundary(Exception):
+        pass
+
+    def stop_before_scene(*args, **kwargs):
+        captured.append(kwargs["generated"])
+        raise SceneBoundary
+
+    def empty(reference):
+        result = sitk.Image(reference.GetSize(), sitk.sitkUInt8)
+        result.CopyInformation(reference)
+        return result
+
+    logic = SimpleNamespace(
+        _import_bone_contouring=lambda: bone_contouring,
+        _empty_mask_like=empty,
+        _mask_voxel_count=lambda mask: int(np.count_nonzero(sitk.GetArrayViewFromImage(mask))),
+        _volume_source_aim_path=lambda node: None,
+        _laplace_hamming_support_image=lambda node, density: (
+            native, {"segmentation_input_unit": "scanco_native_int16"}),
+        _write_scene_debug_artifacts=stop_before_scene,
+    )
+    namespace = adapter_namespace()
+    namespace.update(sitk=sitk, Path=Path)
+    with pytest.raises(SceneBoundary):
+        namespace["_generate_bone_masks_with_bone_contouring"](
+            logic, SimpleNamespace(GetName=lambda: "fixture"), image, site="radius",
+            segmentation_method=segmentation, periosteal_contour_method=outer,
+            endosteal_contour_method=inner, debug_output_dir="unused",
+            params={"modality": "xct2", "segmentation": {
+                "gaussian_sigma": 0, "trab_threshold": 320, "cort_threshold": 1000,
+                "min_size_voxels": 0, "use_segmentation_aligned_contour_support": aligned,
+                "laplace_hamming_low_pass_cutoff": 1, "laplace_hamming_epsilon": 0,
+                "laplace_hamming_amplitude": 0, "laplace_hamming_ipl_float_max": 32767,
+                "laplace_hamming_int16_max": 32767, "laplace_hamming_min_size_voxels": 0,
+            }})
+    return captured[0], image
 
 
 def test_segmentation_module_exposes_geodesic_method_for_local_testing():
@@ -34,50 +91,31 @@ def test_segmentation_module_exposes_geodesic_method_for_local_testing():
 def test_segmentation_module_splits_segmentation_and_contour_choices():
     source = MODULE.read_text()
 
-    assert "segmentation_form.addRow(\"Method\", self.segmentationMethodCombo)" in source
-    assert "periosteal_form.addRow(\"Method\", self.periostealContourCombo)" in source
-    assert "endosteal_form.addRow(\"Method\", self.endostealContourCombo)" in source
     assert "SEGMENTATION_METHODS = set(BONE_SEGMENTATION_METHODS)" in source
     assert "PERIOSTEAL_CONTOUR_METHOD_IDS = set(PERIOSTEAL_CONTOUR_METHODS)" in source
     assert "ENDOSTEAL_CONTOUR_METHOD_IDS = set(ENDOSTEAL_CONTOUR_METHODS)" in source
     assert "segmentation_method=segmentation_method" in source
     assert "periosteal_contour_method=periosteal_method" in source
     assert "endosteal_contour_method=endosteal_method" in source
-    assert "generated.metadata[\"periosteal_contour_method\"] = requested_periosteal_contour_method" in source
-    assert "generated.metadata[\"endosteal_contour_method\"] = requested_endosteal_contour_method" in source
-    assert "generated.metadata[\"internal_periosteal_contour_method\"] = periosteal_contour_method" in source
-    assert "generated.metadata[\"internal_endosteal_contour_method\"] = endosteal_contour_method" in source
-    assert "from dataclasses import asdict" in source
-    assert "outer_options = asdict(contour_params.outer)" in source
-    assert "inner_options = asdict(contour_params.inner)" in source
-    assert "options=outer_options" in source
-    assert "options=inner_options" in source
+    generated, _ = _run_real_adapter()
+    assert generated.metadata["periosteal_contour_method"] == "standard"
+    assert generated.metadata["endosteal_contour_method"] == "none"
     assert "form.addRow(\"Segmentation method\", self.methodCombo)" not in source
 
 
 def test_segmentation_module_skips_compartments_without_endosteal_split():
-    source = MODULE.read_text()
-
-    assert "compartment_split_requested = endosteal_contour_method == \"standard\"" in source
-    assert "compartment_split_generated = compartment_split_requested" in source
-    assert "generated.metadata[\"compartment_split_generated\"]" in source
-    assert "generated.metadata[\"compartment_split_reason\"] = \"endosteal_contour_method_none\"" in source
-    assert "generated.trab = numpy_xyz_to_sitk_binary(empty_xyz, image)" in source
-    assert "generated.cort = numpy_xyz_to_sitk_binary(empty_xyz, image)" in source
-    assert "output_specs = [spec for spec in output_specs if spec[0] in {\"full\", \"seg\"}]" in source
-    assert "generated.metadata[\"emitted_roles\"]" in source
-    assert "cort_xyz = _ensure_bool(full_xyz)" not in source
+    generated, _ = _run_real_adapter()
+    assert not generated.metadata["compartment_split_generated"]
+    assert generated.metadata["compartment_split_reason"] == "endosteal_contour_method_none"
+    assert generated.metadata["voxel_counts"]["full"] > 0
+    assert generated.metadata["voxel_counts"]["trab"] == generated.metadata["voxel_counts"]["cort"] == 0
 
 
 def test_segmentation_module_does_not_emit_full_mask_without_outer_contour():
-    source = MODULE.read_text()
-
-    assert "periosteal_contour_generated = periosteal_contour_method != \"none\"" in source
-    assert "full_xyz = np.ones_like(image_xyz, dtype=bool)" in source
-    assert "generated.metadata[\"periosteal_contour_generated\"]" in source
-    assert "generated.metadata[\"periosteal_contour_reason\"] = \"periosteal_contour_method_none\"" in source
-    assert "output_specs = [spec for spec in output_specs if spec[0] != \"full\"]" in source
-    assert "generated.metadata[\"voxel_counts\"][\"full\"] = 0" in source
+    generated, _ = _run_real_adapter(outer="none")
+    assert not generated.metadata["periosteal_contour_generated"]
+    assert generated.metadata["voxel_counts"]["seg"] > 0
+    assert all(generated.metadata["voxel_counts"][role] == 0 for role in ("full", "trab", "cort"))
 
 
 def test_segmentation_module_defaults_to_segmentation_node_only():
@@ -102,29 +140,22 @@ def test_segmentation_module_defaults_to_segmentation_node_only():
 
 
 def test_gaussian_segmentation_without_compartments_uses_global_trab_threshold():
-    source = MODULE.read_text()
-
-    assert "global_threshold_without_compartments = (" in source
-    assert "segmentation_method == \"seg_gauss\"" in source
-    assert "not compartment_split_requested" in source
-    assert "seg_xyz = (segmentation_image_xyz >= trab_threshold) & full_xyz" in source
-    assert "generated.metadata[\"segmentation_warning\"]" in source
-    assert "No cortical mask was provided; Gaussian segmentation used the trabecular threshold" in source
-    assert "segmentation_threshold_applied_global" in source
-    assert "warning_text = f\" Warning: {metadata.get('segmentation_warning')}\"" in source
+    generated, image = _run_real_adapter()
+    expected = (sitk.GetArrayFromImage(image) >= 320) & (sitk.GetArrayFromImage(generated.full) > 0)
+    assert expected.any()
+    np.testing.assert_array_equal(sitk.GetArrayFromImage(generated.seg) > 0, expected)
+    assert generated.metadata["segmentation_threshold_applied_global"] == 320
+    assert "No cortical mask" in generated.metadata["segmentation_warning"]
 
 
-def test_laplace_hamming_segmentation_support_override_is_opt_in():
-    source = MODULE.read_text()
-
-    assert "use_aligned_support = bool(segmentation_support_params.use_segmentation_aligned_contour_support)" in source
-    assert "contour_support_source = (" in source
-    assert "if use_aligned_support and segmentation_image is not None" in source
-    assert "lh_support_xyz = _contour_support_binarization_xyz(" in source
-    assert "full_mask_xyz=full_xyz" in source
-    assert "seg_xyz = _ensure_bool(lh_support_xyz) & full_xyz" in source
-    assert "generated.seg = numpy_xyz_to_sitk_binary(seg_xyz, image)" in source
-    assert "Laplace-Hamming produced an empty bone segmentation" in source
+@pytest.mark.parametrize("aligned", [False, True])
+def test_laplace_hamming_passes_native_input_and_preserves_support_setting(aligned):
+    generated, _ = _run_real_adapter(segmentation="laplace_hamming", aligned=aligned)
+    assert generated.metadata["segmentation_input_unit"] == "scanco_native_int16"
+    assert generated.metadata["segmentation_aligned_contour_support"] == aligned
+    assert generated.metadata["voxel_counts"]["seg"] > 0
+    assert not np.any((sitk.GetArrayFromImage(generated.seg) > 0) &
+                      (sitk.GetArrayFromImage(generated.full) == 0))
 
 
 def test_laplace_hamming_uses_core_native_scanco_input_convention():

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 
-import ctk
 import numpy as np
 import qt
 import SimpleITK as sitk
@@ -15,7 +15,7 @@ import sitkUtils
 import slicer
 import vtk
 
-_TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
+_TOOLBOX_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_TOOLBOX_ROOT))
 import SlicerBoneImagingToolboxLib as _toolbox_lib
 _LOCAL_LIB = _TOOLBOX_ROOT/"SlicerBoneImagingToolboxLib"
@@ -27,10 +27,9 @@ from SlicerBoneImagingToolboxLib.deep_learning_segmentation_scene import (
     scene_worker_args,
 )
 from slicer.ScriptedLoadableModule import (
-    ScriptedLoadableModule, ScriptedLoadableModuleWidget, ScriptedLoadableModuleLogic, ScriptedLoadableModuleTest,
+    ScriptedLoadableModuleLogic,
 )
 
-MODULE_VERSION = "0.1.0"
 INPUT_REFERENCE = "DeepLearningSegmentationHRpQCT.InputVolume"
 SEGMENTS = {"full": ("Full mask", (.2,.8,.25)), "trab": ("Trabecular mask", (0,.75,1)),
             "cort": ("Cortical mask", (1,.55,.1))}
@@ -59,40 +58,6 @@ def slicer_python():
     return shutil.which("PythonSlicer") or sys.executable
 
 
-class DeepLearningSegmentationHRpQCT(ScriptedLoadableModule):
-    def __init__(self, parent):
-        super().__init__(parent)
-        parent.title = "Deep Learning Segmentation"
-        parent.categories = ["Bone Imaging.Microstructural Analysis"]
-        parent.index = 65
-        parent.dependencies = ["ScancoIO"]
-        parent.contributors = [
-            "Nathan J. Neeteson (published method)",
-            "Bryce A. Besler (published method)",
-            "Danielle E. Whittier (published method)",
-            "Steven K. Boyd (published method)",
-        ]
-        parent.helpText = (
-            "Published radius/tibia U-Net with fixed defaults. Input must be calibrated BMD. "
-            "Headless batch uses the same core.<br><br>"
-            "The segmentation method and published trained model are from Nathan J. Neeteson, "
-            "Bryce A. Besler, Danielle E. Whittier and Steven K. Boyd, "
-            "Bone Imaging Laboratory, University of Calgary. "
-            "Please cite the original paper when using this method."
-        )
-        parent.acknowledgementText = (
-            "Neeteson NJ, Besler BA, Whittier DE, Boyd SK. Automatic segmentation of trabecular "
-            "and cortical compartments in HR-pQCT images using an embedding-predicting U-Net "
-            "and morphological post-processing. Scientific Reports. 2023;13:252. "
-            '<a href="https://doi.org/10.1038/s41598-022-27350-0">Original paper</a>.<br>'
-            'Original code: <a href="https://github.com/Bonelab/HR-pQCT-Segmentation">'
-            "Bonelab/HR-pQCT-Segmentation</a>. "
-            'Published weights: <a href="https://doi.org/10.5281/zenodo.14755838">Zenodo</a>. '
-            "Scientific code and published weights retain their upstream GPL-3.0 license "
-            "in the bone-contouring U-Net backend."
-        )
-
-
 class DeepLearningSegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
         super().__init__()
@@ -114,7 +79,8 @@ class DeepLearningSegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         self._workspace = None
         self.context = None
 
-    def run_segmentation(self, reference, device="auto", *, on_output=None, on_finished=None):
+    def run_segmentation(self, reference, device="auto", *, on_output=None, on_finished=None,
+                         tissue_image=None, segmentation=None):
         if self.is_running():
             raise RuntimeError("A segmentation is already running.")
         geometry = reference_geometry(reference)
@@ -125,9 +91,25 @@ class DeepLearningSegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         directory = Path(self._workspace.name)
         snapshot, output = directory/"density.npz", directory/"masks.npz"
         try:
-            np.savez(snapshot, density=np.array(slicer.util.arrayFromVolume(reference), copy=True))
+            contents = {"density": np.array(slicer.util.arrayFromVolume(reference), copy=True)}
+            if segmentation is not None:
+                if tissue_image is None or tissue_image.GetSize() != tuple(geometry[0]):
+                    raise ValueError("Bone-tissue SEG input must match the selected volume.")
+                contents.update(tissue_image=sitk.GetArrayFromImage(tissue_image),
+                                spacing=np.array(tissue_image.GetSpacing()),
+                                segmentation=json.dumps(segmentation))
+            np.savez(snapshot, **contents)
             self.context = dict(reference=reference, geometry=geometry, digest=voxel_digest(reference), output=output)
             command = build_scene_command(slicer_python(), snapshot, output, device)
+            if segmentation is not None:
+                # The headless adapter calls core algorithms; no inference occurs on the UI thread.
+                from .deep_learning_segmentation_scene import SceneCommand
+                local = local_core_source(_TOOLBOX_ROOT)
+                paths = [str(_TOOLBOX_ROOT)] + ([str(local)] if local else [])
+                bootstrap = (f"import sys; sys.path[:0] = {paths!r}; "
+                             "from SlicerBoneImagingToolboxLib.unet_contouring_worker import main; "
+                             "raise SystemExit(main())")
+                command = SceneCommand(command.program, ["-c", bootstrap, *command.args[2:]], command.cwd)
             self._start(command, on_output, on_finished)
         except Exception:
             self._cleanup_workspace()
@@ -217,6 +199,7 @@ class DeepLearningSegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         image = sitkUtils.PullVolumeFromSlicer(reference)
         with np.load(output, allow_pickle=False) as data:
             arrays = {role: data[role] for role in SEGMENTS}
+            tissue = np.array(data["seg"], copy=True) if "seg" in data else None
         images = []
         for role in ("cort", "trab"):
             mask = sitk.GetImageFromArray(arrays[role])
@@ -227,15 +210,24 @@ class DeepLearningSegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         masks = validate_deep_learning_compartments(*images, image)
         if not np.array_equal(arrays["full"], sitk.GetArrayFromImage(masks["full"])):
             raise ValueError("Full mask does not equal the cortical/trabecular union.")
+        if tissue is not None:
+            if (tissue.shape != arrays["full"].shape or not np.isin(tissue, [0, 1]).all()
+                    or np.any((tissue != 0) & (arrays["full"] == 0))):
+                raise ValueError("Bone-tissue SEG must be binary, match the scan and stay inside full.")
+            masks["seg"] = sitk.GetImageFromArray(tissue.astype(np.uint8))
+            masks["seg"].CopyInformation(image)
         existing = next((node for node in slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
                          if node.GetNodeReferenceID(INPUT_REFERENCE) == reference.GetID()), None)
         if existing is not None and existing.GetParentTransformNode() is not None:
             raise ValueError("The previous U-Net result has a parent transform. Remove/harden that transform or remove the result before regenerating.")
-        node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", f"{reference.GetName()}_UNet_compartments")
+        node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", f"{reference.GetName()}_HRpQCT_segmentation")
         try:
             node.CreateDefaultDisplayNodes()
             node.SetReferenceImageGeometryParameterFromVolumeNode(reference)
-            for role, (name,color) in SEGMENTS.items():
+            segments = dict(SEGMENTS)
+            if tissue is not None:
+                segments["seg"] = ("Bone segmentation", (1, 1, 0))
+            for role, (name,color) in segments.items():
                 segment_id = node.GetSegmentation().AddEmptySegment(name,name,color)
                 node.GetSegmentation().GetSegment(segment_id).SetTag("HRpQCT.Role", role)
                 slicer.util.updateSegmentBinaryLabelmapFromArray(sitk.GetArrayFromImage(masks[role]), node, segment_id, reference)
@@ -244,7 +236,7 @@ class DeepLearningSegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
                 slicer.mrmlScene.RemoveNode(node)
                 node = existing
             node.SetNodeReferenceID(INPUT_REFERENCE, reference.GetID())
-            node.SetAttribute("BoneImaging.MaskRoles", "full,trab,cort")
+            node.SetAttribute("BoneImaging.MaskRoles", ",".join(segments))
             node.SetAttribute("DeepLearningSegmentationHRpQCT.Model", DEFAULT_MODEL_LABEL)
             node.SetAttribute("DeepLearningSegmentationHRpQCT.Method", "Published UNet defaults; frozen scene BMD voxels; full=trab|cort; no extra toolbox peel")
             display = node.GetDisplayNode()
@@ -257,88 +249,3 @@ class DeepLearningSegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             if node is not existing:
                 slicer.mrmlScene.RemoveNode(node)
             raise
-
-
-class DeepLearningSegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
-    def setup(self):
-        super().setup()
-        self.logic = DeepLearningSegmentationHRpQCTLogic()
-        self._closed = False
-        box = ctk.ctkCollapsibleButton()
-        box.text = "Scene Segmentation"
-        self.layout.addWidget(box)
-        form = qt.QFormLayout(box)
-        self.inputVolumeSelector = slicer.qMRMLNodeComboBox()
-        self.inputVolumeSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
-        self.inputVolumeSelector.addEnabled = self.inputVolumeSelector.removeEnabled = False
-        self.inputVolumeSelector.noneEnabled = True
-        self.inputVolumeSelector.setMRMLScene(slicer.mrmlScene)
-        form.addRow("BMD volume", self.inputVolumeSelector)
-        self.deviceCombo = qt.QComboBox()
-        for label,value in (("Automatic","auto"),("CPU","cpu"),("CUDA","cuda"),("Apple MPS","mps")):
-            self.deviceCombo.addItem(label,value)
-        form.addRow("Device", self.deviceCombo)
-        buttons = qt.QHBoxLayout()
-        self.runButton, self.cancelButton = qt.QPushButton("Generate"), qt.QPushButton("Cancel")
-        self.cancelButton.enabled = False
-        buttons.addWidget(self.runButton)
-        buttons.addWidget(self.cancelButton)
-        form.addRow(buttons)
-        self.statusLabel = qt.QLabel("Published 61 µm radius/tibia weights. XCT-I and knee use are unvalidated. Returns compartments, not a bone-tissue SEG.")
-        self.statusLabel.wordWrap = True
-        self.layout.addWidget(self.statusLabel)
-        self.outputText = qt.QPlainTextEdit()
-        self.outputText.readOnly = True
-        self.outputText.maximumBlockCount = 1000
-        self.layout.addWidget(self.outputText)
-        self.layout.addStretch(1)
-        self.runButton.clicked.connect(self._on_run)
-        self.cancelButton.clicked.connect(self._on_cancel)
-
-    def cleanup(self):
-        self._closed = True
-        self.logic.detach_callbacks()
-        self.logic.interrupt()
-
-    def _append_output(self, text):
-        if not self._closed:
-            self.outputText.appendPlainText(str(text).rstrip())
-
-    def _on_run(self):
-        try:
-            value = self.deviceCombo.currentData
-            device = str(value() if callable(value) else value)
-            self.runButton.enabled, self.cancelButton.enabled = False, True
-            self.outputText.clear()
-            self.statusLabel.text = "Running published U-Net defaults..."
-            self.logic.run_segmentation(self.inputVolumeSelector.currentNode(), device,
-                                        on_output=self._append_output, on_finished=self._on_finished)
-        except Exception as exc:
-            self.runButton.enabled, self.cancelButton.enabled = True, False
-            self.statusLabel.text = f"Could not start: {exc}"
-
-    def _on_cancel(self):
-        if self.logic.interrupt():
-            self.statusLabel.text = "Cancelling..."
-
-    def _on_finished(self, code, status, cancelled=False):
-        if self._closed:
-            return
-        self.runButton.enabled, self.cancelButton.enabled = True, False
-        if cancelled:
-            self.statusLabel.text = "Cancelled."
-        elif code != 0 or status != qt.QProcess.NormalExit:
-            self.statusLabel.text = "Inference failed. See the output log; install/update the core through Toolbox Setup."
-        else:
-            try:
-                context = self.logic.context
-                node = self.logic.import_outputs(context["reference"], context["output"],
-                    expected_geometry=context["geometry"], expected_digest=context["digest"])
-                self.statusLabel.text = f"Loaded {node.GetName()}: full, trabecular and cortical compartments."
-            except Exception as exc:
-                self.statusLabel.text = f"Output validation/import failed: {exc}"
-
-
-class DeepLearningSegmentationHRpQCTTest(ScriptedLoadableModuleTest):
-    def runTest(self):
-        self.assertFalse(DeepLearningSegmentationHRpQCTLogic().is_running())

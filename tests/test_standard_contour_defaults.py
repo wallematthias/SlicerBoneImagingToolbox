@@ -71,7 +71,7 @@ def test_adapter_passes_new_kernel_and_physical_smoothing_and_keeps_overrides(
     with pytest.raises(StopAtGeneration):
         call(logic, None, None, site=site, segmentation_method='seg_gauss',
              periosteal_contour_method='standard', endosteal_contour_method='standard',
-             params={'modality': modality, 'segmentation': {'cort_threshold': 470},
+             params={'modality': modality, 'segmentation': {'cort_threshold': 470, 'keep_largest_component': True},
                      'inner': {} if peel is None else {'peel': peel},
                      'stable_3d': {'inner_sigma_mm': [0.03, 0.03, 0.04]}})
     p = captured[0]
@@ -82,6 +82,9 @@ def test_adapter_passes_new_kernel_and_physical_smoothing_and_keeps_overrides(
     assert tuple(p.stable_3d.inner_sigma_mm) == (.03, .03, .04)
     assert p.stable_3d.outer_sigma_mm == (.03, .03, .06)
     assert p.segmentation.cort_threshold == 470
+    assert p.segmentation.gaussian_sigma == 1.2
+    assert p.segmentation.trab_threshold == 320
+    assert not p.segmentation.keep_largest_component
 
 
 @pytest.mark.parametrize('outer,inner', [('standard', 'standard'), ('none', 'none')])
@@ -89,10 +92,12 @@ def test_recipe_roundtrip_preserves_physical_settings_and_supports_no_contours(o
     ns = adapter_namespace()
     class Widget:
         logic = SimpleNamespace(_import_bone_contouring=lambda: bone_contouring)
-        modalityCombo = SimpleNamespace(currentData='xct2')
+        _scannerPreset = 'xct2'
         siteCombo = SimpleNamespace(currentData='radius')
         periostealContourCombo = SimpleNamespace(currentData=outer)
         endostealContourCombo = SimpleNamespace(currentData=inner)
+        def _effective_modality(self):
+            return 'xct2'
         def __getattr__(self, key):
             return SimpleNamespace(value=1, checked=True, currentData='cpu')
     widget = Widget()
@@ -109,13 +114,15 @@ def test_recipe_roundtrip_preserves_physical_settings_and_supports_no_contours(o
 def test_auto_recipe_collection_and_effective_site(detected, method, modality):
     ns = adapter_namespace()
     class Widget:
-        modalityCombo = SimpleNamespace(currentData=modality)
+        _scannerPreset = modality
         siteCombo = SimpleNamespace(currentData='auto')
         periostealContourCombo = SimpleNamespace(currentData=method)
         endostealContourCombo = SimpleNamespace(currentData=method)
         logic = SimpleNamespace(_import_bone_contouring=lambda: bone_contouring)
         volumeSelector = SimpleNamespace(currentNode=lambda: None)
         _contourRegularizationParams = {}
+        def _effective_modality(self):
+            return modality
         def _selected_site(self, **kwargs):
             return detected
         def _effective_contour_site(self):
@@ -143,7 +150,8 @@ def test_switching_to_standard_initializes_only_the_changed_stage(modality, site
     widget = SimpleNamespace(
         _lastContourMethods=('none', 'standard'),
         _suppressMethodCustomSwitch=False,
-        modalityCombo=SimpleNamespace(currentData=modality),
+        _scannerPreset=modality,
+        _effective_modality=lambda: modality,
         periostealContourCombo=SimpleNamespace(currentData='standard'),
         endostealContourCombo=SimpleNamespace(currentData='standard'),
         _effective_contour_site=lambda: site,

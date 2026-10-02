@@ -55,6 +55,7 @@ try:
         discover_raw_xct_images,
         manifest_path,
         list_profiles,
+        load_profile_payload,
         preferred_contours,
         prerequisite_status,
         read_manifest,
@@ -77,6 +78,7 @@ except Exception as exc:
     discover_raw_xct_images = _missing_derivatives_runtime
     manifest_path = _missing_derivatives_runtime
     list_profiles = _missing_derivatives_runtime
+    load_profile_payload = _missing_derivatives_runtime
     preferred_contours = _missing_derivatives_runtime
     prerequisite_status = _missing_derivatives_runtime
     read_manifest = _missing_derivatives_runtime
@@ -124,6 +126,7 @@ TOOL_PROFILES = {
         ("XtremeCT II", "XtremeCTII", False),
         ("XtremeCT II - Geodesic", "XtremeCTII-Geodesic", False),
         ("XtremeCT II - LH", "XtremeCTII-LH", False),
+        ("U-Net (Neeteson et al.)", "unet", False),
     ),
     "mask_label_algebra": (
         ("Standard", "standard", False),
@@ -647,6 +650,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if root.name == "derivatives":
             root = root.parent
         tool = str(tool or "")
+        if tool == "bone_contouring" and str(profile) == "unet":
+            tool = "deep_learning_segmentation"
         registered = self.profile_requests_registration(tool, profile) or bool(registered and tool in {"microarchitecture", "plate_rod", "timelapse", "voidspace"})
         if tool == "fea":
             ok, message = self.normalized_dataset_status(root)
@@ -1806,6 +1811,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     def command_for_row(self, dataset_root, *, tool: str, profile: str, row: dict, force: bool = False) -> list[str]:
         """Return a core-package CLI command for one batch row."""
         tool_key = str(tool)
+        if tool_key == "bone_contouring" and str(profile) == "unet":
+            tool_key = "deep_learning_segmentation"
         if tool_key == "deep_learning_segmentation":
             root = self._dataset_root(dataset_root).resolve()
             image = Path(str(row.get("image_path") or "")).resolve()
@@ -2542,7 +2549,6 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.toolCombo = qt.QComboBox()
         for label, value in (
             ("Bone Contouring", "bone_contouring"),
-            ("U-Net Bone Contours", "deep_learning_segmentation"),
             ("Mask And Label Algebra", "mask_label_algebra"),
             ("Microarchitecture", "microarchitecture"),
             ("Timelapsed Remodelling", "timelapse"),
@@ -2693,6 +2699,15 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             try:
                 existing = {str(value) for _label, value, _registered in profiles}
                 for record in list_profiles("bone-contouring"):
+                    if str(getattr(record, "kind", "")).lower() == "json":
+                        try:
+                            payload = load_profile_payload(record)
+                        except Exception:
+                            continue
+                        methods = payload.get("methods") or {}
+                        contouring_method = payload.get("contouring_method") or methods.get("periosteal_contour", "standard")
+                        if contouring_method in {"unet", "none"}:
+                            continue  # Scene-only recipes; the batch U-Net profile uses fixed defaults.
                     if record.name not in existing:
                         profiles.append((record.name, record.name, False))
             except Exception:
@@ -2718,7 +2733,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
     def _populate_profile_combo(self):
         if not hasattr(self, "profileCombo"):
             return
-        tool = self._selected_tool_key()
+        tool = str(getattr(self.toolCombo, "currentData", "") or "")
         previous = self.profileCombo.blockSignals(True)
         try:
             self.profileCombo.clear()
@@ -2729,7 +2744,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._update_profile_hint()
 
     def _is_selected_profile_shipped(self):
-        tool = self._selected_tool_key()
+        tool = str(getattr(self.toolCombo, "currentData", "") or "")
         profile = str(self.profileCombo.currentData or "")
         return any(str(value) == profile for _label, value, _registered in self.logic.profiles_for_tool(tool))
 
@@ -2746,10 +2761,10 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
 
     def _on_tool_changed(self, *args):
         del args
+        self._populate_profile_combo()
         if hasattr(self, "unetDeviceCombo"):
             visible = self._selected_tool_key() == "deep_learning_segmentation"
             self.unetDeviceCombo.visible = self.unetDeviceLabel.visible = visible
-        self._populate_profile_combo()
         self._update_profile_hint()
         if self._has_active_batch():
             self._append_log("[batch] Tool/profile change will not affect already queued jobs.")
@@ -2759,6 +2774,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
 
     def _on_profile_changed(self, *args):
         del args
+        if hasattr(self, "unetDeviceCombo"):
+            visible = self._selected_tool_key() == "deep_learning_segmentation"
+            self.unetDeviceCombo.visible = self.unetDeviceLabel.visible = visible
         self._update_profile_hint()
         if self._has_active_batch():
             self._append_log("[batch] Tool/profile change will not affect already queued jobs.")
@@ -2780,7 +2798,9 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             self._analyze_dataset()
 
     def _selected_tool_key(self):
-        return str(getattr(self.toolCombo, "currentData", "") or "")
+        tool = str(getattr(self.toolCombo, "currentData", "") or "")
+        profile = str(getattr(getattr(self, "profileCombo", None), "currentData", "") or "")
+        return "deep_learning_segmentation" if tool == "bone_contouring" and profile == "unet" else tool
 
     def _selected_backend_key(self):
         return str(getattr(self.backendCombo, "currentData", "") or "local")
@@ -5307,7 +5327,7 @@ print(str(csv_path))
             pass
 
     def _load_deep_learning_outputs(self, row, output_paths):
-        from DeepLearningSegmentationHRpQCT import DeepLearningSegmentationHRpQCTLogic
+        from SlicerBoneImagingToolboxLib.deep_learning_contouring import DeepLearningSegmentationHRpQCTLogic
         from ScancoIOLib import aim_io
         import sitkUtils
         reference = self._ensure_loaded_source_volume(row.get("image_path"), require_source_path=True)

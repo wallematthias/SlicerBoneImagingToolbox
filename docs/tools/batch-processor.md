@@ -23,6 +23,13 @@ If the dataset is not yet normalized, run the Dataset Naming Helper first. The B
 
 Each tool-specific profile defines the command, required inputs, and expected outputs for the selected tool. Shipped profiles provide scanner or workflow defaults. Some tools also discover user-exported custom profiles.
 
+For published CNN compartments, select **Bone Contouring → U-Net (Neeteson et al.)**
+and a device. Standard/custom contour profiles remain in the same list, with
+automatic per-row site detection. U-Net uses fixed published defaults and writes
+full/trab/cort masks; run a standard profile afterwards to add missing tissue SEG
+without replacing those compartments. Scene-only U-Net and tissue-only recipes
+are not offered as standard batch profiles.
+
 ## Required Inputs By Tool
 
 | Tool | Typical required inputs | Typical outputs |
