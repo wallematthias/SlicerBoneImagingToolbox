@@ -52,8 +52,8 @@ def test_standard_peel_defaults_to_three_for_every_profile(modality, site):
 @pytest.mark.parametrize('peel', [None, 0, 5])
 @pytest.mark.parametrize('modality,site,outer_threshold,inner_threshold,kernel', [
     ('xct2', 'radius', 320, 380, (31, 31, 1)),
-    ('xct1', 'radius', 300, 500, (10, 10, 1)),
-    ('xct1', 'tibia', 300, 500, (10, 10, 1)),
+    ('xct1', 'radius', 250, 500, (10, 10, 1)),
+    ('xct1', 'tibia', 250, 500, (10, 10, 1)),
     ('xct1', 'knee', 150, 250, (10, 10, 1)),
     ('xct2', 'knee', 150, 250, (10, 10, 1)),
 ])
@@ -140,7 +140,7 @@ def test_auto_recipe_collection_and_effective_site(detected, method, modality):
 
 @pytest.mark.parametrize('modality,site,threshold,sigma', [
     ('xct2', 'radius', 320, .8), ('xct2', 'tibia', 320, .8),
-    ('xct1', 'radius', 300, 1.5), ('xct1', 'tibia', 300, 1.5),
+    ('xct1', 'radius', 250, 1.5), ('xct1', 'tibia', 250, 1.5),
     ('xct1', 'knee', 150, 1.5), ('xct2', 'knee', 150, 1.5),
 ])
 def test_switching_to_standard_initializes_only_the_changed_stage(modality, site, threshold, sigma):

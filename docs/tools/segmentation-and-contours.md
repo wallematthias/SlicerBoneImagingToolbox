@@ -73,11 +73,14 @@ has been removed. The separate minimum-size noise filter remains. FEA can
 still select its largest connected component during model preparation without
 changing the reusable tissue segmentation or its material labelmap.
 
-The current toolbox requires `bone-contouring[unet]>=0.3.4`. Update the toolbox
+The current toolbox requires `bone-contouring[unet]>=0.3.5`. Update the toolbox
 and the Bone Contouring runtime package through Setup, then restart Slicer.
 
 Standard uses the same topology-first compartment contouring for XCTI and XCTII,
-including radius, tibia, and knee. XCTII radius/tibia use outer threshold 320 and
+including radius, tibia, and knee. Standard XCTI uses periosteal threshold
+250 for radius/tibia and 150 for knee in both scene and batch defaults (calibrated
+mg HA/cm³, not the native-gray Laplace–Hamming tissue threshold). Saved custom
+profiles retain their explicit values. XCTII radius/tibia use outer threshold 320 and
 inner threshold 380 in calibrated mg HA/cm³; other presets retain their existing
 density settings. All envelopes are independent of tissue-segmentation thresholds.
 The fragile pre-fill opening is removed. The standard outer contour dilates in XY,

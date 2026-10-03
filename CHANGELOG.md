@@ -2,6 +2,13 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.3.5] - 2026-10-02
+
+### Changed
+
+- Set standard XCTI periosteal defaults to 250 for radius/tibia and retain knee at 150, matching the updated core/batch presets. Keep XCTII settings and explicit custom/saved overrides unchanged; tissue segmentation, inner contours, morphology and smoothing are unchanged.
+- Require bone-contouring 0.3.5 in Toolbox Setup so installed batch profiles use the same updated XCTI thresholds as the scene module.
+
 ## [0.3.4] - 2026-10-02
 
 ### Fixed

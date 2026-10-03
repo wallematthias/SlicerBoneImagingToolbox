@@ -147,6 +147,8 @@ def _contour_site_defaults(site, modality, periosteal_method="standard", endoste
     defaults = {key: dict(value) for key, value in preset.items()}
     if endosteal_method == "standard":
         defaults["inner"]["peel"] = 3
+    if str(modality) == "xct1" and periosteal_method == "standard":
+        defaults["outer"]["periosteal_threshold"] = 150.0 if str(site) == "knee" else 250.0
     if str(modality) == "xct2" and str(site) in {"radius", "tibia"}:
         if periosteal_method == "standard":
             defaults["outer"].update(periosteal_threshold=320.0, gaussian_sigma=0.8)
