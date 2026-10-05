@@ -102,6 +102,10 @@ Use the citation that matches the workflow and results you report. Tool-specific
 
 The Bone Imaging Toolbox Slicer modules were developed by Matthias Walle. Core packages and third-party methods may have their own authorship, license, and citation requirements.
 
+## Acknowledgements
+
+Thanks to Mikkel for testing the toolbox on research datasets and providing detailed feedback and bug reports on dataset naming, contouring, and voidspace workflows.
+
 ## License
 
 This extension is distributed under the MIT License. Core packages installed from PyPI or separate repositories are governed by their own license terms.
