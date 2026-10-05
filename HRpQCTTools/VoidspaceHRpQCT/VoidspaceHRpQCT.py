@@ -28,8 +28,8 @@ from slicer.ScriptedLoadableModule import (  # noqa: E402
 )
 
 
-MODULE_VERSION = "0.1.0"
-VOIDSPACE_MINIMUM_VERSION = "0.1.3"
+MODULE_VERSION = "0.1.1"
+VOIDSPACE_MINIMUM_VERSION = "0.1.5"
 VOIDSPACE_CITATION = (
     "Whittier DE, Burt LA, Boyd SK. A new approach for quantifying localized bone loss by measuring void spaces. "
     "Bone. 2021 Feb;143:115785. doi: 10.1016/j.bone.2020.115785."
@@ -90,8 +90,8 @@ def main(job_json_path: str) -> int:
             "baseline_large": str(baseline.large_mask_path),
             "followup_all": str(followup.all_mask_path),
             "followup_large": str(followup.large_mask_path),
-            "expanded": str(change.expanded_path),
-            "contracted": str(change.contracted_path),
+            "expanded": str(change.expanded_mask_path),
+            "contracted": str(change.contracted_mask_path),
             "measurements": str(change.measurements_path),
         }
     else:
@@ -293,8 +293,16 @@ class VoidspaceHRpQCTWidget(ScriptedLoadableModuleWidget):
         form = qt.QFormLayout(scene_box)
 
         self.longitudinalCheck = qt.QCheckBox()
+        self.longitudinalCheck.toolTip = (
+            "Baseline and follow-up inputs must already be aligned in the same physical space. "
+            "Scene mode does not perform registration. Use Timelapsed Remodelling first."
+        )
         self.longitudinalCheck.toggled.connect(self._update_mode_visibility)
         form.addRow("Longitudinal voidspace", self.longitudinalCheck)
+
+        self.alignmentNotice = qt.QLabel(self.longitudinalCheck.toolTip)
+        self.alignmentNotice.wordWrap = True
+        form.addRow("", self.alignmentNotice)
 
         self.segmentationSelector = self._volume_selector("Segmentation")
         self.maskSelector = self._volume_selector("Mask")
@@ -341,6 +349,7 @@ class VoidspaceHRpQCTWidget(ScriptedLoadableModuleWidget):
 
     def _update_mode_visibility(self, checked):
         single = not bool(checked)
+        self.alignmentNotice.visible = not single
         for selector in (self.segmentationSelector, self.maskSelector):
             selector.visible = single
         for selector in (

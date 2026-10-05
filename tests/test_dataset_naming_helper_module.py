@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,3 +76,62 @@ def test_dataset_naming_helper_splits_public_and_private_metadata() -> None:
     assert "split_identity_metadata" in source
     assert "dataset_private_identity_manifest.json" in source
     assert "def _anonymize_metadata" in source
+
+
+def test_naming_table_refresh_keeps_theme_defaults_and_readable_review_cells():
+    """A cell edit must not turn dark-theme table backgrounds white."""
+    tree = ast.parse(MODULE.read_text(encoding="utf-8"))
+    widget = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+                  and node.name == "DatasetNamingHelperWidget")
+    refresh = next(node for node in widget.body if isinstance(node, ast.FunctionDef)
+                   and node.name == "_refresh_derived_table_cells")
+    headers = ["Role", "Subject", "Session", "Site", "Site category", "Stack",
+               "Confidence", "Problem", "Suggested path"]
+
+    class Item:
+        def __init__(self):
+            self.background = None
+            self.foreground = None
+
+        def setText(self, text):
+            self.text = text
+
+        def setToolTip(self, text):
+            self.tooltip = text
+
+        def setBackground(self, brush):
+            self.background = brush
+
+        def setForeground(self, brush):
+            self.foreground = brush
+
+    rows = [SimpleNamespace(path=Path("scan.AIM"), role="image", subject_id="001",
+                            session_id="001", site="radius", site_category="radius",
+                            stack_index=None, confidence="review", problem=problem)
+            for problem in ("", "Check subject")]
+    items = {(row, col): Item() for row in range(2) for col in range(len(headers))}
+    palette = SimpleNamespace(brush=lambda role: {"highlight": "dark-accent",
+                                                  "highlighted-text": "light-text"}[role])
+    table = SimpleNamespace(blockSignals=lambda value: None,
+                            item=lambda row, col: items[row, col], palette=palette)
+    instance = SimpleNamespace(_rows=rows, namingTable=table, statusLabel=SimpleNamespace())
+    qt = SimpleNamespace(QColor=lambda *rgb: rgb, QBrush=lambda: None,
+                         QPalette=SimpleNamespace(Highlight="highlight",
+                                                  HighlightedText="highlighted-text"))
+    namespace = {"qt": qt, "HEADERS": headers, "Path": Path,
+                 "suggested_mids_relative_paths": lambda rows: {},
+                 "suggested_mids_relative_path": lambda row: Path("suggested.AIM")}
+    exec(compile(ast.Module(body=[refresh], type_ignores=[]), str(MODULE), "exec"), namespace)
+    namespace["_refresh_derived_table_cells"](instance)
+    assert all(items[0, col].background is None for col in range(len(headers)))
+    assert all(items[0, col].foreground is None for col in range(len(headers)))
+    for header in ("Problem", "Confidence"):
+        item = items[1, headers.index(header)]
+        assert item.background == "dark-accent"
+        assert item.foreground == "light-text"
+    rows[1].problem = ""
+    namespace["_refresh_derived_table_cells"](instance)
+    for header in ("Problem", "Confidence"):
+        item = items[1, headers.index(header)]
+        assert item.background is None
+        assert item.foreground is None

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
+import subprocess
 import types
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,9 +79,38 @@ def test_voidspace_scene_module_wraps_core_without_registration_ownership(monkey
     assert "all_mask_path" in source
     assert "large_void_path" not in source
     assert "all_void_path" not in source
-    assert 'VOIDSPACE_MINIMUM_VERSION = "0.1.3"' in source
+    assert 'VOIDSPACE_MINIMUM_VERSION = "0.1.5"' in source
     assert "baseline_segmentation_path" in source
     assert "followup_segmentation_path" in source
     assert "baseline_mask_path" in source
     assert "followup_mask_path" in source
-    assert "register" not in source.lower()
+
+
+def test_longitudinal_scene_script_publishes_real_core_change_outputs(tmp_path, monkeypatch):
+    module = _import_voidspace_module(monkeypatch)
+    core = pytest.importorskip("voidspace")
+    np = pytest.importorskip("numpy")
+    sitk = pytest.importorskip("SimpleITK")
+    image = sitk.GetImageFromArray(np.ones((9, 9, 9), dtype=np.uint8))
+    segmentation = tmp_path / "seg.nrrd"
+    sitk.WriteImage(image, str(segmentation))
+    job = {
+        "mode": "longitudinal",
+        "baseline_segmentation_path": str(segmentation),
+        "followup_segmentation_path": str(segmentation),
+        "output_dir": str(tmp_path / "results"),
+        "outputs_json_path": str(tmp_path / "outputs.json"),
+    }
+    job_path = tmp_path / "job.json"
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(core.__file__).resolve().parents[1])
+    result = subprocess.run(
+        [sys.executable, "-c", module._VOIDSPACE_SCENE_PROCESS_SCRIPT, str(job_path)],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    outputs = json.loads(Path(job["outputs_json_path"]).read_text(encoding="utf-8"))
+    assert Path(outputs["expanded"]).name == "voidspace_expanded_mask.nii.gz"
+    assert Path(outputs["contracted"]).name == "voidspace_contracted_mask.nii.gz"
+    assert all(Path(path).is_file() for path in outputs.values())

@@ -33,6 +33,11 @@ For a cross-sectional run:
 
 For a longitudinal run:
 
+Baseline and follow-up segmentations and masks **must already be registered into
+the same physical coordinate space**. Scene Voidspace does not estimate or apply
+a registration transform. Use Timelapsed Remodelling first; matching array sizes
+alone do not establish anatomical alignment.
+
 1. Enable `Longitudinal voidspace`.
 2. Select baseline segmentation and optional baseline mask.
 3. Select follow-up segmentation and optional follow-up mask.
@@ -68,6 +73,11 @@ each pair's baseline/follow-up `full_domain_maps/` directory.
 Scene and batch use the same core morphology and physical radii. For the closest
 scene/batch comparison, select the matching full bone mask in scene mode as well.
 Mask crops are placed by their physical geometry using nearest-neighbor resampling.
+When intersecting full masks with common regions, spacing differences up to
+`0.000001 mm` per axis are accepted as header rounding. The reference mask's
+geometry is retained; crop origins and directions still determine physical
+placement. Larger spacing differences are rejected with both paths and spacing
+values so a wrong-resolution common region is not silently accepted.
 
 Closing and erosion continue the first/last slices beyond the scan ends before
 cropping back. This assumes the endpoint cross-section continues outside the

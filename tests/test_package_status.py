@@ -207,7 +207,7 @@ def test_voidspace_runtime_package_has_user_facing_setup_name() -> None:
 
     assert spec.display_name == "Voidspace"
     assert spec.import_name == "voidspace"
-    assert spec.minimum_version == "0.1.4"
+    assert spec.minimum_version == "0.1.5"
     assert "analysis-domain masks" in spec.notes
 
 

@@ -103,7 +103,7 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Voidspace",
         package_name="voidspace",
         import_name="voidspace",
-        minimum_version="0.1.4",
+        minimum_version="0.1.5",
         constraints=("numpy>=1.26,<3.0", "SimpleITK>=2.2", "scipy>=1.10", "aimio-py>=0.1.8"),
         notes="Spacing-aware voidspace analysis from segmentation and optional analysis-domain masks.",
     ),

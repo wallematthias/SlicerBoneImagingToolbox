@@ -309,7 +309,9 @@ class DatasetNamingHelperWidget(ScriptedLoadableModuleWidget):
                 if header not in EDITABLE_COLUMNS:
                     item.setFlags(item.flags() & ~qt.Qt.ItemIsEditable)
                 if row.problem and header in {"Problem", "Confidence"}:
-                    item.setBackground(qt.QColor(255, 245, 204))
+                    palette = self.namingTable.palette
+                    item.setBackground(palette.brush(qt.QPalette.Highlight))
+                    item.setForeground(palette.brush(qt.QPalette.HighlightedText))
                 self.namingTable.setItem(row_index, col_index, item)
         self.namingTable.resizeColumnsToContents()
         self.namingTable.blockSignals(False)
@@ -359,9 +361,12 @@ class DatasetNamingHelperWidget(ScriptedLoadableModuleWidget):
                     table_item.setText(value)
                     table_item.setToolTip(value)
                     if header in {"Problem", "Confidence"} and row.problem:
-                        table_item.setBackground(qt.QColor(255, 245, 204))
+                        palette = self.namingTable.palette
+                        table_item.setBackground(palette.brush(qt.QPalette.Highlight))
+                        table_item.setForeground(palette.brush(qt.QPalette.HighlightedText))
                     else:
-                        table_item.setBackground(qt.QColor(255, 255, 255))
+                        table_item.setBackground(qt.QBrush())
+                        table_item.setForeground(qt.QBrush())
             problems = sum(1 for row in self._rows if row.problem)
             self.statusLabel.text = f"Analyzed {len(self._rows)} file(s); {problems} review recommended."
         finally:

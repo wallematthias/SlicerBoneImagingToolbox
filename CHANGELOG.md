@@ -2,6 +2,18 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.3.6] - 2026-10-05
+
+### Fixed
+
+- Require voidspace 0.1.5 so registered batch analysis accepts sub-nanometre AIM/NIfTI header rounding while retaining physical mask alignment and rejecting wrong-resolution common regions.
+- Load longitudinal scene Voidspace results using the core package's expanded/contracted mask fields, avoiding the post-analysis AttributeError.
+- Preserve theme-default table colours after Dataset Naming Helper cell edits and use contrasting palette colours for warnings in light and dark themes.
+
+### Changed
+
+- Explain in the longitudinal scene UI and Voidspace documentation that inputs must already be anatomically registered; grid resampling does not perform registration.
+
 ## [0.3.5] - 2026-10-02
 
 ### Changed
