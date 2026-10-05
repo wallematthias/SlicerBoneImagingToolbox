@@ -94,6 +94,11 @@ _batch_backends_module = importlib.reload(_batch_backends_module)
 _remote_batch_module = importlib.reload(_remote_batch_module)
 
 from SlicerBoneImagingToolboxLib.batch_backends import available_batch_backends  # noqa: E402
+from SlicerBoneImagingToolboxLib.measurement_export import (  # noqa: E402
+    MEASUREMENT_TOOLS,
+    export_measurements,
+    measurement_csv_paths,
+)
 from SlicerBoneImagingToolboxLib.fea_batch import (  # noqa: E402
     FEAArtifact,
     FEABatchCase,
@@ -1450,6 +1455,36 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         outputs = self._existing_outputs_for_profile(tool, bool(row.get("registered")), outputs, str(row.get("profile") or ""))
         return [str(artifact.path) for artifact in outputs if artifact.key == key]
 
+    def measurement_export_cases(self, dataset_root, *, tool, profile, rows):
+        """Collect the selected profile's summaries, independent of table Load groups."""
+        root = self._dataset_root(dataset_root)
+        cases = []
+        for displayed in rows:
+            row = {**displayed, "profile": profile}
+            if row.get("stack_index", row.get("stack")) in (None, ""):
+                stack = re.search(r"\bstack-(\d+)\b", str(row.get("voi") or ""))
+                if stack:
+                    row["stack_index"] = int(stack[1])
+            if tool == "mechanoregulation":
+                case_id = str(row.get("mechanoregulation_case_id") or "")
+                subject = str(row.get("subject") or "").removeprefix("sub-")
+                base = record_output_path(root, "Mechanoregulation", subject,
+                                          str(row.get("voi_value", row.get("voi")) or ""), "runs", case_id)
+                paths = list(base.glob(f"{case_id}_roi-*_mechanoregulation_summary.csv")) if case_id else []
+                pair = re.search(r"_t0-([^_]+)_t1-([^_]+)_", case_id)
+                if pair:
+                    row.update(baseline_session_value=pair[1], followup_session_value=pair[2])
+            else:
+                paths = self.rediscover_row_output_paths(root, tool, row)
+            if tool == "voidspace" and profile == "dynamic":
+                pair = str(row.get("session_value", row.get("session")) or "").split("-", 1)
+                if len(pair) == 2:
+                    row.setdefault("baseline_session_value", pair[0])
+                    row.setdefault("followup_session_value", pair[1])
+            row["paths"] = [str(path) for path in measurement_csv_paths(tool, paths)]
+            cases.append(row)
+        return cases
+
     @staticmethod
     def _imported_contour_paths_for_row(root: Path, row: dict) -> list[Path]:
         key = BatchProcessorLogic._row_case_key(row)
@@ -2279,6 +2314,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         )
                         pair["session"] = pair_session
                         pair["session_value"] = pair_session
+                        pair["baseline_session_value"] = baseline_session
+                        pair["followup_session_value"] = followup_session
                         pair_output_dir = self._voidspace_output_dir_for_row(root, "dynamic", pair)
                         pair["baseline_seg_path"] = str(previous.get("seg_path") or "")
                         pair["baseline_full_mask_path"] = str(previous.get("full_mask_path") or "")
@@ -2575,6 +2612,13 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.runAllButton.clicked.connect(self._queue_all_rows)
         self.layout.addWidget(self.runAllButton)
 
+        self.exportCsvButton = qt.QPushButton("Export to CSV")
+        self.exportCsvButton.toolTip = "Export existing measurement summaries for the selected tool and profile. No analysis is rerun."
+        self.exportCsvButton.enabled = False
+        self.exportCsvButton.visible = self._selected_tool_key() in MEASUREMENT_TOOLS
+        self.exportCsvButton.clicked.connect(self._export_csv)
+        self.layout.addWidget(self.exportCsvButton)
+
         self.cancelBatchButton = qt.QPushButton("Cancel")
         self.cancelBatchButton.enabled = False
         self.cancelBatchButton.clicked.connect(self._cancel_batch)
@@ -2585,6 +2629,109 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self.batchLog.minimumHeight = 120
         self.layout.addWidget(self.batchLog)
         self.layout.addStretch(1)
+
+    def _update_export_button(self):
+        if not hasattr(self, "exportCsvButton"):
+            return
+        supported = self._selected_tool_key() in MEASUREMENT_TOOLS
+        self.exportCsvButton.visible = supported
+        self.exportCsvButton.enabled = bool(supported and getattr(self, "_batchRows", [])
+                                            and not getattr(self, "_csvExportProcess", None))
+
+    def _export_csv(self):
+        """Export the current workflow without queuing any scientific analysis."""
+        if self._has_active_batch() or getattr(self, "_csvExportProcess", None):
+            slicer.util.warningDisplay("Wait for the active batch or CSV export to finish before exporting.")
+            return
+        tool = self._selected_tool_key()
+        if tool not in MEASUREMENT_TOOLS or not self._batchRows:
+            slicer.util.warningDisplay("Select a measurement workflow and discover its dataset rows first.")
+            return
+        root = Path(self._current_local_dataset_root()).expanduser()
+        profile = str(self.profileCombo.currentData)
+        family = self.logic._output_family_for_tool(tool)
+        filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{tool}_{profile}") + "_measurements.csv"
+        default = root / "derivatives" / family / "aggregated" / filename
+        destination = qt.QFileDialog.getSaveFileName(slicer.util.mainWindow(), "Export to CSV", str(default), "CSV files (*.csv)")
+        if not destination:
+            return
+        context = dict(destination=str(destination), dataset_root=str(root), tool=tool, profile=profile,
+                       rows=[dict(row) for row in self._batchRows])
+        if self._selected_backend_key() != "local":
+            self._sync_measurements_for_export(context)
+            return
+        self._write_measurement_export(context)
+
+    def _sync_measurements_for_export(self, context):
+        """Fetch summaries into a fresh snapshot, never falling back to stale local CSVs."""
+        temporary = tempfile.TemporaryDirectory(prefix="bone-measurement-export-")
+        try:
+            originals = self.logic.measurement_export_cases(context["dataset_root"], tool=context["tool"],
+                                                            profile=context["profile"], rows=context["rows"])
+            context = {**context, "protected_sources": [path for case in originals for path in case["paths"]]}
+            backend = self._remote_backend(local_root=context["dataset_root"],
+                                           remote_root=self._current_remote_dataset_root())
+            if backend is None:
+                raise RuntimeError("Remote backend unavailable.")
+            backend = SshSlurmBatchBackend(replace(backend.config, local_root=temporary.name))
+            family = self.logic._output_family_for_tool(context["tool"])
+            target = Path(temporary.name) / "derivatives" / family
+            target.mkdir(parents=True)
+            argv = backend.sync_output_argv(family, measurements_only=True)
+            process = qt.QProcess()
+            process.setProcessChannelMode(qt.QProcess.MergedChannels)
+            context = {**context, "dataset_root": temporary.name}
+            process.readyRead.connect(lambda: self._append_log(self._qbytearray_to_text(process.readAll())))
+            process.finished.connect(lambda code, *args: self._finish_measurement_sync(process, temporary, context, code))
+            process.errorOccurred.connect(lambda error: self._finish_measurement_sync(process, temporary, context, 1)
+                                           if error == qt.QProcess.FailedToStart else None)
+            self._csvExportProcess = process
+            self.exportCsvButton.enabled = False
+            self._append_log("[export] Fetching remote CSV summaries (no image volumes or analysis jobs).")
+            process.start(argv[0], argv[1:])
+        except Exception as exc:
+            temporary.cleanup()
+            self._csvExportProcess = None
+            self._update_export_button()
+            slicer.util.errorDisplay(f"CSV summary download failed: {exc}")
+
+    def _finish_measurement_sync(self, process, temporary, context, exit_code):
+        if getattr(self, "_csvExportProcess", None) is not process:
+            return
+        self._csvExportProcess = None
+        try:
+            if int(exit_code) != 0:
+                message = "CSV summary download failed; no export was written. Existing local results were not used."
+                self._append_log(f"[export] {message}")
+                slicer.util.errorDisplay(message)
+                return
+            self._write_measurement_export(context)
+        finally:
+            temporary.cleanup()
+            process.deleteLater()
+            self._update_export_button()
+
+    def _write_measurement_export(self, context):
+        self.exportCsvButton.enabled = False
+        try:
+            cases = self.logic.measurement_export_cases(context["dataset_root"], tool=context["tool"],
+                                                        profile=context["profile"], rows=context["rows"])
+            report = export_measurements(context["destination"], dataset_root=context["dataset_root"],
+                                         tool=context["tool"], profile=context["profile"], cases=cases, force=True,
+                                         protected_sources=context.get("protected_sources", ()))
+            message = f"Exported {report.row_count} row(s) from {report.source_count} measurement CSV(s) to {report.path}."
+            self._append_log(f"[export] {message}")
+            for issue in report.issues:
+                self._append_log(f"[export] skipped: {issue}")
+            if report.issues or not report.row_count:
+                slicer.util.warningDisplay(message + f"\n{len(report.issues)} issue(s); see the Batch Processor log for details.")
+            else:
+                slicer.util.infoDisplay(message)
+        except Exception as exc:
+            self._append_log(f"[export] failed: {exc}")
+            slicer.util.errorDisplay(f"CSV export failed: {exc}")
+        finally:
+            self._update_export_button()
 
     def _browse_dataset_root(self):
         path = qt.QFileDialog.getExistingDirectory(
@@ -2724,6 +2871,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._update_table_headers()
         if str(self.datasetRootEdit.text or "").strip():
             self._analyze_dataset()
+        if hasattr(self, "_update_export_button"):
+            self._update_export_button()
 
     def _on_profile_changed(self, *args):
         del args
@@ -2736,6 +2885,8 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
         self._update_table_headers()
         if str(self.datasetRootEdit.text or "").strip():
             self._analyze_dataset()
+        if hasattr(self, "_update_export_button"):
+            self._update_export_button()
 
     def _on_skip_existing_toggled(self, *args):
         del args
@@ -2930,7 +3081,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             ok, message = self.logic.normalized_dataset_status(root)
         if not ok:
             self.statusLabel.text = f"{message} Open Dataset Naming Helper to normalize loose filenames."
-            self.table.setRowCount(0)
+            self._populate_rows([])
             return
         rows, message = self.logic.discover_rows(
             root,
@@ -3260,6 +3411,8 @@ print(json.dumps({"cases": rows}, sort_keys=True))
                 item.setToolTip(str(value))
                 self.table.setItem(row_index, column, item)
         self.runAllButton.enabled = bool(rows)
+        if hasattr(self, "_update_export_button"):
+            self._update_export_button()
         try:
             self.table.resizeColumnsToContents()
         except Exception:

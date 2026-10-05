@@ -26,6 +26,7 @@ set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/fea_workflow_labels.py
   SlicerBoneImagingToolboxLib/image_io.py
   SlicerBoneImagingToolboxLib/masks.py
+  SlicerBoneImagingToolboxLib/measurement_export.py
   SlicerBoneImagingToolboxLib/motionscore_review.py
   SlicerBoneImagingToolboxLib/motionscore_scene.py
   SlicerBoneImagingToolboxLib/motionscore_scene_runner.py

@@ -257,3 +257,15 @@ def test_slurm_backend_syncs_output_family_to_local_dataset_root() -> None:
         "arc.ucalgary.ca:/remote/data/derivatives/Microarchitecture/",
         "/local/data/derivatives/Microarchitecture/",
     ]
+
+
+def test_measurement_sync_copies_only_csvs_without_deleting_local_results(tmp_path):
+    backend = SshSlurmBatchBackend(RemoteBatchConfig(
+        name="arc", host="arc.ucalgary.ca", remote_root="/remote/data",
+        local_root=str(tmp_path), python="/env/bin/python", work_dir="/remote/work"))
+    argv = backend.sync_output_argv("Microarchitecture", measurements_only=True)
+    assert argv[-2:] == ["arc.ucalgary.ca:/remote/data/derivatives/Microarchitecture/",
+                         str(tmp_path / "derivatives/Microarchitecture") + "/"]
+    assert argv[4:9] == ["--include=*/", "--include=*.csv", "--include=manifest.json",
+                         "--include=*_mechanoregulation_summary.json", "--exclude=*"]
+    assert not any(option.startswith("--delete") for option in argv)

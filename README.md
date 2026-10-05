@@ -104,7 +104,7 @@ The Bone Imaging Toolbox Slicer modules were developed by Matthias Walle. Core p
 
 ## Acknowledgements
 
-Thanks to Mikkel for testing the toolbox on research datasets and providing detailed feedback and bug reports on dataset naming, contouring, and voidspace workflows.
+Thanks to Mikkel Meisner Fondt for testing the toolbox on research datasets and providing detailed feedback and bug reports on dataset naming, contouring, and voidspace workflows.
 
 ## License
 

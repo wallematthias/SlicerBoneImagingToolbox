@@ -65,6 +65,48 @@ Both Functional Bone profiles are under **Microarchitecture**. Native requires a
 
 The queued jobs keep the tool and profile that were active when they were added to the queue. This keeps a long run stable even if the visible Batch Processor controls are refreshed later.
 
+## Export to CSV
+
+After running a measurement workflow, keep its **Tool** and **Profile** selected
+and click **Export to CSV**. Choose a destination; the suggested location is
+`derivatives/<workflow>/aggregated/`. The export collects existing summaries for
+the displayed dataset rows without rerunning analysis or averaging measurements.
+
+The result is a wide cohort table: one row per subject, session, site and stack,
+or per baseline–follow-up pair for longitudinal measurements. Identifier columns
+come first, followed by the union of measurement columns. Subject/session IDs
+retain their original text in the CSV; when importing into Excel, set these
+columns to **Text** to preserve leading zeros. Each row includes the selected
+tool/profile and a `source_files` column listing its source CSVs.
+
+Supported exports:
+
+| Tool | Measurement columns |
+| --- | --- |
+| Microarchitecture / Functional Bone | Parameter and statistic, e.g. `Tb.Th.Mean`, `Tb.Th.SD`, `Tb.Th.Units` |
+| Voidspace | Large-void summary, e.g. `Large.VS.V`; dynamic profiles preserve change columns such as `expanded.VS.V` |
+| Timelapsed Remodelling | Compartment, threshold and cluster size, e.g. `trab.threshold-225.cluster-1.formation_vox` |
+| Plate/Rod Morphometry | Existing scalar summary columns; individual element tables are excluded |
+| ParOsol-FEA | Existing scalar mechanics summaries and numbered load components; detailed curves are excluded |
+| Mechanoregulation | ROI-prefixed summary columns, e.g. `full.OR_F`; classification, threshold and cluster prefixes distinguish multiple remodelling variants |
+
+Native, registered and Functional Bone profiles use their own measurement
+outputs. Missing values and non-finite numbers become blank cells; zero remains
+zero. Missing/unreadable summaries and conflicting measurements are reported in
+the Batch Processor log, with affected cases omitted. The completion dialog
+reports the number of exported rows and any issues. Source files are not changed.
+If a source table explicitly identifies a different profile, it is reported and
+omitted rather than silently relabelled as the selected profile.
+Mechanoregulation also requires its companion summary JSON to verify the
+profile; its figures and surface-event volumes are not required for export.
+Current Voidspace CSVs describe **large voidspace only**; the export does not
+invent an all-void measurement from the all-void mask.
+
+For server workflows, the button downloads CSV summaries and small discovery/
+profile metadata into a fresh temporary snapshot, not image volumes. A failed download
+stops the export instead of falling back to old local results. The tool/profile
+selected when export begins remains fixed even if you change the controls.
+
 ## Outputs
 
 Outputs are written as derivative artifacts with manifest records. Loaded outputs should appear in Slicer with readable names, compact result tables, and predictable display settings.

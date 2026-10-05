@@ -110,6 +110,13 @@ Measurements are saved below
 Do not compare native and registered measurements as if their reporting regions
 were identical. Older saved `functional-bone` jobs retain registered semantics.
 
+To collect cohort measurements, keep **Microarchitecture** and the desired
+Functional Bone profile selected, then click **Export to CSV**. This produces
+one wide row per case using the existing measurement files; it does not rerun
+analysis. Export native and registered profiles separately. See the
+[Batch Processor export guide](../tools/batch-processor.md#export-to-csv) for
+column names, missing values and error reporting.
+
 ## 5. Rerunning and troubleshooting
 
 Loading old outputs does not correct them. Back up the prior results, then

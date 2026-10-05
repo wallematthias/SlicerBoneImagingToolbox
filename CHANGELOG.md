@@ -2,6 +2,13 @@
 
 All notable changes to this extension are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Batch Processor **Export to CSV** for existing Microarchitecture/Functional Bone, Voidspace, Timelapsed Remodelling, Plate/Rod, FEA and Mechanoregulation summaries. Export one wide row per case or scan pair, with provenance, profile separation and missing/conflicting-result reports, without rerunning analysis.
+- Fetch only measurement CSVs and discovery metadata for server exports using a fresh temporary snapshot, avoiding large volume downloads and stale local results.
+
 ## [0.3.6] - 2026-10-05
 
 ### Fixed

@@ -76,6 +76,172 @@ def _write_complete_unet_case(logic, root, row):
         "model": "radius_tibia_final", "device": "mps"}))
 
 
+def test_export_uses_selected_voidspace_profile_not_stale_group_outputs(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    row = dict(subject="001", session_value="01", voi_value="radiusleft", registered=True,
+               profile="registered", output_paths=["unrelated_measurements.csv"])
+    current = logic._voidspace_output_dir_for_row(tmp_path, "registered", row)
+    current.mkdir(parents=True)
+    (current / "voidspace_measurements.csv").write_text("VS.V\n25\n")
+    native_row = {**row, "registered": False, "profile": "standard"}
+    native = logic._voidspace_output_dir_for_row(tmp_path, "standard", native_row)
+    native.mkdir(parents=True)
+    (native / "voidspace_measurements.csv").write_text("VS.V\n99\n")
+    cases = logic.measurement_export_cases(tmp_path, tool="voidspace", profile="registered", rows=[row])
+    from SlicerBoneImagingToolboxLib.measurement_export import export_measurements
+    report = export_measurements(tmp_path / "export.csv", dataset_root=tmp_path,
+                                 tool="voidspace", profile="registered", cases=cases)
+    with report.path.open(encoding="utf-8-sig", newline="") as stream:
+        values = list(csv.DictReader(stream))
+    assert values[0]["Large.VS.V"] == "25"
+    assert "unrelated" not in values[0]["source_files"]
+
+
+def test_export_pair_metadata_and_missing_rows_are_preserved(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    row = dict(subject="001", session_value="01-02", voi_value="tibia", profile="dynamic")
+    cases = module.BatchProcessorLogic().measurement_export_cases(
+        tmp_path, tool="voidspace", profile="dynamic", rows=[row])
+    assert cases[0]["baseline_session_value"] == "01"
+    assert cases[0]["followup_session_value"] == "02"
+    assert cases[0]["paths"] == []
+
+
+def test_export_preserves_stack_identity_from_displayed_rows(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    rows = []
+    for stack in (1, 2):
+        row = dict(subject="001", session_value="01", voi_value="radiusleft",
+                   voi=f"radiusleft stack-{stack:02d}", registered=True)
+        rows.append(row)
+        folder = tmp_path / "derivatives/Microarchitecture/sub-001/ses-01/xct/registered_measurements"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"sub-001_ses-01_voi-radiusleft_stack-{stack:02d}_measurements.csv").write_text(
+            f"Parameter,Mean\nTb.Th,{stack}\n")
+    cases = module.BatchProcessorLogic().measurement_export_cases(
+        tmp_path, tool="microarchitecture", profile="xtremectii-registered", rows=rows)
+    assert [case["stack_index"] for case in cases] == [1, 2]
+    from SlicerBoneImagingToolboxLib.measurement_export import export_measurements
+    report = export_measurements(tmp_path / "export.csv", dataset_root=tmp_path,
+                                 tool="microarchitecture", profile="xtremectii-registered", cases=cases)
+    assert report.row_count == 2 and not report.issues
+
+
+def test_export_mechanoregulation_summary_does_not_require_visualization_files(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    row = dict(subject="001", session_value="01-02", voi_value="radiusleft", profile="standard",
+               mechanoregulation_case_id="sub-001_voi-radiusleft_t0-01_t1-02_test")
+    base = tmp_path / "derivatives/Mechanoregulation/sub-001/xct/runs" / row["mechanoregulation_case_id"]
+    base.mkdir(parents=True)
+    path = base / f"{row['mechanoregulation_case_id']}_roi-full_mechanoregulation_summary.csv"
+    path.write_text("OR_F\n1.2\n")
+    cases = module.BatchProcessorLogic().measurement_export_cases(
+        tmp_path, tool="mechanoregulation", profile="standard", rows=[row])
+    assert cases[0]["paths"] == [str(path)]
+
+
+def test_export_button_collects_wide_csv_without_running_analysis(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    row = dict(subject="001", session_value="01", voi_value="radiusleft", profile="standard")
+    folder = logic._voidspace_output_dir_for_row(tmp_path, "standard", row)
+    folder.mkdir(parents=True)
+    (folder / "voidspace_measurements.csv").write_text("VS.V\n25\n")
+    output = tmp_path / "chosen.csv"
+    monkeypatch.setattr(module.qt, "QFileDialog", types.SimpleNamespace(
+        getSaveFileName=lambda *args: str(output)), raising=False)
+    messages = []
+    monkeypatch.setattr(module.slicer.util, "mainWindow", lambda: None, raising=False)
+    monkeypatch.setattr(module.slicer.util, "errorDisplay", messages.append, raising=False)
+    monkeypatch.setattr(module.slicer.util, "infoDisplay", messages.append, raising=False)
+    monkeypatch.setattr(module.slicer.util, "warningDisplay", messages.append, raising=False)
+    widget = module.BatchProcessorWidget()
+    widget.logic = logic
+    widget._batchRows = [row]
+    widget.profileCombo = types.SimpleNamespace(currentData="standard")
+    widget.exportCsvButton = types.SimpleNamespace(enabled=True)
+    widget._has_active_batch = lambda: False
+    widget._selected_tool_key = lambda: "voidspace"
+    widget._selected_backend_key = lambda: "local"
+    widget._current_local_dataset_root = lambda: str(tmp_path)
+    widget._append_log = messages.append
+    widget._export_csv()
+    with output.open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert rows[0]["Large.VS.V"] == "25"
+    assert any("1" in message and "Export" in message for message in messages)
+    assert widget.exportCsvButton.enabled
+
+
+@pytest.mark.parametrize("exit_code,source_destination", [(0, False), (1, False), (0, True)])
+def test_remote_export_uses_fresh_csv_snapshot_and_never_stale_local_results(monkeypatch, tmp_path, exit_code, source_destination):
+    module = _import_batch_processor_module(monkeypatch)
+    from SlicerBoneImagingToolboxLib.remote_batch import RemoteBatchConfig, SshSlurmBatchBackend
+
+    class Signal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class Process:
+        MergedChannels = 1
+        FailedToStart = 0
+        def __init__(self):
+            self.readyRead, self.finished, self.errorOccurred = Signal(), Signal(), Signal()
+        def setProcessChannelMode(self, mode):
+            pass
+        def start(self, program, args):
+            self.argv = [program, *args]
+        def readAll(self):
+            return b""
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr(module.qt, "QProcess", Process, raising=False)
+    widget = module.BatchProcessorWidget()
+    widget.logic = module.BatchProcessorLogic()
+    widget.exportCsvButton = types.SimpleNamespace(enabled=True)
+    widget._batchRows = [dict(subject="001", session_value="01", voi_value="radiusleft", profile="standard")]
+    widget._selected_tool_key = lambda: "voidspace"
+    messages = []
+    widget._append_log = messages.append
+    monkeypatch.setattr(module.slicer.util, "errorDisplay", messages.append, raising=False)
+    monkeypatch.setattr(module.slicer.util, "infoDisplay", messages.append, raising=False)
+    monkeypatch.setattr(module.slicer.util, "warningDisplay", messages.append, raising=False)
+    backend = SshSlurmBatchBackend(RemoteBatchConfig(
+        name="test", host="test", remote_root="/remote/data", local_root=str(tmp_path),
+        python="python", work_dir="/remote/work"))
+    widget._remote_backend = lambda **kwargs: backend
+    widget._current_remote_dataset_root = lambda: "/remote/data"
+    stale = widget.logic._voidspace_output_dir_for_row(tmp_path, "standard", widget._batchRows[0])
+    stale.mkdir(parents=True)
+    (stale / "voidspace_measurements.csv").write_text("VS.V\n99\n")
+    context = dict(destination=str(tmp_path / "export.csv"), dataset_root=str(tmp_path),
+                   tool="voidspace", profile="standard", rows=widget._batchRows)
+    if source_destination:
+        context["destination"] = str(stale / "voidspace_measurements.csv")
+    widget._sync_measurements_for_export(context)
+    process = widget._csvExportProcess
+    target = Path(process.argv[-1])
+    snapshot = target.parent.parent
+    assert snapshot != tmp_path and "--include=*.csv" in process.argv
+    fresh = widget.logic._voidspace_output_dir_for_row(snapshot, "standard", widget._batchRows[0])
+    fresh.mkdir(parents=True, exist_ok=True)
+    (fresh / "voidspace_measurements.csv").write_text("VS.V\n25\n")
+    process.finished.callback(exit_code, 0)
+    if source_destination:
+        assert any("source" in message.lower() for message in messages)
+    elif exit_code == 0:
+        with (tmp_path / "export.csv").open(encoding="utf-8-sig") as stream:
+            assert list(csv.DictReader(stream))[0]["Large.VS.V"] == "25"
+    else:
+        assert not (tmp_path / "export.csv").exists()
+        assert any("failed" in message.lower() for message in messages)
+    assert not snapshot.exists()
+    assert widget._csvExportProcess is None and widget.exportCsvButton.enabled
+    assert (stale / "voidspace_measurements.csv").read_text() == "VS.V\n99\n"
+
+
 def test_unet_is_a_bone_contouring_profile_and_routes_to_published_worker(monkeypatch, tmp_path):
     module = _import_batch_processor_module(monkeypatch)
     logic = module.BatchProcessorLogic()

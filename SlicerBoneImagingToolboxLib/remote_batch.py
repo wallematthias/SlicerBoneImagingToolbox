@@ -205,15 +205,17 @@ class SshSlurmBatchBackend:
         match = re.search(r"\b(\d+)(?:[.;]\S*)?\b", first)
         return match.group(1) if match else None
 
-    def sync_output_argv(self, family: str) -> list[str]:
-        """Return an rsync argv for one derivative family back to the local mirror."""
+    def sync_output_argv(self, family: str, *, measurements_only: bool = False) -> list[str]:
+        """Sync one family, optionally restricting transfer to CSVs and discovery/profile metadata."""
         local_root = self.config.local_dataset_root()
         if local_root is None:
             raise ValueError("Remote batch config needs local_root before outputs can be loaded in Slicer.")
         source = f"{self.config.host}:{_posix_join(self.config.remote_root, 'derivatives', family)}/"
         target = local_root / "derivatives" / family
         ssh_command = " ".join([self.config.ssh, *self.config.ssh_options()])
-        return [self.config.rsync, "-e", ssh_command, "-az", source, str(target) + os.sep]
+        filters = ["--include=*/", "--include=*.csv", "--include=manifest.json",
+                   "--include=*_mechanoregulation_summary.json", "--exclude=*"] if measurements_only else []
+        return [self.config.rsync, "-e", ssh_command, "-az", *filters, source, str(target) + os.sep]
 
     def _ssh_argv(self, command: str) -> list[str]:
         return [self.config.ssh, *self.config.ssh_options(), self.config.host, command]
