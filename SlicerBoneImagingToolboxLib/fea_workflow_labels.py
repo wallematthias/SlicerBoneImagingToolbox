@@ -8,6 +8,27 @@ BODY_LABEL_KEYS = ("body", "vertebral_body", "bone")
 PROCESS_LABEL_KEYS = ("process", "posterior_elements", "posterior_element")
 
 
+def validate_material_label_coverage(
+    present_values: Iterable[Any] | None,
+    configured_labels: Iterable[Any] | None,
+) -> tuple[int, ...]:
+    """Return configured labels present in an image or reject a disjoint label map."""
+
+    present = _positive_integer_values(present_values)
+    configured = _positive_integer_values(configured_labels)
+    matched = tuple(sorted(set(present).intersection(configured)))
+    if present and configured and not matched:
+        present_text = ", ".join(str(value) for value in present)
+        configured_text = ", ".join(str(value) for value in configured)
+        raise ValueError(
+            "The exported material-label image contains labels "
+            f"{present_text}, but the material table defines {configured_text}. "
+            "No active material would be created. Select or generate the matching "
+            "material-label volume, or update the material table before exporting."
+        )
+    return matched
+
+
 def workflow_label_overrides_from_scene(
     model_labels: Mapping[str, Any] | None,
     current_labels: Iterable[Any] | None,
