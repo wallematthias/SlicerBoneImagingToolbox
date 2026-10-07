@@ -165,7 +165,7 @@ def test_bone_contouring_runtime_package_has_user_facing_setup_name() -> None:
 
     assert specs["bone-contouring"].display_name == "Bone Contouring"
     assert specs["bone-contouring"].import_name == "bone_contouring"
-    assert specs["bone-contouring"].minimum_version == "0.3.5"
+    assert specs["bone-contouring"].minimum_version == "0.4.0"
     assert "segmentation" in specs["bone-contouring"].notes.lower()
 
 
@@ -224,7 +224,7 @@ def test_plate_rod_install_commands_honor_wheel_only_with_sibling_checkout(monke
 
 def test_microarchitecture_minimum_includes_canonical_contour_discovery() -> None:
     spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "bone-microarchitecture")
-    assert spec.minimum_version == "0.2.5"
+    assert spec.minimum_version == "0.3.0"
 
 
 def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:
@@ -232,9 +232,9 @@ def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() ->
 
     assert specs["parosol-py"].display_name == "ParOsol-FEA"
     assert specs["parosol-py"].import_name == "parosol_py"
-    assert specs["parosol-py"].minimum_version == "0.1.25"
+    assert specs["parosol-py"].minimum_version == "0.1.26"
     assert install_command(specs["parosol-py"], installed=True) == (
-        "--upgrade --prefer-binary --only-binary parosol-py parosol-py>=0.1.25"
+        "--upgrade --prefer-binary --only-binary parosol-py parosol-py>=0.1.26"
     )
     assert "ParOSol" in specs["parosol-py"].notes
 

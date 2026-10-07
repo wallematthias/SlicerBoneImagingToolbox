@@ -74,7 +74,7 @@ has been removed. The separate minimum-size noise filter remains. FEA can
 still select its largest connected component during model preparation without
 changing the reusable tissue segmentation or its material labelmap.
 
-The current toolbox requires `bone-contouring[unet]>=0.3.5`. Update the toolbox
+The current toolbox requires `bone-contouring[unet]>=0.4.0`. Update the toolbox
 and the Bone Contouring runtime package through Setup, then restart Slicer.
 
 Standard uses the same repaired IPL-style compartment sequence for XCTI and XCTII,

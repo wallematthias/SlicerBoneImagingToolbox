@@ -4,6 +4,10 @@ All notable changes to this extension are documented in this file.
 
 ## [Unreleased]
 
+### Dependencies
+
+- Require bone-contouring 0.4.0 and bone-microarchitecture 0.3.0 for the updated IPL-style algorithms, and parosol-py 0.1.26 for native solver path-length safety.
+
 ### Fixed
 
 - Use IPL-aligned core pore, cortical-thickness and trabecular-number definitions consistently in scene and batch; apply scene/registered reporting regions after native map calculation. Require selected pore maps for Functional Bone reuse, retain scientific-method provenance in tables/CSV sidecars, and do not skip current calculations based on older method tables. Exact native IPL parity remains unvalidated.

@@ -23,7 +23,7 @@ For this release, check these minimum versions in Setup:
 | bone-imaging-derivatives | 0.1.7 |
 | bone-contouring | 0.3.3 |
 | voidspace | 0.1.4 |
-| bone-microarchitecture | 0.2.5 |
+| bone-microarchitecture | 0.3.0 |
 
 Restart Slicer after updating so it does not keep previously imported code in
 memory. Start with a fresh scene for the first comparison. Keep a backup of your
