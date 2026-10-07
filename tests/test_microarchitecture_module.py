@@ -129,11 +129,6 @@ def test_microarchitecture_module_uses_core_for_bmd_and_thickness_compartments()
     assert "Select a bone segmentation so trabecular and cortical bone measures can be intersected" in source
     assert "common_region_node=None" in source
     assert "common_region = self._volume_to_sitk_uint8(" in source
-    assert "from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region" in source
-    assert "bone_seg = clip_mask_to_region(bone_seg, common_region)" in source
-    assert "peri_mask = clip_mask_to_region(peri_mask, common_region)" in source
-    assert "trab_seg = clip_mask_to_region(trab_seg, common_region)" in source
-    assert "cort_mask = clip_mask_to_region(cort_mask, common_region)" in source
     assert "grayscale=None if bmd_image is None else sitk.GetArrayFromImage(bmd_image)" in source
     assert "for map_role, array in core_result.maps.items()" in source
     assert "_array_to_sitk_like(array, trab_seg)" in source
@@ -611,11 +606,6 @@ def test_registered_series_common_region_is_scan_fov_not_compartment_intersectio
     assert "row[\"full_path\"] = common_paths[\"full\"]" not in common_logic
     assert "row[\"trab_path\"] = common_paths[\"trab\"]" not in common_logic
     assert "row[\"cort_path\"] = common_paths[\"cort\"]" not in common_logic
-    assert "_clip_registered_mask_to_scan_region(" in measurement_logic
-    assert "bone_seg = self._clip_registered_mask_to_scan_region(bone_seg, scan_region)" in measurement_logic
-    assert "full_mask = self._clip_registered_mask_to_scan_region(full_mask, scan_region)" in measurement_logic
-    assert "trab_mask = self._clip_registered_mask_to_scan_region(trab_mask, scan_region)" in measurement_logic
-    assert "cort_mask = self._clip_registered_mask_to_scan_region(cort_mask, scan_region)" in measurement_logic
 
 
 def test_registered_series_common_regions_use_sequential_composed_transforms() -> None:

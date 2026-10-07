@@ -47,6 +47,32 @@ Four profiles are exposed:
 | Registered Functional Bone | restricts each session to its native common region, then excludes large voidspace |
 
 Native maps are reusable. If native maps already exist, the registered profile can reuse them and only recompute the common-region-restricted measurement table.
+
+### IPL-aligned standard measurements
+
+The updated core uses `ipl-aligned-v1`: cortical porosity counts cleaned,
+slice-seeded intracortical pores rather than all cortical non-bone voxels;
+cortical thickness is measured on the cortical compartment including its pores;
+and trabecular number is **inverse mean ridge spacing**, not mean inverse spacing.
+Spacing calculations retain native bone-phase context. Incomplete image-boundary
+spheres are excluded without deleting a fixed number of end slices.
+
+Scene analysis also computes native maps before applying an optional analysis
+mask. The saved `Ct.Po.Mask` retains pore selection independently of the diameter
+map, so reporting restrictions do not rerun the five-voxel cleanup. CSV JSON
+sidecars and manifests identify the scientific method. Older method tables no
+longer mark a batch row complete: rerun analysis to regenerate current results.
+Ratios such as `Ct.Po` remain fractions; multiply by 100 when comparing with IPL
+percentages. `Tb.N`'s other CSV distribution columns describe local inverse
+spacing, whereas its Mean is inverse mean spacing.
+
+These are closer definitions, **not validated numerical IPL equivalence**.
+Native pore connectivity/percentage conventions, GOBJ boundaries and sphere
+assignment still require identical-input IPL map comparisons. See the
+[core method notes](https://github.com/wallematthias/bone-microarchitecture#ipl-aligned-measurement-definitions).
+
+### Functional Bone reporting regions
+
 Both Functional Bone profiles follow the same map reuse model: they do not create functional-bone maps or recompute thickness on clipped regions. They reuse or create native maps, then summarize over `full mask AND NOT large voidspace` (native) or `full mask AND common region AND NOT large voidspace` (registered), intersected with each reporting compartment.
 For review/debugging, both profiles also write and load their effective analysis-region masks with distinct mode names.
 
@@ -106,6 +132,13 @@ Common outputs include:
 | `Ct.Po.Dm` | cortical pore diameter map summary |
 
 Fractions are reported as fractions, not percentages.
+
+`Ct.Po` is selected intracortical pore volume divided by cortical compartment
+volume; it is no longer all cortical non-bone volume. `Ct.Po.Dm` summarizes a
+thickness map of those selected pores. An IPL workflow that measures a separately
+defined `PORE.AIM` mask may still select a different pore population. Matching compartment
+masks alone does not establish equivalence; compare tissue segmentation, pore
+definitions, reporting regions and fraction/percent units before pooling results.
 
 ## Citation
 

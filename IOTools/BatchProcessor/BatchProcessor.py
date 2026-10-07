@@ -409,7 +409,7 @@ def _map_filename(subject: str, session: str, site: str, map_name: str, extensio
 def _existing_native_maps(map_dir: Path, subject: str, session: str, site: str, *, has_cortical: bool):
     required = {"Tb.Th", "Tb.Sp", "Tb.N", "Tt.BMD", "Tb.BMD"}
     if has_cortical:
-        required.update({"Ct.Th", "Ct.Po.Dm", "Ct.BMD"})
+        required.update({"Ct.Th", "Ct.Po.Dm", "Ct.Po.Mask", "Ct.BMD"})
     maps = {}
     for map_name in required:
         for extension in (".nii.gz", ".npy"):
@@ -1338,6 +1338,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         "measurements_table",
                         "Microarchitecture",
                         metadata={
+                            **BatchProcessorLogic._microarchitecture_csv_metadata(path),
                             "use_common_region": "/registered_measurements/" in path_text
                             or "/functional_bone_measurements/" in path_text,
                             "functional_bone": "/functional_bone_measurements/" in path_text
@@ -1372,10 +1373,23 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         return tuple(outputs)
 
     @staticmethod
+    def _microarchitecture_csv_metadata(path):
+        try:
+            payload = json.loads(Path(path).with_suffix(".json").read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    @staticmethod
     def _existing_outputs_for_profile(tool: str, registered: bool, existing_outputs, profile: str = ""):
         if str(tool or "") not in {"microarchitecture", "plate_rod"}:
             return tuple(existing_outputs)
         profile_value = str(profile or "").strip()
+        if tool == "microarchitecture":
+            try:
+                from bone_microarchitecture.method import METHOD_ID
+            except ImportError:
+                METHOD_ID = None  # An older/missing core cannot certify current results.
         filtered = []
         for artifact in existing_outputs:
             if BatchProcessorLogic._is_map_output_for_tool(tool, artifact):
@@ -1388,6 +1402,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             )
             path_registered = "/registered_measurements/" in path_text
             if str(tool or "") == "microarchitecture":
+                if METHOD_ID is None or artifact.metadata.get("measurement_method") != METHOD_ID:
+                    continue
                 if BatchProcessorLogic.is_functional_bone_profile(profile_value):
                     functional_registered = common_region or "/functional_bone_measurements/" in path_text
                     if functional_bone and functional_registered == (profile_value == "functional-bone"):
@@ -1408,7 +1424,9 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     @staticmethod
     def _is_microarchitecture_map_output(artifact) -> bool:
         role = str(getattr(artifact, "role", "") or "")
-        return role == "microarchitecture_map" or role.endswith("_map")
+        return role == "microarchitecture_map" or role.endswith("_map") or (
+            role == "material_labelmap" and artifact.metadata.get("map_name") == "Ct.Po.Mask"
+        )
 
     @staticmethod
     def _is_plate_rod_map_output(artifact) -> bool:

@@ -13,6 +13,7 @@ import types
 import pytest
 
 from bone_imaging_derivatives import DerivativeManifest, DerivativeRecord, read_manifest, write_manifest
+from bone_microarchitecture.method import METHOD_METADATA
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +60,10 @@ def _import_batch_processor_module(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _mark_current_microarchitecture(path):
+    Path(path).with_suffix(".json").write_text(json.dumps(METHOD_METADATA), encoding="utf-8")
 
 
 def _write_complete_unet_case(logic, root, row):
@@ -119,6 +124,7 @@ def test_export_preserves_stack_identity_from_displayed_rows(monkeypatch, tmp_pa
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f"sub-001_ses-01_voi-radiusleft_stack-{stack:02d}_measurements.csv").write_text(
             f"Parameter,Mean\nTb.Th,{stack}\n")
+        _mark_current_microarchitecture(folder / f"sub-001_ses-01_voi-radiusleft_stack-{stack:02d}_measurements.csv")
     cases = module.BatchProcessorLogic().measurement_export_cases(
         tmp_path, tool="microarchitecture", profile="xtremectii-registered", rows=rows)
     assert [case["stack_index"] for case in cases] == [1, 2]
@@ -2119,7 +2125,7 @@ def test_microarchitecture_existing_outputs_are_profile_mode_specific(tmp_path: 
         module.CaseKey("001", "001", "radiusleft", None),
         "measurements_table",
         "Microarchitecture",
-        metadata={"use_common_region": False},
+        metadata={**METHOD_METADATA, "use_common_region": False},
     )
     registered = module.BatchArtifact(
         tmp_path
@@ -2134,7 +2140,7 @@ def test_microarchitecture_existing_outputs_are_profile_mode_specific(tmp_path: 
         module.CaseKey("001", "001", "radiusleft", None),
         "measurements_table",
         "Microarchitecture",
-        metadata={"use_common_region": True},
+        metadata={**METHOD_METADATA, "use_common_region": True},
     )
 
     logic = module.BatchProcessorLogic()
@@ -2216,6 +2222,7 @@ def test_native_microarchitecture_outputs_do_not_make_registered_profile_loadabl
         )
         native_measurement.parent.mkdir(parents=True)
         native_measurement.write_text("Parameter,Mean\nTb.N,1.0\n", encoding="utf-8")
+        _mark_current_microarchitecture(native_measurement)
         output_records.append(
             DerivativeRecord(
                 "Microarchitecture",
@@ -3136,6 +3143,7 @@ def test_functional_bone_existing_outputs_include_analysis_mask(tmp_path: Path, 
         functional_dir.mkdir(parents=True)
         (functional_dir / f"sub-001_ses-{session}_voi-radiusleft_measurements.csv").write_text("Parameter,Mean\nTb.N,1.0\n")
         (functional_dir / "functional_bone_analysis_mask.nii.gz").write_bytes(b"")
+        _mark_current_microarchitecture(functional_dir / f"sub-001_ses-{session}_voi-radiusleft_measurements.csv")
     write_manifest(
         DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=records),
         tmp_path / "derivatives" / "BoneContours" / "manifest.json",
@@ -3288,6 +3296,7 @@ def test_native_functional_bone_discovery_needs_native_voidspace_not_common_regi
             folder.mkdir(parents=True)
             (folder / f"sub-001_ses-{row['session_value']}_voi-radiusleft_measurements.csv").write_text("Parameter,Mean\nTt.BMD,100\n")
             (folder / "functional_bone_analysis_mask.nii.gz").write_bytes(b"")
+            _mark_current_microarchitecture(folder / f"sub-001_ses-{row['session_value']}_voi-radiusleft_measurements.csv")
         loaded_rows, _ = logic.discover_rows(tmp_path, tool="microarchitecture", profile="functional-bone-native", registered=registered_request)
         assert [row["action"] for row in loaded_rows] == ["Load", "Load"]
         assert all(any(path.endswith("functional_bone_analysis_mask.nii.gz") for path in row["output_paths"]) for row in loaded_rows)
@@ -3309,6 +3318,7 @@ def test_functional_bone_measurement_discovery_isolates_profile_outputs(tmp_path
         path = base / folder / "sub-001_ses-001_voi-radiusleft_measurements.csv"
         path.parent.mkdir(parents=True)
         path.write_text("Parameter,Mean\nTt.BMD,100\n")
+        _mark_current_microarchitecture(path)
     logic = module.BatchProcessorLogic()
     outputs = logic._discover_existing_outputs(tmp_path, "Microarchitecture")
     selected = logic._existing_outputs_for_profile("microarchitecture", registered, outputs, profile)

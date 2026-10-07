@@ -960,10 +960,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                     row["native_common_scan_region_path"],
                     role="scan region",
                 )
-                bone_seg = self._clip_registered_mask_to_scan_region(bone_seg, scan_region)
-                full_mask = self._clip_registered_mask_to_scan_region(full_mask, scan_region)
-                trab_mask = self._clip_registered_mask_to_scan_region(trab_mask, scan_region)
-                cort_mask = self._clip_registered_mask_to_scan_region(cort_mask, scan_region)
             size_items = [image, bone_seg, full_mask, trab_mask, cort_mask]
             if scan_region is not None:
                 size_items.append(scan_region)
@@ -984,12 +980,14 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 thickness_method=requested_thickness_method,
                 thickness_backend=resolved_thickness_backend,
             )
+            if scan_region is not None:
+                result = self._restrict_core_result(result, scan_region, bone_seg, full_mask, trab_mask, cort_mask, image)
             session_dir = self.registered_session_output_dir(root, row)
             maps_dir = session_dir / "maps"
             maps_dir.mkdir(parents=True, exist_ok=True)
             prefix = f"sub-{row['subject_id']}_ses-{row['session_id']}_voi-{self._voi_token(row['site'])}"
             csv_path = session_dir / f"{prefix}_measurements.csv"
-            write_measurement_csv(csv_path, result.measurements, result.maps)
+            write_measurement_csv(csv_path, result.measurements, result.maps, metadata=result.metadata)
             for map_role, array in result.maps.items():
                 map_image = self._array_to_sitk_like(array, trab_mask)
                 sitk.WriteImage(map_image, str(maps_dir / f"{prefix}_map-{map_role.lower().replace('.', '-')}.nii.gz"))
@@ -1357,6 +1355,22 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         table_node.Modified()
         return table_node
 
+    @staticmethod
+    def _restrict_core_result(result, region, bone, peri, trab, cort=None, grayscale=None):
+        from bone_microarchitecture.batch import restrict_measurements
+
+        masks = {
+            "bone_segmentation": sitk.GetArrayFromImage(bone),
+            "periosteal_mask": sitk.GetArrayFromImage(peri),
+            "trabecular_mask": sitk.GetArrayFromImage(trab),
+        }
+        if cort is not None:
+            masks["cortical_mask"] = sitk.GetArrayFromImage(cort)
+        return restrict_measurements(
+            result, masks, sitk.GetArrayFromImage(region), tuple(reversed(trab.GetSpacing())),
+            grayscale=None if grayscale is None else sitk.GetArrayFromImage(grayscale),
+        )
+
     def compute_trabecular_microarchitecture(
         self,
         trabecular_segmentation_node,
@@ -1462,8 +1476,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
 
             common_region = None
             if common_region_node is not None:
-                from SlicerBoneImagingToolboxLib.masks import clip_mask_to_region
-
                 common_region = self._volume_to_sitk_uint8(
                     common_region_node,
                     "analysis mask",
@@ -1472,11 +1484,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 )
                 if common_region.GetSize() != trab_seg.GetSize():
                     raise ValueError("Analysis mask size must match the selected masks.")
-                bone_seg = clip_mask_to_region(bone_seg, common_region)
-                peri_mask = clip_mask_to_region(peri_mask, common_region)
-                trab_seg = clip_mask_to_region(trab_seg, common_region)
-                if cort_mask is not None:
-                    cort_mask = clip_mask_to_region(cort_mask, common_region)
 
             provenance_metadata = {}
             bmd_image = None
@@ -1507,6 +1514,10 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 thickness_method=str(thickness_method),
                 thickness_backend=str(thickness_backend),
             )
+            if common_region is not None:
+                core_result = self._restrict_core_result(
+                    core_result, common_region, bone_seg, peri_mask, trab_seg, cort_mask, bmd_image
+                )
 
             metrics = dict(core_result.measurements)
             prefix = (str(output_prefix).strip() or trabecular_segmentation_node.GetName() or "HRpQCT").strip()
@@ -1519,6 +1530,8 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             )
             table_node.SetAttribute("BoneImaging.Microarchitecture.ThicknessMethod", str(core_result.metadata.get("thickness_method", thickness_method)))
             table_node.SetAttribute("BoneImaging.Microarchitecture.ThicknessBackend", str(core_result.metadata.get("thickness_backend", thickness_backend)))
+            for key, value in core_result.metadata.items():
+                table_node.SetAttribute(f"BoneImaging.Microarchitecture.{key}", str(value))
             if common_region_node is not None:
                 table_node.SetAttribute("BoneImaging.Microarchitecture.AnalysisMaskNode", common_region_node.GetID())
                 table_node.SetAttribute("BoneImaging.Microarchitecture.AnalysisMaskName", common_region_node.GetName())
@@ -1539,7 +1552,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
             if csv_path:
                 from bone_microarchitecture.results import write_measurement_csv
 
-                write_measurement_csv(csv_path, metrics, core_result.maps)
+                write_measurement_csv(csv_path, metrics, core_result.maps, metadata=core_result.metadata)
 
             return table_node, output_nodes, metrics, dict(core_result.maps)
         finally:

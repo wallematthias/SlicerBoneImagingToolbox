@@ -4,6 +4,10 @@ All notable changes to this extension are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Use IPL-aligned core pore, cortical-thickness and trabecular-number definitions consistently in scene and batch; apply scene/registered reporting regions after native map calculation. Require selected pore maps for Functional Bone reuse, retain scientific-method provenance in tables/CSV sidecars, and do not skip current calculations based on older method tables. Exact native IPL parity remains unvalidated.
+
 ### Added
 
 - Batch Processor **Export to CSV** for existing Microarchitecture/Functional Bone, Voidspace, Timelapsed Remodelling, Plate/Rod, FEA and Mechanoregulation summaries. Export one wide row per case or scan pair, with provenance, profile separation and missing/conflicting-result reports, without rerunning analysis.
