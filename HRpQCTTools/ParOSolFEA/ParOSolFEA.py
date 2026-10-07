@@ -183,6 +183,7 @@ from SlicerBoneImagingToolboxLib.fea_batch import (
     role_options_for_workflow,
 )
 from SlicerBoneImagingToolboxLib.fea_workflow_labels import (
+    validate_material_label_coverage,
     workflow_label_overrides_from_scene,
 )
 from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_constraints
@@ -10492,6 +10493,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
         disk_node = self.diskLabelSelector.currentNode() if interactive else None
         nodeset_node = self.bcLabelSelector.currentNode() if interactive else None
         try:
+            self._validate_material_label_volume(image_node, material_override)
             if (
                 interactive
                 and self._has_applied_workflow_replay_model()
@@ -10752,6 +10754,7 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
                     self._append_log(
                         "Normalized XtremeCT material labels for Slicer AIM export: 99->100, 126->127.\n"
                     )
+            self._validate_material_label_volume(solver_volume, material_override)
             image_path = self.logic.export_volume(solver_volume, output_dir / "slicer_input.nii.gz")
             disk_label_path = None
             if interactive and disk_node is not None:
@@ -11027,6 +11030,24 @@ class ParOSolFEAWidget(ScriptedLoadableModuleWidget):
             return True
         preset = self._widget_text(getattr(self, "materialPresetBox", None), "")
         return "xtremect" in str(preset).strip().lower()
+
+    def _validate_material_label_volume(self, volume_node, material_override):
+        if not isinstance(material_override, dict) or volume_node is None:
+            return ()
+        if str(material_override.get("image_type", "")).strip().lower() not in {
+            "material_labels",
+            "labels",
+            "segmentation",
+        }:
+            return ()
+        materials = material_override.get("materials", {})
+        labels = materials.get("labels", {}) if isinstance(materials, dict) else {}
+        values = np.unique(np.asarray(slicer.util.arrayFromVolume(volume_node)))
+        if self._should_normalize_xtremect_material_labels(material_override):
+            values = np.asarray(
+                [100 if value == 99 else 127 if value == 126 else value for value in values]
+            )
+        return validate_material_label_coverage(values, labels)
 
     def _load_history_case_count(self):
         modes = self._selected_load_history_modes()
