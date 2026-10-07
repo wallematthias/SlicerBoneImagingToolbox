@@ -30,32 +30,33 @@ def adapter_namespace():
     return ns
 
 
-@pytest.mark.parametrize('site', ['radius', 'tibia'])
-def test_slicer_defaults_match_core_standard(site):
+@pytest.mark.parametrize('site', ['radius', 'tibia', 'knee'])
+@pytest.mark.parametrize('modality', ['xct1', 'xct2'])
+def test_slicer_defaults_match_core_standard(site, modality):
     ns = adapter_namespace()
-    default = ns['_contour_site_defaults'](site, 'xct2')
-    core = bone_contouring.resolve_preset(modality='xct2', site=site, segmentation='gauss')
+    default = ns['_contour_site_defaults'](site, modality)
+    core = bone_contouring.resolve_preset(modality=modality, site=site, segmentation='gauss')
     assert default['outer']['periosteal_threshold'] == core.outer.periosteal_threshold
     assert default['inner']['endosteal_threshold'] == core.inner.endosteal_threshold
-    assert default['outer']['gaussian_sigma'] == default['inner']['gaussian_sigma'] == .8
-    assert ns['_contour_site_defaults'](site, 'xct1')['inner']['endosteal_threshold'] == 500
-    assert ns['_contour_site_defaults']('knee', 'xct2')['inner']['endosteal_threshold'] == 250
+    assert default['outer']['gaussian_sigma'] == core.outer.gaussian_sigma
+    assert default['inner']['gaussian_sigma'] == core.inner.gaussian_sigma
+    assert default['inner']['trabecular_close_radius'] == core.inner.trabecular_close_radius
 
 
 @pytest.mark.parametrize('modality', ['xct1', 'xct2'])
 @pytest.mark.parametrize('site', ['radius', 'tibia', 'knee'])
-def test_standard_peel_defaults_to_three_for_every_profile(modality, site):
+def test_standard_peel_is_six_for_all_sites(modality, site):
     defaults = adapter_namespace()['_contour_site_defaults'](site, modality)
-    assert defaults['inner']['peel'] == 3
+    assert defaults['inner']['peel'] == 6
 
 
 @pytest.mark.parametrize('peel', [None, 0, 5])
 @pytest.mark.parametrize('modality,site,outer_threshold,inner_threshold,kernel', [
-    ('xct2', 'radius', 320, 380, (31, 31, 1)),
+    ('xct2', 'radius', 320, 500, (31, 31, 1)),
     ('xct1', 'radius', 250, 500, (10, 10, 1)),
     ('xct1', 'tibia', 250, 500, (10, 10, 1)),
-    ('xct1', 'knee', 150, 250, (10, 10, 1)),
-    ('xct2', 'knee', 150, 250, (10, 10, 1)),
+    ('xct1', 'knee', 150, 150, (10, 10, 1)),
+    ('xct2', 'knee', 150, 150, (10, 10, 1)),
 ])
 def test_adapter_passes_new_kernel_and_physical_smoothing_and_keeps_overrides(
         monkeypatch, modality, site, outer_threshold, inner_threshold, kernel, peel):
@@ -77,12 +78,14 @@ def test_adapter_passes_new_kernel_and_physical_smoothing_and_keeps_overrides(
     p = captured[0]
     assert p.outer.periosteal_threshold == outer_threshold
     assert p.inner.endosteal_threshold == inner_threshold
-    assert p.inner.peel == (3 if peel is None else peel)
+    default_peel = 6
+    assert p.inner.peel == (default_peel if peel is None else peel)
     assert p.buie.endosteal_kernel_size == kernel
     assert tuple(p.stable_3d.inner_sigma_mm) == (.03, .03, .04)
     assert p.stable_3d.outer_sigma_mm == (.03, .03, .06)
     assert p.segmentation.cort_threshold == 470
-    assert p.segmentation.gaussian_sigma == 1.2
+    assert p.segmentation.gaussian_sigma == .8
+    assert p.segmentation.gaussian_support == 1
     assert p.segmentation.trab_threshold == 320
     assert not p.segmentation.keep_largest_component
 
@@ -101,9 +104,11 @@ def test_recipe_roundtrip_preserves_physical_settings_and_supports_no_contours(o
         def __getattr__(self, key):
             return SimpleNamespace(value=1, checked=True, currentData='cpu')
     widget = Widget()
-    ns['_apply_params_to_widgets'](widget, {'stable_3d': {'inner_sigma_mm': [.03, .03, .04]}})
+    ns['_apply_params_to_widgets'](widget, {'stable_3d': {'inner_sigma_mm': [.03, .03, .04]},
+                                           'segmentation': {'gaussian_support': 2}})
     exported = ns['_collect_params'](widget)
     assert exported['stable_3d']['inner_sigma_mm'] == [.03, .03, .04]
+    assert exported['segmentation']['gaussian_support'] == 2
     if inner == 'standard':
         assert exported['buie']['endosteal_kernel_size'] == (31, 31, 1)
 

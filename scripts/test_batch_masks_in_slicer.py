@@ -63,18 +63,18 @@ def main():
         widget._load_bone_contour_outputs_as_segmentation(second_row, [path])
         assert len([node for node in slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
                     if node.GetAttribute("BoneImaging.BatchContourSource") == "scan2.nrrd"]) == 1
-        # Registered timepoints are intentionally shown together, but not other subjects.
+        # Registered timepoints are retained, but only the newly loaded one is visible.
         grouped = dict(first_row, registered=True)
         widget._load_bone_contour_outputs_as_segmentation(grouped, [path])
         first = slicer.util.getNode("scan1_contours")
         widget._load_bone_contour_outputs_as_segmentation(
             dict(grouped, session_value="002", image_path="scan3.nrrd"), [path])
-        assert first.GetDisplayNode().GetVisibility()
+        assert not first.GetDisplayNode().GetVisibility(), "Earlier registered timepoint still visible"
         second = next(node for node in slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
                       if node.GetAttribute("BoneImaging.BatchContourSource") == "scan2.nrrd")
         assert not second.GetDisplayNode().GetVisibility()
         # Loading one Functional Bone mode must not delete the other's analysis region.
-        analysis = Path(directory) / "functional_bone_analysis_mask.nrrd"
+        analysis = Path(directory) / "sub-001_ses-001_voi-radiusleft_desc-functional-bone-analysis_mask.nrrd"
         sitk.WriteImage(mask, str(analysis))
         native_row = dict(first_row, profile="functional-bone-native", registered=False)
         registered_row = dict(first_row, profile="functional-bone", registered=True)
@@ -84,6 +84,31 @@ def main():
                    if node.GetAttribute("BoneImaging.MaskRoles") == "functional_bone_analysis"]
         assert len(regions) == 2, "Loading another mode replaced the earlier analysis mask"
         assert {node.GetAttribute("BoneImaging.FunctionalBoneMode") for node in regions} == {"native", "registered"}
+        # Generic measurement basenames must not replace another case's table.
+        table_cases = []
+        for site, session, value in (("radiusleft", "001", 11), ("radiusleft", "002", 12), ("tibialeft", "001", 21)):
+            folder = Path(directory) / f"{site}-{session}"
+            folder.mkdir()
+            csv_path = folder / "voidspace_measurements.csv"
+            csv_path.write_text(f"Parameter,Value\nVoidspace,{value}\n", encoding="utf-8")
+            row = dict(first_row, voi_value=site, session_value=session, profile="voidspace-native")
+            widget._load_voidspace_outputs(row, [csv_path])
+            table_cases.append((row, csv_path, value))
+        widget._load_voidspace_outputs(table_cases[0][0], [table_cases[0][1]])
+        tables = slicer.util.getNodesByClass("vtkMRMLTableNode")
+        assert len(tables) == 3, "Reloading a case duplicated or replaced another table"
+        for row, _, value in table_cases:
+            name = f"sub-001_ses-{row['session_value']}_voi-{row['voi_value']}_voidspace-native_voidspace_measurements"
+            table = slicer.util.getNode(name)
+            assert float(table.GetTable().GetValue(0, 1).ToString()) == value
+        # Both paired phases remain available, with only followup visible by default.
+        paired = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "paired")
+        paired.CreateDefaultDisplayNodes()
+        for role, visible in (("baseline_seg", False), ("followup_seg", True)):
+            segment_id = paired.GetSegmentation().AddEmptySegment()
+            widget._name_last_segment(paired, role, role)
+            assert bool(paired.GetDisplayNode().GetSegmentVisibility(segment_id)) == visible
+        assert paired.GetSegmentation().GetNumberOfSegments() == 2
         # U-Net batch load must keep LH tissue SEG in the same node as contours.
         import py_aimio
         full = np.zeros((7, 7, 7), dtype=np.uint8)

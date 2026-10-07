@@ -473,7 +473,8 @@ def main() -> int:
 
     functional_common = common & ~voidspace
     analysis_extension = ".nii.gz" if image.sitk_image is not None else ".npy"
-    analysis_path = Path(args.output_dir) / f"functional_bone_analysis_mask{analysis_extension}"
+    case_stem = f"sub-{args.subject}_ses-{args.session}_voi-{voi_token(args.site)}"
+    analysis_path = Path(args.output_dir) / f"{case_stem}_desc-functional-bone-analysis_mask{analysis_extension}"
     _write_mask(analysis_path, functional_common, image)
     maps_dir = Path(args.maps_dir)
     run_microarchitecture_batch(
@@ -502,7 +503,7 @@ def main() -> int:
     measurement_maps = _masked_maps_for_measurements(native_maps, measurement_masks)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"sub-{args.subject}_ses-{args.session}_voi-{voi_token(args.site)}_measurements.csv"
+    output_path = output_dir / f"{case_stem}_measurements.csv"
     write_measurement_csv(output_path, measurements, measurement_maps)
     print(output_path)
     return 0
@@ -1936,7 +1937,6 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     def _microarchitecture_case_dirs(root: Path, row: dict) -> tuple[Path, Path]:
         subject = str(row.get("subject") or "").strip()
         session = str(row.get("session_value", row.get("session")) or "").strip()
-        voi = BatchProcessorLogic._filename_token(str(row.get("voi_value", row.get("voi")) or "").strip().lower())
         base = root / "derivatives" / "Microarchitecture" / f"sub-{subject}" / f"ses-{session}" / "xct"
         folder = "functional_bone_native_measurements" if row.get("profile") == "functional-bone-native" else "functional_bone_measurements"
         return base / "maps", base / folder
@@ -1952,7 +1952,9 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         if table.exists():
             paths.append(table)
         for suffix in (".nii.gz", ".npy", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd"):
-            analysis = measurements_dir / f"functional_bone_analysis_mask{suffix}"
+            # Legacy generic masks were shared between sites and may have been
+            # overwritten. Never assign one to a case by guessing its anatomy.
+            analysis = measurements_dir / f"sub-{subject}_ses-{session}_voi-{voi}_desc-functional-bone-analysis_mask{suffix}"
             if analysis.exists():
                 paths.append(analysis)
                 break
@@ -4354,6 +4356,12 @@ print(str(csv_path))
         if self._selected_tool_key() == "microarchitecture" and BatchProcessorLogic.is_functional_bone_profile(row.get("profile")):
             functional_analysis_paths = [path for path in output_paths if self._is_functional_bone_analysis_mask(path)]
             output_paths = [path for path in output_paths if not self._is_functional_bone_analysis_mask(path)]
+            if not functional_analysis_paths:
+                self._append_log(
+                    "[batch] No case-specific Functional Bone analysis mask found. "
+                    "Older shared masks may belong to another site; rerun Functional Bone "
+                    "with Skip existing disabled to regenerate the analysis mask."
+                )
         loaded = 0
         for path in output_paths:
             if not path.exists():
@@ -4441,13 +4449,22 @@ print(str(csv_path))
             for path in output_paths
             if Path(path).exists() and Path(path).suffix.lower() == ".csv"
         ]
+        subject = str(row.get("subject") or "unknown")
+        session = str(row.get("session_value", row.get("session")) or "unknown")
+        voi = str(row.get("voi_value", row.get("voi")) or "unknown")
+        profile = str(row.get("profile") or "voidspace").replace("_", "-")
+        case_name = f"sub-{subject}_ses-{session}_voi-{voi}_{profile}"
+        if row.get("stack_index") is not None:
+            case_name += f"_stack-{row['stack_index']}"
         loaded = 0
         for path in sorted(table_paths):
             try:
-                self._remove_existing_node_named(path.stem)
+                table_name = f"{case_name}_{path.stem}"
+                self._remove_existing_node_named(table_name)
                 result = slicer.util.loadTable(str(path))
                 node = result[1] if isinstance(result, tuple) and len(result) > 1 else result
                 if node is not None:
+                    node.SetName(table_name)
                     self._show_table_node(node)
                     loaded += 1
             except Exception as exc:
@@ -4456,11 +4473,7 @@ print(str(csv_path))
             self._append_log(f"[batch] loaded {loaded} voidspace output file(s)")
             return
 
-        subject = str(row.get("subject") or "unknown")
-        session = str(row.get("session_value", row.get("session")) or "unknown")
-        voi = str(row.get("voi_value", row.get("voi")) or "unknown")
-        profile = str(row.get("profile") or "voidspace").replace("_", "-")
-        node_name = f"sub-{subject}_ses-{session}_voi-{voi}_{profile}_voidspace"
+        node_name = f"{case_name}_voidspace"
         self._remove_existing_node_named(node_name)
         segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", node_name)
         segmentation_node.CreateDefaultDisplayNodes()
@@ -5335,13 +5348,21 @@ print(str(csv_path))
     @staticmethod
     def _is_functional_bone_analysis_mask(path: Path) -> bool:
         name = Path(path).name.lower()
-        return name.startswith("functional_bone_analysis_mask") and BatchProcessorWidget._is_mask_output(Path(path))
+        return (name.startswith("functional_bone_analysis_mask") or
+                "_desc-functional-bone-analysis_mask." in name) and BatchProcessorWidget._is_mask_output(Path(path))
 
     def _load_functional_bone_analysis_outputs(self, row, output_paths):
+        for path in output_paths:
+            if Path(path).name.lower().startswith("functional_bone_analysis_mask"):
+                self._append_log(
+                    f"[batch] Skipping ambiguous legacy mask {Path(path).name}; "
+                    "rerun Functional Bone with Skip existing disabled to regenerate a case-specific mask."
+                )
         mask_paths = [
             Path(path)
             for path in output_paths
             if self._is_functional_bone_analysis_mask(Path(path)) and Path(path).exists()
+            and not Path(path).name.lower().startswith("functional_bone_analysis_mask")
         ]
         if not mask_paths:
             return 0
@@ -5446,9 +5467,8 @@ print(str(csv_path))
     @staticmethod
     def _show_case_overlay(node, row):
         """Hide earlier batch case overlays without touching manually created nodes."""
-        case = [str(row.get("subject") or "unknown"), str(row.get("voi_value", row.get("voi")) or "unknown")]
-        if not row.get("registered"):
-            case.extend([str(row.get("session_value", row.get("session")) or "unknown"), str(row.get("stack_index") or "")])
+        case = [str(row.get("subject") or "unknown"), str(row.get("voi_value", row.get("voi")) or "unknown"),
+                str(row.get("session_value", row.get("session")) or "unknown"), str(row.get("stack_index") or "")]
         case_key = json.dumps(case)
         for previous in slicer.util.getNodesByClass("vtkMRMLSegmentationNode"):
             previous_case = previous.GetAttribute("BoneImaging.BatchCase")
@@ -5684,6 +5704,8 @@ print(str(csv_path))
             segment.SetColor(color[0], color[1], color[2])
         if hasattr(segment, "SetTag"):
             segment.SetTag("HRpQCT.Role", role)
+        if str(role).startswith(("baseline_", "followup_")):
+            segmentation_node.GetDisplayNode().SetSegmentVisibility(segment_id, not str(role).startswith("baseline_"))
 
     @staticmethod
     def _find_loaded_source_volume(image_path, *, require_source_path=False):

@@ -21,10 +21,10 @@ Rows are tool-specific. Single-session tools run one session per row. Longitudin
 
 If the dataset is not yet normalized, run the Dataset Naming Helper first. The Batch Processor is deliberately stricter than the interactive scene modules because cohort processing depends on stable subject, session, VOI, stack, and derivative paths.
 
-Each tool-specific profile defines the command, required inputs, and expected outputs for the selected tool. Shipped profiles provide scanner or workflow defaults. Some tools also discover user-exported custom profiles.
+Each tool-specific profile defines the command, required inputs, and expected outputs for the selected tool. Most analysis workflows use curated profiles rather than a batch expert-settings interface. Bone Contouring also discovers saved custom contouring profiles, including compatible recipes exported from scene mode. Contact the toolbox maintainers to discuss a new large-scale analysis workflow.
 
 For published CNN compartments, select **Bone Contouring → U-Net contours (Neeteson et al.) + LH SEG**
-and a device. Standard/custom contour profiles remain in the same list, with
+and a device. Standard and saved custom contour profiles remain in the same list, with
 automatic per-row site detection. U-Net uses fixed published defaults and writes
 full/trab/cort masks plus XCTII Laplace–Hamming tissue SEG and material labels in
 one run. Completed U-Net compartments are reused when only SEG/material is
@@ -97,6 +97,12 @@ the Batch Processor log, with affected cases omitted. The completion dialog
 reports the number of exported rows and any issues. Source files are not changed.
 If a source table explicitly identifies a different profile, it is reported and
 omitted rather than silently relabelled as the selected profile.
+
+The CSV exporter does not prepend apostrophes to numbers. In Excel, use
+**Data → From Text/CSV** with a decimal-point locale (for example English) for
+measurement columns, and keep subject/session identifiers as text so leading
+zeros are preserved. If an original CSV contains apostrophes, share that file
+before changing values or stripping characters.
 Mechanoregulation also requires its companion summary JSON to verify the
 profile; its figures and surface-event volumes are not required for export.
 Current Voidspace CSVs describe **large voidspace only**; the export does not
@@ -115,11 +121,18 @@ Imported cropped masks retain their own origin, spacing, and direction when
 loaded; the source volume's geometry must not overwrite their crop position.
 Loading contours, U-Net compartments, Voidspace, common regions, or Functional
 bone analysis masks marks them as batch-owned case overlays. Loading another
-case hides earlier batch overlays, while registered timepoints of the same subject
-and VOI remain visible together. Manually created segmentations are left alone.
+case or timepoint hides earlier batch overlays. Registered sessions remain loaded,
+but only the most recently loaded timepoint is visible by default. For paired
+Voidspace outputs, follow-up segments are initially visible and baseline segments
+are hidden. Use the Data/Segmentations visibility controls to switch timepoints.
+Manually created segmentations are left alone.
 Reloading a contour result replaces only the previously tagged batch result, even
 if a manual segmentation has the same name. Legacy untagged overlays are not hidden
 automatically; hide them manually or start a fresh scene for testing.
+
+Voidspace tables use subject/session/VOI/profile-specific scene names. Loading
+another case retains the earlier tables, although the table view displays one
+selected table at a time. Stack identity is included when available.
 
 ## Citation
 

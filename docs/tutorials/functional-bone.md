@@ -130,6 +130,9 @@ scanner masks. Corrected mask placement does not require rewriting those masks.
 | Missing voidspace in Native Functional Bone | Run native **Voidspace** for the same subject/session/VOI/stack; a registered-only map is insufficient. |
 | Missing common region | Run/review Timelapsed upstream; use **Native Functional Bone** if a native analysis is intended. |
 | Masks appear shifted | Verify source and mask case identities and original physical geometry; cropped masks can have different array dimensions. Do not fix placement by changing the scan origin. |
+| Radius displays a tibia-shaped Functional Bone analysis mask | Older generic analysis-mask filenames were shared between sites. Rerun **Functional Bone**, with **Skip existing** disabled, to write case-specific masks. The measurement CSVs already have site-specific filenames; this collision alone does not require rerunning contouring or Voidspace. |
+| Two registered timepoints overlap | Only the most recently loaded session is shown by default; for paired outputs, baseline segments start hidden. Switch visibility in Data/Segmentations to inspect the other session. Previously loaded legacy overlays may need manual hiding. |
+| Only one measurements table is visible | The table view displays the selected table. Case-specific tables remain in Data; choose the desired subject/session/site table there. |
 
 If a test still fails, share the Functional Bone profile, package versions,
 affected case identifiers, batch log and representative slices without private

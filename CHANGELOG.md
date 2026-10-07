@@ -7,6 +7,14 @@ All notable changes to this extension are documented in this file.
 ### Fixed
 
 - Use IPL-aligned core pore, cortical-thickness and trabecular-number definitions consistently in scene and batch; apply scene/registered reporting regions after native map calculation. Require selected pore maps for Functional Bone reuse, retain scientific-method provenance in tables/CSV sidecars, and do not skip current calculations based on older method tables. Exact native IPL parity remains unvalidated.
+- Write and discover Functional Bone analysis masks with subject/session/VOI-specific filenames, preventing radius/tibia overwrite. Refuse ambiguous legacy shared masks and explain how to regenerate them; preserve existing site-specific measurement CSVs.
+- Keep loaded Voidspace measurement tables distinct across subjects, sessions, sites, profiles and stacks; reloading a case replaces only that case's table.
+- Show only the most recently loaded registered timepoint by default, retaining both in the scene. Paired Voidspace baseline segments start hidden, with follow-up segments visible.
+
+### Changed
+
+- Preserve saved custom contouring recipes in the batch profile list alongside shipped scanner profiles and the fixed-default U-Net profile. Other analysis workflows retain their curated profiles.
+- Synchronize standard scene defaults with the shared repaired IPL-style core compartment sequence for XCTI/XCTII radius/tibia/knee: seed sigma 2, threshold 500 (knee 150), six-voxel XY peel, final close 30/50/36. Keep scanner-specific tissue defaults, explicit saved overrides and independent tissue filtering. Show effective final closing in Endosteal advanced settings and distinguish seed from tissue Gaussian filtering. Native IPL equivalence and XCTI/knee transfer are unvalidated.
 
 ### Added
 

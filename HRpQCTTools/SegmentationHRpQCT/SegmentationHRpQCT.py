@@ -146,20 +146,22 @@ def _contour_site_defaults(site, modality, periosteal_method="standard", endoste
     preset = SITE_PRESETS.get(str(site), SITE_PRESETS["radius"])
     defaults = {key: dict(value) for key, value in preset.items()}
     if endosteal_method == "standard":
-        defaults["inner"]["peel"] = 3
+        defaults["inner"].update(
+            endosteal_threshold=150.0 if str(site) == "knee" else 500.0,
+            gaussian_sigma=2.0, peel=6,
+            trabecular_close_radius={"radius": 30, "tibia": 50, "knee": 36}.get(str(site), 30))
     if str(modality) == "xct1" and periosteal_method == "standard":
         defaults["outer"]["periosteal_threshold"] = 150.0 if str(site) == "knee" else 250.0
     if str(modality) == "xct2" and str(site) in {"radius", "tibia"}:
         if periosteal_method == "standard":
             defaults["outer"].update(periosteal_threshold=320.0, gaussian_sigma=0.8)
-        if endosteal_method == "standard":
-            defaults["inner"].update(endosteal_threshold=380.0, gaussian_sigma=0.8)
     return defaults
 
 
 METHOD_PRESETS = {
     "seg_gauss": {
-        "gaussian_sigma": 1.2,
+        "gaussian_sigma": 0.8,
+        "gaussian_support": 1,
         "trab_threshold": 320.0,
         "cort_threshold": 450.0,
         "adaptive_low_threshold": 100.0,
@@ -1058,7 +1060,8 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
             segmentation=SegmentationParameters(
                 enabled=segmentation_method != "none",
                 method=segmentation_package_method,
-                gaussian_sigma=_float_param(segmentation_params, "gaussian_sigma", 1.2),
+                gaussian_sigma=_float_param(segmentation_params, "gaussian_sigma", 0.8),
+                gaussian_support=segmentation_params.get("gaussian_support", 1),
                 trab_threshold=_float_param(segmentation_params, "trab_threshold", 320.0),
                 cort_threshold=_float_param(segmentation_params, "cort_threshold", 450.0),
                 adaptive_low_threshold=_float_param(segmentation_params, "adaptive_low_threshold", 100.0),
@@ -1577,10 +1580,10 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.trabThresholdSpin = self._double_spin(0, 5000, 1, 320.0)
         self.cortThresholdSpin = self._double_spin(0, 5000, 1, 450.0)
-        self.gaussSigmaSpin = self._double_spin(0, 10, 2, 1.2)
+        self.gaussSigmaSpin = self._double_spin(0, 10, 2, 0.8)
         self._tip(self.trabThresholdSpin, "Trabecular tissue threshold in input image units (mg HA/cm³ for calibrated HR-pQCT), applied after Gaussian smoothing.")
         self._tip(self.cortThresholdSpin, "Cortical tissue threshold in input image units (mg HA/cm³ for calibrated HR-pQCT), applied after Gaussian smoothing.")
-        self._tip(self.gaussSigmaSpin, "Gaussian tissue smoothing sigma in voxels (scaled by the smallest voxel spacing). Applied once to the original image, independently of contour smoothing.")
+        self._tip(self.gaussSigmaSpin, "Gaussian tissue smoothing sigma in voxels (scaled by the smallest voxel spacing). Default support is 1 voxel (3x3x3 window). Applied once to the original image, independently of contour smoothing.")
         segmentation_form.addRow("Trab threshold", self.trabThresholdSpin)
         self._remember_expert_row("trab_threshold", self.trabThresholdSpin, form=segmentation_form, group="Bone segmentation")
         segmentation_form.addRow("Cort threshold", self.cortThresholdSpin)
@@ -1672,7 +1675,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.trabCloseSpin.maximum = 200
         self.trabCloseSpin.value = 25
         self.outerGaussSigmaSpin = self._double_spin(0, 10, 2, 1.5)
-        self.innerGaussSigmaSpin = self._double_spin(0, 10, 2, 1.5)
+        self.innerGaussSigmaSpin = self._double_spin(0, 10, 2, 2.0)
         self.outerKernelSpin = self._kernel_spin(5)
         self.innerKernelSpin = self._kernel_spin(3)
         self.outerOpenSpin = qt.QSpinBox()
@@ -1682,14 +1685,14 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         self.peelSpin = qt.QSpinBox()
         self.peelSpin.minimum = 0
         self.peelSpin.maximum = 50
-        self.peelSpin.value = 3
+        self.peelSpin.value = 6
         self._tip(self.trabCloseSpin, "Morphological close radius for trabecular compartment cleanup.")
         self._tip(self.outerGaussSigmaSpin, "Gaussian smoothing sigma applied before standard periosteal contour thresholding.")
-        self._tip(self.innerGaussSigmaSpin, "Gaussian smoothing sigma applied before standard endosteal contour thresholding.")
+        self._tip(self.innerGaussSigmaSpin, "Cortical-seed Gaussian sigma in voxels, before the IPL-style compartment sequence. Default 2.0; finite support is 3 voxels. Separate from tissue SEG smoothing.")
         self._tip(self.outerKernelSpin, "Kernel size for periosteal contour smoothing/refinement.")
         self._tip(self.innerKernelSpin, "Kernel size for endosteal contour smoothing/refinement.")
         self._tip(self.outerOpenSpin, "Opening radius for full-mask contour cleanup.")
-        self._tip(self.peelSpin, "Minimum cortical compartment rim: XY erosion radius in voxels (default 3; 0 disables). Applied after smoothing/filling; does not peel Z end slices or measure cortical bone thickness.")
+        self._tip(self.peelSpin, "Minimum cortical compartment rim: XY erosion radius in voxels (default 6; 0 disables). Applied to the marrow seed and after final component cleanup; does not peel Z end slices or measure cortical bone thickness.")
         endosteal_form.addRow("Trab close radius", self.trabCloseSpin)
         self._remember_expert_row("trabecular_close_radius", self.trabCloseSpin, form=endosteal_form, group="Endosteal contour")
         periosteal_form.addRow("Periosteal Gaussian sigma", self.outerGaussSigmaSpin)
@@ -2305,6 +2308,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             key: dict(params.get(key) or {}) for key in ("buie", "stable_3d")}
         self._lastContourMethods = (str(self.periostealContourCombo.currentData), str(self.endostealContourCombo.currentData))
         segmentation = dict(params.get("segmentation") or {})
+        self._gaussianSupport = segmentation.get("gaussian_support", 1)
         outer = dict(params.get("outer") or {})
         inner = dict(params.get("inner") or {})
         geodesic = dict(params.get("geodesic") or {})
@@ -2399,6 +2403,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         if not preset:
             return
         self.gaussSigmaSpin.value = float(preset["gaussian_sigma"])
+        self._gaussianSupport = preset.get("gaussian_support", 1)
         self.trabThresholdSpin.value = float(preset["trab_threshold"])
         self.cortThresholdSpin.value = float(preset["cort_threshold"])
         self.adaptiveLowSpin.value = float(preset["adaptive_low_threshold"])
@@ -2457,6 +2462,7 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
             "modality": modality,
             "segmentation": {
                 "gaussian_sigma": float(self.gaussSigmaSpin.value),
+                "gaussian_support": getattr(self, "_gaussianSupport", 1),
                 "trab_threshold": float(self.trabThresholdSpin.value),
                 "cort_threshold": float(self.cortThresholdSpin.value),
                 "adaptive_low_threshold": float(self.adaptiveLowSpin.value),

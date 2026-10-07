@@ -61,7 +61,8 @@ has been folded into Contouring.
 
 Expert settings are grouped by algorithm. Gaussian settings appear for Gaussian segmentation, Laplace-Hamming settings appear for Laplace-Hamming segmentation, and geodesic settings appear only when the geodesic periosteal contour is selected.
 
-Gaussian tissue segmentation defaults to **sigma 1.2 voxels**, **trabecular
+Gaussian tissue segmentation defaults to **sigma 0.8 voxels**, **support 1 voxel**
+(a finite 3×3×3 sampled Gaussian with reflected boundaries), **trabecular
 threshold 320** and **cortical threshold 450 mg HA/cm³**. Sigma is scaled by the
 smallest voxel spacing. This is one filter of the original density image;
 contour prefilters and boundary smoothing do not feed a second smoothed image
@@ -76,46 +77,48 @@ changing the reusable tissue segmentation or its material labelmap.
 The current toolbox requires `bone-contouring[unet]>=0.3.5`. Update the toolbox
 and the Bone Contouring runtime package through Setup, then restart Slicer.
 
-Standard uses the same topology-first compartment contouring for XCTI and XCTII,
+Standard uses the same repaired IPL-style compartment sequence for XCTI and XCTII,
 including radius, tibia, and knee. Standard XCTI uses periosteal threshold
 250 for radius/tibia and 150 for knee in both scene and batch defaults (calibrated
 mg HA/cm³, not the native-gray Laplace–Hamming tissue threshold). Saved custom
-profiles retain their explicit values. XCTII radius/tibia use outer threshold 320 and
-inner threshold 380 in calibrated mg HA/cm³; other presets retain their existing
-density settings. All envelopes are independent of tissue-segmentation thresholds.
+profiles retain their explicit values. XCTII radius/tibia use outer threshold 320;
+both scanners use cortical seed threshold 500 for radius/tibia and 150 for knee,
+in calibrated mg HA/cm³. Knee outer threshold is also 150. All envelopes are
+independent of tissue-segmentation thresholds.
 The fragile pre-fill opening is removed. The standard outer contour dilates in XY,
 fills the dilated shell, then erodes with the same radius. Filling **before erosion**
 prevents a narrow sealed bridge from reopening before the interior is filled.
-There is one shared Standard/Dual Threshold implementation; the package's
-`stable_3d` name is an alias, not another standard method. Modest 3D signed-distance smoothing uses XYZ sigmas
-`(0.03, 0.03, 0.06)` mm. This is not full-3D morphological closing or a literal
-Buie/native IPL reproduction. Native-mask comparisons currently cover XCTII
-radius/tibia only. Largest-component selection still assumes one target bone;
-this is not a multi-bone knee segmentation method.
-Before selecting the marrow component, the standard inner method restricts its
-low-density seed to full eroded in XY by `Peel` (default 3 voxels). This excludes
-the peripheral low-density layer, which can otherwise connect through cortical
-pores and swallow dense cortex during dilation and filling.
-Final axial filling after smoothing prevents reintroduced enclosed envelope
-holes; the final trabecular ROI is constrained to full eroded in XY by `Peel`
-(default 3 voxels for all standard profiles) before cortical subtraction.
-The same minimum cortical compartment rim is reapplied after smoothing/filling and
-does not peel Z end slices. It is not measured cortical bone thickness or an
-original Buie requirement; an explicit peel of 0 disables the constraint.
+The inner sequence follows the supplied Calgary IPL STEP_1 order (Boyd/Whittier):
+Gaussian seed sigma 2/support 3 voxels, inversion/rank selection, six-voxel XY
+peel, 3D erosion/dilation by 3, closing/opening by 15, corner filters, final
+closing and axial component cleanup. Final closing is 30 voxels for radius,
+50 for tibia and 36 for the knee adaptation. These are voxel distances, shared
+across XCTI/XCTII, not physically resolution-independent settings.
+Morphology retains XY background and continues terminal slices in Z to avoid
+artificial scan-end caps. No extra signed-distance smoothing is applied to the
+inner contour; the existing outer smoothing remains unchanged.
 
-Ignored legacy controls are hidden for this standard; the effective Peel control
-is visible in Endosteal expert settings. Physical smoothing and
-the endosteal footprint are recorded in exported recipes (`(31, 31, 1)` dimensions
-for XCTII radius/tibia; existing Buie defaults `(10, 10, 1)` for XCTI/knee),
-and custom recipe overrides are preserved. Algorithm revision, effective
-parameters, and advisory contour QA are saved on the generated segmentation
-node. Existing saved masks are not automatically changed. Inspect each result:
+The six-voxel minimum cortical compartment rim is reapplied after final cleanup,
+without peeling Z end slices. It is not measured cortical thickness or an
+original Buie requirement; explicit Peel 0 disables it. Effective endosteal
+threshold, Gaussian sigma, Peel and final closing controls remain available in
+advanced settings and saved custom profiles. Ignored legacy controls stay hidden.
+The core's explicit `stable_3d` inner stage retains the older development method;
+it is no longer an alias for standard.
+
+This is an IPL-style translation, not verified native IPL equivalence. The
+supplied script documents XCTII radius/tibia only; XCTI transfer and knee's
+36-voxel close/tibia corner rule need further validation. Largest-component
+selection assumes one target bone, not multi-bone knee segmentation.
+Algorithm revision `shared_ipl_standard_v1`, effective parameters and advisory
+QA are saved on the generated segmentation node. Existing saved masks are not
+automatically changed. Inspect each result:
 the method cannot guarantee anatomical correctness or voxel-identical Scanco
 contours.
 
 ## Batch Workflow
 
-Use `Bone Imaging > I/O > Batch Processor` for cohort contouring. Each row corresponds to one image. Batch contouring writes generated masks under `derivatives/BoneContours/` and records how they were generated in sidecars and manifests. Select **Bone Contouring → U-Net (Neeteson et al.)** for published compartment masks. Existing standard and custom batch profiles remain available; batch does not duplicate the scene's method selectors.
+Use `Bone Imaging > I/O > Batch Processor` for cohort contouring. Each row corresponds to one image. Batch contouring writes generated masks under `derivatives/BoneContours/` and records how they were generated in sidecars and manifests. Select **Bone Contouring → U-Net contours (Neeteson et al.) + LH SEG** for published compartment masks and tissue segmentation. Saved custom contouring profiles are also available; edit and export their settings in scene mode rather than editing individual batch rows.
 
 ## Profiles
 
@@ -123,8 +126,11 @@ Scene scanner/site presets and algorithm choices are independent, avoiding a lon
 list of combinations. Saved custom scene profiles retain edited numerical settings
 and automatic site selection. Existing saved profiles still load.
 
-Batch retains its shipped scanner profiles and standard custom profiles. U-Net and
-segmentation-only scene recipes are scene-only; batch U-Net uses its fixed profile.
+Batch retains its supported scanner/workflow profiles and discovers saved custom
+contouring profiles, including compatible exported scene recipes. Scene-only
+U-Net and tissue-only recipes are not run as standard contouring profiles;
+batch U-Net uses its dedicated fixed profile. Other analysis workflows retain
+curated profiles; contact the maintainers to discuss a new large-scale analysis recipe.
 
 Common profile families include:
 
@@ -146,7 +152,7 @@ Advanced settings expose the algorithm choices that are normally fixed by a prof
 | Endosteal contour | Inner contour extraction and trabecular/cortical separation behavior. |
 | Mask and material outputs | Generation of full, trabecular, cortical, and FEA material label outputs. |
 
-To reuse edited settings, enter a workflow display name and export a custom profile. Custom profiles are stored outside the shipped package profiles; standard contour recipes are also discovered by the Batch Processor.
+To reuse edited settings in scene mode, enter a workflow display name and export a custom profile. Custom profiles are stored outside the shipped package profiles and are not automatically added to the Batch Processor.
 
 ## Output Roles
 

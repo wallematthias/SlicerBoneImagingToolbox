@@ -294,7 +294,7 @@ def test_batch_custom_standard_profiles_remain_available_but_scene_cnn_recipes_a
                types.SimpleNamespace(name="Legacy tissue-only", kind="json"),
                types.SimpleNamespace(name="Broken recipe", kind="json"),
                types.SimpleNamespace(name="Other standard", kind="json")]
-    monkeypatch.setattr(module, "list_profiles", lambda tool: records)
+    monkeypatch.setattr(module, "list_profiles", lambda tool: records, raising=False)
     def payload(record):
         if record.name == "Broken recipe":
             raise ValueError("Invalid JSON")
@@ -1560,14 +1560,6 @@ def test_batch_processor_compacts_mechanoregulation_summary_for_table_view(tmp_p
         {"ROI": "full", "Metric": "ORR", "Unit": "% per 1% SED decrease", "Low conf": "0.9", "Median": "1.27", "High conf": "1.8"},
         {"ROI": "full", "Metric": "ORF", "Unit": "% per 1% SED increase", "Low conf": "1.8", "Median": "2.47", "High conf": "3.2"},
     ]
-
-
-def test_batch_processor_includes_saved_bone_contouring_profiles() -> None:
-    source = MODULE_PATH.read_text(encoding="utf-8")
-
-    assert "list_profiles" in source
-    assert 'list_profiles("bone-contouring")' in source
-    assert "profiles.append((record.name, record.name, False))" in source
 
 
 def test_microarchitecture_registered_profile_groups_timepoints_with_spanning_action(tmp_path: Path, monkeypatch) -> None:
@@ -2997,7 +2989,7 @@ def test_functional_bone_profile_uses_common_region_minus_voidspace(tmp_path: Pa
     assert command[command.index("--voidspace-mask") + 1].endswith("voidspace_large_mask.nii.gz")
     assert command[command.index("--dataset-root") + 1] == str(tmp_path)
     assert command[command.index("--output-dir") + 1].endswith("/functional_bone_measurements")
-    assert "functional_bone_analysis_mask{analysis_extension}" in command[1]
+    assert "_desc-functional-bone-analysis_mask{analysis_extension}" in command[1]
     assert "_mask_on_reference_grid" in command[1]
     row_without_cort = dict(rows[0])
     row_without_cort.pop("cort_mask_path")
@@ -3142,8 +3134,8 @@ def test_functional_bone_existing_outputs_include_analysis_mask(tmp_path: Path, 
         )
         functional_dir.mkdir(parents=True)
         (functional_dir / f"sub-001_ses-{session}_voi-radiusleft_measurements.csv").write_text("Parameter,Mean\nTb.N,1.0\n")
-        (functional_dir / "functional_bone_analysis_mask.nii.gz").write_bytes(b"")
         _mark_current_microarchitecture(functional_dir / f"sub-001_ses-{session}_voi-radiusleft_measurements.csv")
+        (functional_dir / f"sub-001_ses-{session}_voi-radiusleft_desc-functional-bone-analysis_mask.nii.gz").write_bytes(b"")
     write_manifest(
         DerivativeManifest.create("BoneContours", tmp_path, {"name": "test", "version": "1"}, records=records),
         tmp_path / "derivatives" / "BoneContours" / "manifest.json",
@@ -3161,7 +3153,7 @@ def test_functional_bone_existing_outputs_include_analysis_mask(tmp_path: Path, 
     )
 
     assert rows[0]["action"] == "Load"
-    assert any(path.endswith("functional_bone_analysis_mask.nii.gz") for path in rows[0]["output_paths"])
+    assert any(path.endswith("_desc-functional-bone-analysis_mask.nii.gz") for path in rows[0]["output_paths"])
 
 
 @pytest.mark.parametrize("profile, directory, expected_count", [
@@ -3169,7 +3161,8 @@ def test_functional_bone_existing_outputs_include_analysis_mask(tmp_path: Path, 
     ("functional-bone-native", "functional_bone_native_measurements", 26),
 ])
 @pytest.mark.parametrize("cropped_voidspace", [False, True])
-def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: Path, monkeypatch, cropped_voidspace, profile, directory, expected_count) -> None:
+@pytest.mark.parametrize("site", ["radiusleft", "tibialeft"])
+def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: Path, monkeypatch, cropped_voidspace, profile, directory, expected_count, site) -> None:
     pytest.importorskip("scipy")
     sitk = pytest.importorskip("SimpleITK")
     module = _import_batch_processor_module(monkeypatch)
@@ -3184,14 +3177,14 @@ def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: 
     voidspace = np.zeros((3, 3, 3), dtype=np.uint8)
     voidspace[1, 1, 1] = 1
     xct_dir = tmp_path / "sub-001" / "ses-001" / "xct"
-    xct_dir.mkdir(parents=True)
-    image_path = xct_dir / "sub-001_ses-001_voi-radiusleft_xct.nii.gz"
+    xct_dir.mkdir(parents=True, exist_ok=True)
+    image_path = xct_dir / f"sub-001_ses-001_voi-{site}_xct.nii.gz"
     sitk.WriteImage(sitk.GetImageFromArray(image), str(image_path))
     contour_dir = tmp_path / "derivatives" / "BoneContours" / "sub-001" / "ses-001" / "xct"
-    contour_dir.mkdir(parents=True)
+    contour_dir.mkdir(parents=True, exist_ok=True)
     contour_paths = {}
     for filename_role, array in {"seg": seg, "full": full, "trab": trab, "cort": cort}.items():
-        path = contour_dir / f"sub-001_ses-001_voi-radiusleft_desc-{filename_role}_mask.nii.gz"
+        path = contour_dir / f"sub-001_ses-001_voi-{site}_desc-{filename_role}_mask.nii.gz"
         sitk.WriteImage(sitk.GetImageFromArray(array), str(path))
         contour_paths[filename_role] = path
     common_path = tmp_path / "common.nii.gz"
@@ -3206,8 +3199,8 @@ def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: 
         "subject": "001",
         "session": "001",
         "session_value": "001",
-        "voi": "radiusleft",
-        "voi_value": "radiusleft",
+        "voi": site,
+        "voi_value": site,
         "image_path": str(image_path),
         "seg_path": str(contour_paths["seg"]),
         "full_mask_path": str(contour_paths["full"]),
@@ -3247,16 +3240,16 @@ def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: 
         / "ses-001"
         / "xct"
         / directory
-        / "sub-001_ses-001_voi-radiusleft_measurements.csv"
+        / f"sub-001_ses-001_voi-{site}_measurements.csv"
     )
     with output.open(newline="", encoding="utf-8") as handle:
         rows = {row["Parameter"]: row for row in csv.DictReader(handle)}
     assert float(rows["Tt.BMD"]["Mean"]) == 100.0
-    analysis_path = output.parent / "functional_bone_analysis_mask.nii.gz"
+    analysis_path = output.parent / f"sub-001_ses-001_voi-{site}_desc-functional-bone-analysis_mask.nii.gz"
     analysis_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(analysis_path)))
     assert np.count_nonzero(analysis_mask) == expected_count
-    assert not (maps_dir / "sub-001_ses-001_voi-radiusleft_map-functional-bone.npy").exists()
-    assert any(maps_dir.glob("sub-001_ses-001_voi-radiusleft_map-*.nii.gz"))
+    assert not (maps_dir / f"sub-001_ses-001_voi-{site}_map-functional-bone.npy").exists()
+    assert any(maps_dir.glob(f"sub-001_ses-001_voi-{site}_map-*.nii.gz"))
 
 
 @pytest.mark.parametrize("voidspace_profile", ["native", "registered"])
@@ -3295,11 +3288,11 @@ def test_native_functional_bone_discovery_needs_native_voidspace_not_common_regi
             folder = tmp_path / "derivatives/Microarchitecture/sub-001" / f"ses-{row['session_value']}" / "xct/functional_bone_native_measurements"
             folder.mkdir(parents=True)
             (folder / f"sub-001_ses-{row['session_value']}_voi-radiusleft_measurements.csv").write_text("Parameter,Mean\nTt.BMD,100\n")
-            (folder / "functional_bone_analysis_mask.nii.gz").write_bytes(b"")
             _mark_current_microarchitecture(folder / f"sub-001_ses-{row['session_value']}_voi-radiusleft_measurements.csv")
+            (folder / f"sub-001_ses-{row['session_value']}_voi-radiusleft_desc-functional-bone-analysis_mask.nii.gz").write_bytes(b"")
         loaded_rows, _ = logic.discover_rows(tmp_path, tool="microarchitecture", profile="functional-bone-native", registered=registered_request)
         assert [row["action"] for row in loaded_rows] == ["Load", "Load"]
-        assert all(any(path.endswith("functional_bone_analysis_mask.nii.gz") for path in row["output_paths"]) for row in loaded_rows)
+        assert all(any(path.endswith("_desc-functional-bone-analysis_mask.nii.gz") for path in row["output_paths"]) for row in loaded_rows)
     else:
         assert [row["action"] for row in rows] == ["Missing", "Missing"]
         assert all("native Voidspace" in row["status"] for row in rows)
@@ -3324,7 +3317,7 @@ def test_functional_bone_measurement_discovery_isolates_profile_outputs(tmp_path
     selected = logic._existing_outputs_for_profile("microarchitecture", registered, outputs, profile)
     assert [item.path.parent.name for item in selected] == [directory]
     if profile.startswith("functional-bone"):
-        mask = base / directory / "functional_bone_analysis_mask.nii.gz"
+        mask = base / directory / "sub-001_ses-001_voi-radiusleft_desc-functional-bone-analysis_mask.nii.gz"
         mask.write_bytes(b"")
         row = dict(subject="001", session="001", voi="radiusleft", profile=profile, registered=registered)
         assert logic.rediscover_row_output_paths(tmp_path, "microarchitecture", row) == [str(selected[0].path), str(mask)]

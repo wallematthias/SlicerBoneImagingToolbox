@@ -114,6 +114,13 @@ The Slicer load action should load:
 - common-region segmentation for registered outputs.
 - functional-bone analysis-region segmentation for functional bone outputs.
 
+Functional Bone analysis masks include the case identity in their filename:
+`sub-<id>_ses-<id>_voi-<site>_desc-functional-bone-analysis_mask.nii.gz`
+(or `.npy` for array-only inputs). Radius and tibia therefore do not overwrite
+each other's analysis mask. Older generic `functional_bone_analysis_mask` files
+are ambiguous and are not loaded automatically; rerun the applicable Functional
+Bone profile with **Skip existing** disabled to regenerate case-specific masks.
+
 ## Reported Measures
 
 Common outputs include:

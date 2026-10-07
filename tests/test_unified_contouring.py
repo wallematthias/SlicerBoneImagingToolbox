@@ -64,9 +64,9 @@ def test_unet_worker_tissue_seg_matches_single_gaussian_of_original_image(tmp_pa
              segmentation=json.dumps(settings))
     image = sitk.GetImageFromArray(density)
     image.SetSpacing((.0607,) * 3)
-    smoothed = sitk.SmoothingRecursiveGaussian(image, 1.2 * .0607)
-    once = sitk.GetArrayFromImage(smoothed)
-    twice = sitk.GetArrayFromImage(sitk.SmoothingRecursiveGaussian(smoothed, 1.2 * .0607))
+    from scipy.ndimage import gaussian_filter
+    once = gaussian_filter(density, .8, radius=1, mode='reflect')
+    twice = gaussian_filter(once, .8, radius=1, mode='reflect')
     def threshold(values):
         return ((values >= 320) & (trab > 0)) | ((values >= 450) & (compartments["cort"] > 0))
     expected = threshold(once)
