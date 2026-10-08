@@ -27,6 +27,31 @@ exec(open(script).read(), {"__name__": "__main__", "SCRIPT_PATH": script})
 
 Restart Slicer after linking.
 
+## Updating A GitHub Installation
+
+Open `Bone Imaging > Setup > Toolbox Setup`, click **Check for updates**, then
+**Update toolbox**. This updates toolbox code from GitHub, separately from its
+Python runtime packages:
+
+- A Git clone uses `git pull --ff-only` on its configured upstream. Git must be
+  available, and the checkout must be clean and fast-forwardable. Local changes
+  are not overwritten. For the current public toolbox, use the `main` branch
+  tracking `origin/main`.
+- A GitHub ZIP download is replaced with the latest `main` archive after backing
+  up the previous folder beside it. Keep the download in a writable folder.
+- An Extension Manager installation must be updated through Slicer's Extension
+  Manager, not this button.
+
+Restart Slicer after updating the toolbox. Then return to Toolbox Setup and use
+**Check package updates** and **Install / update needed** for its runtime
+packages. Updating packages alone does not update toolbox modules.
+
+If updating fails, retain the error dialog and Setup log. Include the installed
+and latest revisions, installation folder, Slicer version, and whether the
+download was a Git clone or ZIP. Network restrictions, folder permissions, and
+Git availability or checkout state can affect the update; a newer GitHub tag
+does not itself update an installed copy.
+
 ## Runtime Packages
 
 The Setup module is the canonical installer for public runtime packages used by the toolbox. It checks package versions in Slicer Python and offers install/update buttons for missing or outdated packages.

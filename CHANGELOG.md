@@ -4,6 +4,8 @@ All notable changes to this extension are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-08
+
 ### Dependencies
 
 - Require bone-contouring 0.4.0 and bone-microarchitecture 0.3.0 for the updated IPL-style algorithms, and parosol-py 0.1.26 for native solver path-length safety.
@@ -24,6 +26,7 @@ All notable changes to this extension are documented in this file.
 
 - Batch Processor **Export to CSV** for existing Microarchitecture/Functional Bone, Voidspace, Timelapsed Remodelling, Plate/Rod, FEA and Mechanoregulation summaries. Export one wide row per case or scan pair, with provenance, profile separation and missing/conflicting-result reports, without rerunning analysis.
 - Fetch only measurement CSVs and discovery metadata for server exports using a fresh temporary snapshot, avoiding large volume downloads and stale local results.
+- Document the separate toolbox-code and runtime-package update buttons, GitHub clone/ZIP update behavior, restart requirements, and diagnostics for failed updates.
 
 ## [0.3.6] - 2026-10-05
 
