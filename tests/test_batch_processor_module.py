@@ -2871,7 +2871,7 @@ def test_batch_profiles_are_tool_specific_and_encode_registration() -> None:
     assert '("Dynamic voidspace", "dynamic", True)' in source
     assert '("Voidspace", "voidspace")' in source
     assert '"voidspace": "Voidspace"' in source
-    assert '"voidspace.cli"' in source
+    assert "from voidspace.cli import main" in source
     assert "from voidspace import analyze_maps, run_case" in source
     assert 'if tool == "voidspace":' in source
     assert "def profile_groups_timepoints(tool: str, profile: str) -> bool:" in source
@@ -3353,9 +3353,9 @@ def test_voidspace_batch_command_uses_explicit_segmentation_and_optional_mask(tm
     native = logic.command_for_row(tmp_path, tool="voidspace", profile="standard", row=row, force=True)
     registered = logic.command_for_row(tmp_path, tool="voidspace", profile="registered", row=row)
 
-    assert native == [
-        "-m",
-        "voidspace.cli",
+    assert native[0] == "-c"
+    assert "from voidspace.cli import main" in native[1]
+    assert native[2:] == [
         "run-case",
         "--segmentation",
         str(tmp_path / "seg.AIM"),
@@ -3777,7 +3777,8 @@ def test_voidspace_discovery_marks_existing_outputs_loadable_without_manifest(tm
     )
     output_dir.mkdir(parents=True)
     for name in ("voidspace_measurements.csv", "voidspace_large_mask.AIM", "voidspace_all_mask.AIM"):
-        (output_dir / name).write_bytes(b"")
+        (output_dir / name).write_bytes(b"mask fixture")
+    (output_dir / "voidspace_measurements.csv").write_text("VS.TV,VS.V,Tt.V,VS.N,VS.Ar\n0,0,1,0,0\n")
 
     rows, _message = module.BatchProcessorLogic().discover_rows(
         tmp_path,
@@ -3793,6 +3794,189 @@ def test_voidspace_discovery_marks_existing_outputs_loadable_without_manifest(tm
         str(output_dir / "voidspace_all_mask.AIM"),
         str(output_dir / "voidspace_large_mask.AIM"),
     ]
+
+
+@pytest.mark.parametrize("interrupted_at", ["analysis", "large", "all", "csv_header"])
+def test_cancelled_voidspace_outputs_remain_runnable(monkeypatch, tmp_path, interrupted_at):
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    row = dict(subject="001", session_value="002", voi_value="tibia", profile="registered",
+               action="Run", status="Ready")
+    folder = logic._voidspace_output_dir_for_row(tmp_path, "registered", row)
+    folder.mkdir(parents=True)
+    names = ["voidspace_analysis_mask.nii.gz", "voidspace_large_mask.nii.gz", "voidspace_all_mask.nii.gz"]
+    count = {"analysis": 1, "large": 2, "all": 3, "csv_header": 3}[interrupted_at]
+    for name in names[:count]:
+        (folder / name).write_bytes(b"partial run fixture")
+    if interrupted_at == "csv_header":
+        (folder / "voidspace_measurements.csv").write_text("VS.TV,VS.V,Tt.V,VS.N,VS.Ar\n")
+    logic._annotate_voidspace_existing_outputs(tmp_path, [row])
+    assert row["action"] == "Run"
+    assert row["status"] != "Done"
+
+
+def test_completed_voidspace_baseline_does_not_hide_incomplete_followup(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    rows = [dict(subject="001", session_value=session, voi_value="tibia", profile="registered",
+                 group_id="001|tibia", action="Run" if session == "001" else "", status="Ready",
+                 action_row_span=2 if session == "001" else 0) for session in ("001", "002")]
+    logic._annotate_voidspace_existing_outputs(tmp_path, rows)
+    assert rows[0]["action"] == "Run"
+    assert rows[0]["status"] == "Ready"
+    baseline = logic._voidspace_output_dir_for_row(tmp_path, "registered", rows[0])
+    baseline.mkdir(parents=True)
+    for name in ("voidspace_analysis_mask.nii.gz", "voidspace_all_mask.nii.gz", "voidspace_large_mask.nii.gz"):
+        (baseline / name).write_bytes(b"complete fixture")
+    (baseline / "voidspace_measurements.csv").write_text("VS.TV,VS.V,Tt.V,VS.N,VS.Ar\n0,0,1,0,0\n")
+    followup = logic._voidspace_output_dir_for_row(tmp_path, "registered", rows[1])
+    followup.mkdir(parents=True)
+    (followup / "voidspace_analysis_mask.nii.gz").write_bytes(b"interrupted fixture")
+    logic._annotate_voidspace_existing_outputs(tmp_path, rows)
+    assert rows[0]["action"] == "Run"
+    assert rows[1]["action"] == ""
+    assert rows[1]["status"] != "Done"
+    for name in ("voidspace_all_mask.nii.gz", "voidspace_large_mask.nii.gz"):
+        (followup / name).write_bytes(b"complete fixture")
+    (followup / "voidspace_measurements.csv").write_text("VS.TV,VS.V,Tt.V,VS.N,VS.Ar\n0,0,1,0,0\n")
+    logic._annotate_voidspace_existing_outputs(tmp_path, rows)
+    assert rows[0]["action"] == "Load"
+    assert rows[1]["action"] == ""
+    assert all(row["status"] == "Done" for row in rows)
+
+
+def test_partial_voidspace_group_still_requires_missing_followup_inputs(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    logic = module.BatchProcessorLogic()
+    rows = [dict(subject="001", session_value=session, voi_value="tibia", profile="registered",
+                 group_id="001|tibia", action="Missing" if session == "001" else "",
+                 status="Missing follow-up segmentation", action_row_span=2 if session == "001" else 0)
+            for session in ("001", "002")]
+    baseline = logic._voidspace_output_dir_for_row(tmp_path, "registered", rows[0])
+    baseline.mkdir(parents=True)
+    for name in ("voidspace_analysis_mask.nii.gz", "voidspace_all_mask.nii.gz", "voidspace_large_mask.nii.gz"):
+        (baseline / name).write_bytes(b"complete fixture")
+    (baseline / "voidspace_measurements.csv").write_text("VS.TV,VS.V,Tt.V,VS.N,VS.Ar\n0,0,1,0,0\n")
+    logic._annotate_voidspace_existing_outputs(tmp_path, rows)
+    assert rows[0]["action"] == "Missing"
+    assert rows[0]["status"] == "Missing follow-up segmentation"
+
+
+@pytest.mark.parametrize("profile", ["standard", "registered", "dynamic"])
+def test_voidspace_command_resumes_partial_outputs_without_folder_deletion(monkeypatch, tmp_path, profile):
+    sitk = pytest.importorskip("SimpleITK")
+    module = _import_batch_processor_module(monkeypatch)
+    image = sitk.GetImageFromArray(np.ones((9, 9, 9), dtype=np.uint8))
+    image.SetSpacing((1, 1, 1))
+    for name in ("seg", "full", "common"):
+        sitk.WriteImage(image, str(tmp_path / f"{name}.nii.gz"))
+    row = dict(subject="001", session_value="001", voi_value="tibia", profile=profile,
+               seg_path=str(tmp_path / "seg.nii.gz"), full_mask_path=str(tmp_path / "full.nii.gz"),
+               mask_path=str(tmp_path / "full.nii.gz"), common_region_path=str(tmp_path / "common.nii.gz"))
+    logic = module.BatchProcessorLogic()
+    directory = logic._voidspace_output_dir_for_row(tmp_path, profile, row)
+    directory.mkdir(parents=True)
+    if profile == "dynamic":
+        for timepoint in ("baseline", "followup"):
+            row[f"{timepoint}_seg_path"] = row["seg_path"]
+            row[f"{timepoint}_full_mask_path"] = row["full_mask_path"]
+            row[f"{timepoint}_output_dir"] = str(directory / timepoint)
+        partial = directory / "voidspace_expanded_mask.nii.gz"
+    else:
+        partial = directory / "voidspace_large_mask.nii.gz"
+    partial.write_bytes(b"cancelled during mask write")
+    command = logic.command_for_row(tmp_path, tool="voidspace", profile=profile, row=row, force=False)
+    subprocess.run([sys.executable, *command], check=True, cwd=ROOT)
+    csv_name = "voidspace_change_measurements.csv" if profile == "dynamic" else "voidspace_measurements.csv"
+    assert (directory / csv_name).stat().st_size > 0
+    assert sitk.ReadImage(str(partial)).GetSize() == (9, 9, 9)
+    mtimes = {path: path.stat().st_mtime_ns for path in directory.rglob("*") if path.is_file()}
+    subprocess.run([sys.executable, *command], check=True, cwd=ROOT)
+    assert {path: path.stat().st_mtime_ns for path in mtimes} == mtimes
+    if profile in {"registered", "dynamic"}:
+        # Resume an unfinished second stage without rebuilding completed maps.
+        cached_dir = (logic._voidspace_output_dir_for_row(tmp_path, "standard", row)
+                      if profile == "registered" else Path(row["baseline_output_dir"]))
+        cached_mtimes = {path: path.stat().st_mtime_ns for path in cached_dir.rglob("*") if path.is_file()}
+        (directory / csv_name).unlink()
+        if profile == "dynamic":
+            (Path(row["followup_output_dir"]) / "voidspace_measurements.csv").unlink()
+        subprocess.run([sys.executable, *command], check=True, cwd=ROOT)
+        assert {path: path.stat().st_mtime_ns for path in cached_mtimes} == cached_mtimes
+        assert logic._voidspace_outputs_complete_for_row(tmp_path, row)
+
+
+@pytest.mark.parametrize("profile", ["standard", "registered", "dynamic"])
+def test_failed_voidspace_rerun_does_not_reuse_previous_measurements(monkeypatch, tmp_path, profile):
+    """A failed forced rerun can leave all the previous output files in place."""
+    sitk = pytest.importorskip("SimpleITK")
+    module = _import_batch_processor_module(monkeypatch)
+    image = sitk.GetImageFromArray(np.ones((9, 9, 9), dtype=np.uint8))
+    for name in ("seg", "full", "common"):
+        sitk.WriteImage(image, str(tmp_path / f"{name}.nii.gz"))
+    row = dict(subject="001", session_value="001", voi_value="radius", profile=profile,
+               seg_path=str(tmp_path / "seg.nii.gz"), full_mask_path=str(tmp_path / "full.nii.gz"),
+               mask_path=str(tmp_path / "full.nii.gz"), common_region_path=str(tmp_path / "common.nii.gz"))
+    logic = module.BatchProcessorLogic()
+    directory = logic._voidspace_output_dir_for_row(tmp_path, profile, row)
+    if profile == "dynamic":
+        for timepoint in ("baseline", "followup"):
+            row[f"{timepoint}_seg_path"] = row["seg_path"]
+            row[f"{timepoint}_full_mask_path"] = row["full_mask_path"]
+            row[f"{timepoint}_output_dir"] = str(directory / timepoint)
+
+    def run(case, force=False):
+        command = logic.command_for_row(tmp_path, tool="voidspace", profile=profile, row=case, force=force)
+        return subprocess.run([sys.executable, *command], cwd=ROOT, capture_output=True, text=True)
+
+    assert run(row).returncode == 0
+    broken = dict(row)
+    broken["baseline_seg_path" if profile == "dynamic" else "seg_path"] = str(tmp_path / "missing.nii.gz")
+    failed = run(broken, force=True)
+    assert failed.returncode != 0
+    assert "missing.nii.gz" in failed.stderr
+    assert not logic._voidspace_outputs_complete_for_row(tmp_path, row)
+    if profile == "dynamic":
+        # A forced rerun must also replace the previous quiescent map.
+        sitk.WriteImage(image, str(directory / "voidspace_quiescent_mask.nii.gz"))
+    resumed = run(row)
+    assert resumed.returncode == 0, resumed.stderr
+    assert logic._voidspace_outputs_complete_for_row(tmp_path, row)
+    if profile == "dynamic":
+        assert not sitk.GetArrayFromImage(sitk.ReadImage(str(directory / "voidspace_quiescent_mask.nii.gz"))).any()
+
+
+@pytest.mark.parametrize("csv_row", ["", "0,0,1,0,\n", "0,0,1,0,nan\n", "0,0,1,0,oops\n"])
+def test_voidspace_completion_rejects_unfinished_measurements(tmp_path, csv_row):
+    from SlicerBoneImagingToolboxLib.voidspace_batch import voidspace_outputs_complete
+
+    for stem in ("voidspace_large_mask", "voidspace_all_mask"):
+        (tmp_path / f"{stem}.AIM").write_bytes(b"mask fixture")
+    (tmp_path / "voidspace_measurements.csv").write_text("VS.TV,VS.V,Tt.V,VS.N,VS.Ar\n" + csv_row)
+    assert not voidspace_outputs_complete(tmp_path)
+
+
+def test_grouped_voidspace_finish_keeps_incomplete_followup_runnable(monkeypatch, tmp_path):
+    module = _import_batch_processor_module(monkeypatch)
+    widget = object.__new__(module.BatchProcessorWidget)
+    widget.logic = module.BatchProcessorLogic()
+    widget._batchRows = [
+        dict(subject="001", session_value=session, voi_value="tibia", profile="registered",
+             group_id="001|tibia", action="Load" if session == "001" else "", action_row_span=2 if session == "001" else 0)
+        for session in ("001", "002")
+    ]
+    widget._current_local_dataset_root = lambda: tmp_path
+    widget._row_indices_for_group_action = lambda _: [0, 1]
+    widget._set_row_status = lambda index, status: widget._batchRows[index].update(status=status)
+    widget._set_row_action = lambda index, action: widget._batchRows[index].update(action=action)
+    folder = widget.logic._voidspace_output_dir_for_row(tmp_path, "registered", widget._batchRows[0])
+    folder.mkdir(parents=True)
+    for name in ("voidspace_analysis_mask.nii.gz", "voidspace_large_mask.nii.gz", "voidspace_all_mask.nii.gz"):
+        (folder / name).write_bytes(b"complete fixture")
+    (folder / "voidspace_measurements.csv").write_text("VS.TV,VS.V,Tt.V,VS.N,VS.Ar\n0,0,1,0,0\n")
+    widget._set_group_action_load_if_outputs_are_ready(0, "voidspace")
+    assert widget._batchRows[0]["action"] == "Run"
+    assert widget._batchRows[0]["status"] != "Done"
 
 
 def test_batch_processor_excludes_motion_scoring_from_shared_batch_selector() -> None:

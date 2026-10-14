@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from dataclasses import replace
 import importlib
+import inspect
 import json
 import numpy as np
 import os
@@ -88,10 +89,12 @@ except Exception as exc:
 import SlicerBoneImagingToolboxLib.fea_batch as _fea_batch_module  # noqa: E402
 import SlicerBoneImagingToolboxLib.batch_backends as _batch_backends_module  # noqa: E402
 import SlicerBoneImagingToolboxLib.remote_batch as _remote_batch_module  # noqa: E402
+import SlicerBoneImagingToolboxLib.voidspace_batch as _voidspace_batch_module  # noqa: E402
 
 _fea_batch_module = importlib.reload(_fea_batch_module)
 _batch_backends_module = importlib.reload(_batch_backends_module)
 _remote_batch_module = importlib.reload(_remote_batch_module)
+_voidspace_batch_module = importlib.reload(_voidspace_batch_module)
 
 from SlicerBoneImagingToolboxLib.batch_backends import available_batch_backends  # noqa: E402
 from SlicerBoneImagingToolboxLib.measurement_export import (  # noqa: E402
@@ -219,8 +222,30 @@ _SUPPRESSED_PROCESS_OUTPUT_MARKERS = (
     "itkObjectFactoryBase.cxx",
     "libMRMLIDIOPlugin.dylib",
 )
-_VOIDSPACE_REGISTERED_SCRIPT = r"""
-from __future__ import annotations
+# Embed the pure-Python checks so remote workers need only the core packages.
+_VOIDSPACE_COMPLETION_SCRIPT = inspect.getsource(_voidspace_batch_module)
+_VOIDSPACE_NATIVE_SCRIPT = _VOIDSPACE_COMPLETION_SCRIPT + r"""
+import argparse
+import sys
+from voidspace.cli import main
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--output-dir", type=Path, required=True)
+parser.add_argument("--force", action="store_true")
+args, _ = parser.parse_known_args()
+if not args.force and voidspace_outputs_complete(args.output_dir):
+    raise SystemExit(0)
+# Only incomplete cases (or explicitly requested reruns) reach the core CLI.
+if not args.force:
+    sys.argv.append("--force")
+marker = begin_voidspace_outputs(args.output_dir)
+exit_code = main()
+if exit_code == 0:
+    marker.unlink()
+raise SystemExit(exit_code)
+"""
+
+_VOIDSPACE_REGISTERED_SCRIPT = _VOIDSPACE_COMPLETION_SCRIPT + r"""
 
 import argparse
 from pathlib import Path
@@ -245,20 +270,16 @@ def main() -> int:
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
+    if not args.force and voidspace_outputs_complete(output_dir, require_analysis_mask=True):
+        return 0
     native_output_dir = Path(args.native_output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     native_output_dir.mkdir(parents=True, exist_ok=True)
-    large_void = native_output_dir / "voidspace_large_mask.nii.gz"
-    all_void = native_output_dir / "voidspace_all_mask.nii.gz"
-    native_outputs = [
-        path
-        for stem in ("voidspace_large_mask", "voidspace_all_mask")
-        for suffix in (".AIM", ".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd")
-        if (path := native_output_dir / f"{stem}{suffix}").exists()
-    ]
-    large_void = next((path for path in native_outputs if "voidspace_large_mask" in path.name), large_void)
-    all_void = next((path for path in native_outputs if "voidspace_all_mask" in path.name), all_void)
-    if args.force or not large_void.exists() or not all_void.exists():
+    marker = begin_voidspace_outputs(output_dir)
+    large_void = existing_voidspace_map(native_output_dir, "voidspace_large_mask")
+    all_void = existing_voidspace_map(native_output_dir, "voidspace_all_mask")
+    if args.force or not voidspace_outputs_complete(native_output_dir):
+        native_marker = begin_voidspace_outputs(native_output_dir)
         result = run_case(
             segmentation_path=args.segmentation,
             mask_path=args.full_mask,
@@ -267,6 +288,7 @@ def main() -> int:
         )
         large_void = result.large_mask_path
         all_void = result.all_mask_path
+        native_marker.unlink()
     analysis_mask = output_dir / "voidspace_analysis_mask.nii.gz"
     _intersect_masks(
         [args.full_mask, args.common_region],
@@ -277,30 +299,22 @@ def main() -> int:
         all_void_path=all_void,
         mask_path=analysis_mask,
         output_dir=output_dir,
-        force=args.force,
+        force=True,
     )
+    marker.unlink()
     return 0
 
 
 raise SystemExit(main())
 """
 
-_VOIDSPACE_DYNAMIC_SCRIPT = r"""
-from __future__ import annotations
+_VOIDSPACE_DYNAMIC_SCRIPT = _VOIDSPACE_COMPLETION_SCRIPT + r"""
 
 import argparse
 from pathlib import Path
 
 from voidspace import compare, run_case
 from voidspace import analyze_maps
-
-
-def _existing_map(directory: Path, stem: str) -> Path | None:
-    for suffix in (".AIM", ".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd"):
-        path = directory / f"{stem}{suffix}"
-        if path.exists():
-            return path
-    return None
 
 
 def _intersect_masks(mask_paths: list[str], output_path: Path) -> Path:
@@ -312,9 +326,9 @@ def _intersect_masks(mask_paths: list[str], output_path: Path) -> Path:
 def _registered_void(segmentation: str, full_mask: str, common_region: str, output_dir: Path, *, force: bool) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     analysis_mask = output_dir / "voidspace_analysis_mask.nii.gz"
-    large_void = _existing_map(output_dir, "voidspace_large_mask")
-    all_void = _existing_map(output_dir, "voidspace_all_mask")
-    if force or large_void is None or all_void is None:
+    large_void = existing_voidspace_map(output_dir, "voidspace_large_mask")
+    if force or not voidspace_outputs_complete(output_dir, require_analysis_mask=True):
+        marker = begin_voidspace_outputs(output_dir)
         _intersect_masks(
             [full_mask, common_region],
             analysis_mask,
@@ -332,6 +346,7 @@ def _registered_void(segmentation: str, full_mask: str, common_region: str, outp
             output_dir=output_dir,
             force=True,
         )
+        marker.unlink()
         return result.large_mask_path
     return large_void
 
@@ -349,6 +364,10 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
+    output_dir = Path(args.output_dir)
+    if not args.force and voidspace_outputs_complete(output_dir, dynamic=True):
+        return 0
+    marker = begin_voidspace_outputs(output_dir)
     baseline_void = _registered_void(
         args.baseline_seg,
         args.baseline_full_mask,
@@ -368,14 +387,14 @@ def main() -> int:
         followup_void_path=followup_void,
         mask_path=Path(args.baseline_output_dir) / "voidspace_analysis_mask.nii.gz",
         output_dir=args.output_dir,
-        force=args.force,
+        force=True,
     )
-    output_dir = Path(args.output_dir)
     for suffix in (".AIM", ".aim", ".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd"):
         stable = output_dir / f"voidspace_stable_mask{suffix}"
         quiescent = output_dir / f"voidspace_quiescent_mask{suffix}"
-        if stable.exists() and not quiescent.exists():
-            stable.rename(quiescent)
+        if stable.exists():
+            stable.replace(quiescent)
+    marker.unlink()
     return 0
 
 
@@ -1674,14 +1693,43 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
 
     @staticmethod
     def _annotate_voidspace_existing_outputs(root: Path, rows: list[dict]) -> None:
-        for row in rows:
+        original_states = [(row.get("action"), row.get("status")) for row in rows]
+        complete = [BatchProcessorLogic._voidspace_outputs_complete_for_row(root, row) for row in rows]
+        for row, is_complete in zip(rows, complete):
             output_paths = [str(path) for path in BatchProcessorLogic._voidspace_output_paths_for_row(root, row)]
-            if not output_paths:
-                continue
             row["output_paths"] = output_paths
-            row["status"] = "Done"
-            if str(row.get("action") or ""):
-                row["action"] = "Load"
+            if is_complete:
+                row["status"] = "Done"
+                if str(row.get("action") or ""):
+                    row["action"] = "Load"
+            elif row.get("action") not in {"Missing", "Review"}:
+                if output_paths or row.get("action") == "Load":
+                    row["status"] = "Incomplete outputs; resume"
+                if str(row.get("action") or ""):
+                    row["action"] = "Run"
+        # A completed baseline must not hide unfinished timepoints in its group.
+        for index, row in enumerate(rows):
+            span = int(row.get("action_row_span") or 0)
+            if span > 1:
+                if not all(complete[index:index + span]):
+                    original_action, original_status = original_states[index]
+                    if original_action in {"Missing", "Review"}:
+                        row["action"] = original_action
+                        row["status"] = original_status
+                        continue
+                    if any(child.get("output_paths") for child in rows[index:index + span]):
+                        row["status"] = "Incomplete group; resume"
+                    row["action"] = "Run"
+
+    @staticmethod
+    def _voidspace_outputs_complete_for_row(root: Path, row: dict) -> bool:
+        profile = str(row.get("profile") or "").strip()
+        if not profile:
+            profile = "registered" if row.get("registered") else "standard"
+        directory = BatchProcessorLogic._voidspace_output_dir_for_row(root, profile, row)
+        return _voidspace_batch_module.voidspace_outputs_complete(
+            directory, dynamic=profile == "dynamic", require_analysis_mask=profile == "registered",
+        )
 
     @staticmethod
     def _row_case_key(row: dict):
@@ -2109,8 +2157,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 args.append("--force")
             return args
         args = [
-            "-m",
-            "voidspace.cli",
+            "-c",
+            _VOIDSPACE_NATIVE_SCRIPT,
             "run-case",
             "--segmentation",
             segmentation_path,
@@ -3973,12 +4021,14 @@ print(json.dumps({"cases": rows}, sort_keys=True))
         profile = str(visible_row.get("profile") or "").strip()
         for index in self._row_indices_for_group_action(visible_index):
             paths = self.logic.rediscover_row_output_paths(dataset_root, tool_key, self._batchRows[index])
-            if not paths:
+            if not self.logic._voidspace_outputs_complete_for_row(Path(dataset_root), self._batchRows[index]):
                 ready = False
                 break
             self._batchRows[index]["output_paths"] = paths
             grouped_paths.extend(paths)
         if not ready:
+            self._set_row_status(visible_index, "Incomplete group; resume")
+            self._set_row_action(visible_index, "Run")
             return
         if profile != "registered":
             self._batchRows[visible_index]["output_paths"] = [

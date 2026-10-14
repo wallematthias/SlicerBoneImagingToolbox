@@ -4,6 +4,10 @@ All notable changes to this extension are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Resume cancelled Voidspace batches without deleting output folders: incomplete mask/measurement sets remain runnable, completed timepoints are reused, and a finished baseline no longer hides an unfinished follow-up. Apply the same completion checks to native, registered and dynamic Voidspace jobs.
+
 ## [0.3.7] - 2026-10-08
 
 ### Dependencies
