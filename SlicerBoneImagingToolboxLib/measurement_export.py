@@ -9,7 +9,7 @@ import csv
 from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import tempfile
 
@@ -19,7 +19,8 @@ MEASUREMENT_TOOLS = frozenset({
 })
 IDENTITY_COLUMNS = (
     "subject_id", "session_id", "baseline_session_id", "followup_session_id",
-    "site", "stack_index", "tool", "profile", "source_files",
+    "site", "stack_index", "original_filename", "baseline_original_filename",
+    "followup_original_filename", "tool", "profile", "source_files",
 )
 _MISSING = {"", "nan", "none", "null", "na", "n/a", "inf", "+inf", "-inf"}
 _LOAD_COMPONENTS = {"Scale factors", "Input load amplitudes", "Estimated loads"}
@@ -31,6 +32,7 @@ class MeasurementExportReport:
     row_count: int
     source_count: int
     issues: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 def measurement_csv_paths(tool, paths):
@@ -166,12 +168,98 @@ def _source_name(path, root):
         return str(path)
 
 
-def export_measurements(destination, *, dataset_root, tool, profile, cases, force=False, protected_sources=()):
+def _portable_path(value):
+    """Read manifest paths written on either Windows or POSIX systems."""
+    return PurePosixPath(value.replace("\\", "/"))
+
+
+def _rename_target_relative(value, recorded_root, root):
+    target = _portable_path(value)
+    for base in (recorded_root, str(root)):
+        if base:
+            try:
+                relative = target.relative_to(_portable_path(base))
+                if ".." not in relative.parts:
+                    return relative
+            except ValueError:
+                pass
+    if not target.is_absolute() and not re.match(r"^[A-Za-z]:", str(target)) and ".." not in target.parts:
+        return target
+    return None
+
+
+def _original_filename_index(root, warnings):
+    """Join naming provenance to shared raw-scan discovery, never masks or sidecars."""
+    manifest = root / "dataset_rename_manifest.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8-sig"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("renames"), list):
+            raise ValueError("expected a renames list")
+        recorded_root = payload.get("dataset_root") or ""
+        if not isinstance(recorded_root, str):
+            raise ValueError("invalid dataset_root")
+    except (OSError, UnicodeError, ValueError) as exc:
+        warnings.append(f"Original filenames unavailable: cannot read {manifest.name}: {exc}")
+        return None
+    targets = {}
+    for item in payload["renames"]:
+        if not isinstance(item, dict) or any(
+            not isinstance(item.get(name), str) or not item[name].strip()
+            for name in ("original_path", "renamed_path")
+        ):
+            warnings.append(f"Original filenames: ignoring invalid entry in {manifest.name}")
+            continue
+        relative = _rename_target_relative(item["renamed_path"], recorded_root, root)
+        if relative is not None:
+            targets.setdefault(relative, set()).add(_portable_path(item["original_path"]))
+    try:
+        from bone_imaging_derivatives import discover_raw_xct_images
+
+        index = {}
+        for scan in discover_raw_xct_images(root):
+            key = scan.key
+            identity = (key.subject_id, key.session_id, key.voi.lower(),
+                        str(key.stack_index) if key.stack_index is not None else "")
+            relative = PurePosixPath(scan.path.relative_to(root).as_posix())
+            index.setdefault(identity, {})[relative] = targets.get(relative, set())
+        return index
+    except (ImportError, OSError, ValueError) as exc:
+        warnings.append(f"Original filenames unavailable: raw-scan discovery failed: {exc}")
+        return None
+
+
+def _original_filenames(row, index, warnings):
+    filenames = dict(original_filename="", baseline_original_filename="", followup_original_filename="")
+    if index is None:
+        return filenames
+    sessions = (("baseline_original_filename", row["baseline_session_id"]),
+                ("followup_original_filename", row["followup_session_id"])) if (
+        row["baseline_session_id"] or row["followup_session_id"]
+    ) else (("original_filename", row["session_id"]),)
+    for column, session in sessions:
+        if not session:
+            continue
+        key = (row["subject_id"], session, row["site"].lower(), row["stack_index"])
+        scans = index.get(key, {})
+        originals = set().union(*scans.values())
+        if len(scans) == 1 and len(originals) == 1:
+            filenames[column] = next(iter(originals)).name
+        else:
+            reason = "ambiguous mapping" if len(scans) > 1 or len(originals) > 1 else "no matching rename entry"
+            warnings.append(f"Original filename {reason}: sub-{key[0]} ses-{session} voi-{key[2]} stack-{key[3] or 'none'}")
+    return filenames
+
+
+def export_measurements(destination, *, dataset_root, tool, profile, cases, force=False, protected_sources=(),
+                        provenance_root=None):
     """Export wide summaries and report omitted missing, malformed or conflicting cases.
 
     Existing destination files require explicit overwrite permission. Source CSVs
     are never overwritten. No averaging, unit conversion or new measurements are
-    performed. Missing/non-finite values are emitted as empty cells.
+    performed. Missing/non-finite values are emitted as empty cells. Original scan
+    names come from the dataset-root rename manifest; unresolved provenance warns
+    without omitting measurements. ``provenance_root`` retains local naming
+    provenance when summaries are exported from a temporary download snapshot.
     """
     if tool not in MEASUREMENT_TOOLS:
         raise ValueError("This workflow does not produce measurement summaries.")
@@ -215,6 +303,12 @@ def export_measurements(destination, *, dataset_root, tool, profile, cases, forc
                     invalid.add(key)
             issues.append(f"{label}: {exc}")
     rows = [row for key, row in sorted(merged.items()) if key not in invalid]
+    warnings = []
+    if rows:
+        provenance = Path(provenance_root).expanduser().resolve() if provenance_root is not None else root
+        originals = _original_filename_index(provenance, warnings)
+        for row in rows:
+            row.update(_original_filenames(row, originals, warnings))
     columns = sorted({name for row in rows for name in row["measurements"]})
     used_sources = {path for row in rows for path in row["sources"]}
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -233,4 +327,5 @@ def export_measurements(destination, *, dataset_root, tool, profile, cases, forc
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-    return MeasurementExportReport(destination, len(rows), len(used_sources), tuple(issues))
+    return MeasurementExportReport(destination, len(rows), len(used_sources), tuple(issues),
+                                   tuple(dict.fromkeys(warnings)))

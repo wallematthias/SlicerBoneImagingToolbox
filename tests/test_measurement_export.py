@@ -33,6 +33,142 @@ def _case(paths, **overrides):
                 stack_index=None, paths=paths, **overrides)
 
 
+def _rename_manifest(root, scans, *, recorded_root=None):
+    """Create real normalized inputs and their naming-helper provenance."""
+    recorded_root = str(recorded_root or root).rstrip("/\\")
+    renames = []
+    for relative, original in scans:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        renames.append({"original_path": original, "renamed_path": f"{recorded_root}/{relative}"})
+    manifest = root / "dataset_rename_manifest.json"
+    manifest.write_text(json.dumps({"version": 1, "dataset_root": recorded_root, "renames": renames}))
+    return manifest
+
+
+@pytest.mark.parametrize("tool,name,text", [
+    ("microarchitecture", "case_measurements.csv", "Parameter,Mean\nTb.Th,0.12\n"),
+    ("voidspace", "voidspace_measurements.csv", "VS.V\n25\n"),
+    ("plate_rod", "case_desc-plate-rod-measurements.csv",
+     "subject_id,site,session_id,pBV/TV\n001,radiusleft,01,0.2\n"),
+    ("fea", "case_fea.csv", "Profile,Stiffness (N/mm)\nstandard,123\n"),
+])
+def test_export_original_filename_is_shared_across_single_scan_workflows(tmp_path, tool, name, text):
+    _rename_manifest(tmp_path, [
+        ("sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_xct.AIM", "/scanner/SCAN, original.AIM;1"),
+        ("sub-001/ses-01/xct/sub-001_ses-01_voi-tibialeft_xct.AIM", "/scanner/WRONG_SITE.AIM"),
+        ("derivatives/IPLContours/sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_desc-cort_mask.AIM",
+         "/scanner/CORT_MASK.AIM"),
+    ])
+    report, rows = _export(tmp_path, tool, [_case([_csv(tmp_path, name, text)])])
+    assert rows[0]["original_filename"] == "SCAN, original.AIM;1"
+    assert rows[0]["baseline_original_filename"] == rows[0]["followup_original_filename"] == ""
+    assert report.row_count == 1 and not report.issues and not report.warnings
+
+
+@pytest.mark.parametrize("recorded_root", ["/old/server/dataset", r"D:\SOBER\dataset"])
+def test_original_filenames_survive_moved_dataset_and_keep_stacks_separate(tmp_path, recorded_root):
+    manifest = _rename_manifest(tmp_path, [
+        ("sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_stack-01_xct.AIM", r"D:\raw\STACK1.AIM"),
+        ("sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_stack-02_xct.AIM", r"D:\raw\STACK2.AIM"),
+    ], recorded_root=recorded_root)
+    # Windows manifests use backslashes even when later opened on another OS.
+    if recorded_root.startswith("D:"):
+        payload = json.loads(manifest.read_text())
+        for item in payload["renames"]:
+            item["renamed_path"] = item["renamed_path"].replace("/", "\\")
+        manifest.write_text(json.dumps(payload))
+    path = _csv(tmp_path, "case_measurements.csv", "Parameter,Mean\nTb.Th,0.12\n")
+    case = _case([path]); case["stack_index"] = 2
+    report, rows = _export(tmp_path, "microarchitecture", [case])
+    assert rows[0]["original_filename"] == "STACK2.AIM"
+    assert not report.warnings
+
+
+def test_timelapse_resolves_original_filenames_for_each_exported_pair(tmp_path):
+    _rename_manifest(tmp_path, [
+        (f"sub-001/ses-{session}/xct/sub-001_ses-{session}_voi-radiusleft_xct.AIM", f"/raw/T{index}.AIM")
+        for index, session in enumerate(("01", "02", "03"), 1)
+    ])
+    path = _csv(tmp_path, "case_pairwise_remodelling.csv",
+                "subject_id,compartment,t0,t1,threshold,cluster_min_size,formation_vox\n"
+                "001,trab,01,02,225,1,10\n001,trab,02,03,225,1,11\n")
+    report, rows = _export(tmp_path, "timelapse", [_case([path])])
+    assert [(r["baseline_original_filename"], r["followup_original_filename"]) for r in rows] == [
+        ("T1.AIM", "T2.AIM"), ("T2.AIM", "T3.AIM")]
+    assert all(r["original_filename"] == "" for r in rows)
+    assert not report.warnings
+
+
+@pytest.mark.parametrize("tool,name,text", [
+    ("voidspace", "voidspace_change_measurements.csv", "expanded.VS.V\n5\n"),
+    ("mechanoregulation", "case_roi-full_mechanoregulation_summary.csv", "OR_F\n1.2\n"),
+])
+def test_pair_export_keeps_valid_filename_when_other_timepoint_is_ambiguous(tmp_path, tool, name, text):
+    manifest = _rename_manifest(tmp_path, [
+        ("sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_xct.AIM", "/raw/BASELINE.AIM"),
+        ("sub-001/ses-02/xct/sub-001_ses-02_voi-radiusleft_xct.AIM", "/raw/FOLLOWUP.AIM"),
+    ])
+    payload = json.loads(manifest.read_text())
+    payload["renames"].append({**payload["renames"][1], "original_path": "/other/AMBIGUOUS.AIM"})
+    manifest.write_text(json.dumps(payload))
+    path = _csv(tmp_path, name, text)
+    if tool == "mechanoregulation":
+        Path(path).with_suffix(".json").write_text(json.dumps({"profile": "dynamic"}))
+    case = _case([path], baseline_session_value="01", followup_session_value="02")
+    report, rows = _export(tmp_path, tool, [case], "dynamic")
+    assert rows[0]["baseline_original_filename"] == "BASELINE.AIM"
+    assert rows[0]["followup_original_filename"] == ""
+    assert report.row_count == 1 and not report.issues
+    assert any("ambiguous" in warning.lower() and "02" in warning for warning in report.warnings)
+
+
+@pytest.mark.parametrize("manifest_text", [None, "{broken", '{"renames": {}}', '{"renames": [null]}', '{"renames": []}'])
+def test_missing_or_invalid_provenance_warns_without_omitting_measurements(tmp_path, manifest_text):
+    if manifest_text is not None:
+        (tmp_path / "dataset_rename_manifest.json").write_text(manifest_text)
+    path = _csv(tmp_path, "case_measurements.csv", "Parameter,Mean\nTb.Th,0.12\n")
+    report, rows = _export(tmp_path, "microarchitecture", [_case([path])])
+    assert rows[0]["original_filename"] == "" and rows[0]["Tb.Th.Mean"] == "0.12"
+    assert report.row_count == 1 and not report.issues and report.warnings
+
+
+def test_relative_rename_targets_and_duplicate_entries_do_not_create_false_ambiguity(tmp_path):
+    relative = "sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_xct.AIM"
+    manifest = _rename_manifest(tmp_path, [(relative, "/raw/ORIGINAL.AIM")])
+    payload = json.loads(manifest.read_text())
+    payload["renames"][0]["renamed_path"] = relative
+    payload["renames"] *= 2
+    payload["renames"].append({"original_path": "/raw/SIDECAR.json", "renamed_path": relative + ".json"})
+    manifest.write_text(json.dumps(payload))
+    path = _csv(tmp_path, "case_measurements.csv", "Parameter,Mean\nTb.Th,0.12\n")
+    report, rows = _export(tmp_path, "microarchitecture", [_case([path])])
+    assert rows[0]["original_filename"] == "ORIGINAL.AIM" and not report.warnings
+
+
+def test_matching_subject_but_wrong_session_site_or_stack_never_supplies_original_name(tmp_path):
+    _rename_manifest(tmp_path, [
+        ("sub-001/ses-02/xct/sub-001_ses-02_voi-radiusleft_xct.AIM", "/raw/WRONG_SESSION.AIM"),
+        ("sub-001/ses-01/xct/sub-001_ses-01_voi-tibialeft_xct.AIM", "/raw/WRONG_SITE.AIM"),
+        ("sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_stack-01_xct.AIM", "/raw/WRONG_STACK.AIM"),
+    ])
+    path = _csv(tmp_path, "case_measurements.csv", "Parameter,Mean\nTb.Th,0.12\n")
+    report, rows = _export(tmp_path, "microarchitecture", [_case([path])])
+    assert rows[0]["original_filename"] == "" and rows[0]["Tb.Th.Mean"] == "0.12"
+    assert not report.issues and any("no matching rename entry" in w for w in report.warnings)
+
+
+def test_multiple_raw_images_for_same_case_do_not_choose_the_only_known_original(tmp_path):
+    relative = "sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_xct.AIM"
+    _rename_manifest(tmp_path, [(relative, "/raw/ORIGINAL.AIM")])
+    (tmp_path / relative.replace(".AIM", ".nii.gz")).touch()
+    path = _csv(tmp_path, "case_measurements.csv", "Parameter,Mean\nTb.Th,0.12\n")
+    report, rows = _export(tmp_path, "microarchitecture", [_case([path])])
+    assert rows[0]["original_filename"] == "" and report.row_count == 1
+    assert any("ambiguous" in warning for warning in report.warnings)
+
+
 def test_microarchitecture_pivots_statistics_and_preserves_missing_values(tmp_path):
     path = _csv(tmp_path, "case_measurements.csv",
                 "Parameter,Mean,Median,SD,Units\nTb.Th,0.12,0.11,0.03,mm\nCt.Th,0.8,,nan,mm\n")

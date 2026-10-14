@@ -79,6 +79,21 @@ retain their original text in the CSV; when importing into Excel, set these
 columns to **Text** to preserve leading zeros. Each row includes the selected
 tool/profile and a `source_files` column listing its source CSVs.
 
+Exports also retain the original scan names from
+`dataset_rename_manifest.json` in the selected dataset root:
+
+- `original_filename` for single-scan measurements.
+- `baseline_original_filename` and `followup_original_filename` for scan-pair measurements.
+
+These are the original **image** filenames, including extensions—not mask,
+sidecar or measurement filenames. Matching uses the renamed raw scan's subject,
+session, site and stack. Moved datasets are supported using the manifest's
+recorded root and dataset-relative paths, including Windows paths. The normalized
+raw images must still be discoverable in the dataset. Missing/unreadable manifests,
+missing matches and ambiguous mappings leave the affected filename cells blank
+and produce warnings in the batch log; they do **not** omit measurements or
+guess a filename. Existing measurement columns and `source_files` are unchanged.
+
 Supported exports:
 
 | Tool | Measurement columns |

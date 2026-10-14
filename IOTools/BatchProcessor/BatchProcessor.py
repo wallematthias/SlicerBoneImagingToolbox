@@ -2755,7 +2755,7 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
             argv = backend.sync_output_argv(family, measurements_only=True)
             process = qt.QProcess()
             process.setProcessChannelMode(qt.QProcess.MergedChannels)
-            context = {**context, "dataset_root": temporary.name}
+            context = {**context, "provenance_root": context["dataset_root"], "dataset_root": temporary.name}
             process.readyRead.connect(lambda: self._append_log(self._qbytearray_to_text(process.readAll())))
             process.finished.connect(lambda code, *args: self._finish_measurement_sync(process, temporary, context, code))
             process.errorOccurred.connect(lambda error: self._finish_measurement_sync(process, temporary, context, 1)
@@ -2793,11 +2793,14 @@ class BatchProcessorWidget(ScriptedLoadableModuleWidget):
                                                         profile=context["profile"], rows=context["rows"])
             report = export_measurements(context["destination"], dataset_root=context["dataset_root"],
                                          tool=context["tool"], profile=context["profile"], cases=cases, force=True,
-                                         protected_sources=context.get("protected_sources", ()))
+                                         protected_sources=context.get("protected_sources", ()),
+                                         provenance_root=context.get("provenance_root"))
             message = f"Exported {report.row_count} row(s) from {report.source_count} measurement CSV(s) to {report.path}."
             self._append_log(f"[export] {message}")
             for issue in report.issues:
                 self._append_log(f"[export] skipped: {issue}")
+            for warning in report.warnings:
+                self._append_log(f"[export] warning: {warning}")
             if report.issues or not report.row_count:
                 slicer.util.warningDisplay(message + f"\n{len(report.issues)} issue(s); see the Batch Processor log for details.")
             else:

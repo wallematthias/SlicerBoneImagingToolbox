@@ -176,6 +176,9 @@ def test_export_button_collects_wide_csv_without_running_analysis(monkeypatch, t
     with output.open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
     assert rows[0]["Large.VS.V"] == "25"
+    assert rows[0]["original_filename"] == ""
+    assert any("warning:" in message and "dataset_rename_manifest.json" in message for message in messages)
+    assert not any("skipped:" in message for message in messages)
     assert any("1" in message and "Export" in message for message in messages)
     assert widget.exportCsvButton.enabled
 
@@ -222,6 +225,13 @@ def test_remote_export_uses_fresh_csv_snapshot_and_never_stale_local_results(mon
     stale = widget.logic._voidspace_output_dir_for_row(tmp_path, "standard", widget._batchRows[0])
     stale.mkdir(parents=True)
     (stale / "voidspace_measurements.csv").write_text("VS.V\n99\n")
+    raw = tmp_path / "sub-001/ses-01/xct/sub-001_ses-01_voi-radiusleft_xct.AIM"
+    raw.parent.mkdir(parents=True)
+    raw.touch()
+    (tmp_path / "dataset_rename_manifest.json").write_text(json.dumps({
+        "dataset_root": str(tmp_path),
+        "renames": [{"original_path": "/scanner/ORIGINAL.AIM", "renamed_path": str(raw)}],
+    }))
     context = dict(destination=str(tmp_path / "export.csv"), dataset_root=str(tmp_path),
                    tool="voidspace", profile="standard", rows=widget._batchRows)
     if source_destination:
@@ -239,7 +249,9 @@ def test_remote_export_uses_fresh_csv_snapshot_and_never_stale_local_results(mon
         assert any("source" in message.lower() for message in messages)
     elif exit_code == 0:
         with (tmp_path / "export.csv").open(encoding="utf-8-sig") as stream:
-            assert list(csv.DictReader(stream))[0]["Large.VS.V"] == "25"
+            exported = list(csv.DictReader(stream))[0]
+        assert exported["Large.VS.V"] == "25"
+        assert exported["original_filename"] == "ORIGINAL.AIM"
     else:
         assert not (tmp_path / "export.csv").exists()
         assert any("failed" in message.lower() for message in messages)

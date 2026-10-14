@@ -6,6 +6,7 @@ All notable changes to this extension are documented in this file.
 
 ### Added
 
+- Include original scan filenames from the dataset-root rename manifest in all Batch Processor measurement CSV exports, with separate baseline/follow-up filenames for longitudinal rows. Match subject/session/site/stack, support moved datasets and Windows paths, and warn without dropping measurements when provenance is unavailable or ambiguous.
 - Import RAD scout radiographs as native scalar volumes, with header-derived spacing and no HU/density conversion. Document projection-geometry limitations and retain scanner metadata.
 
 ### Dependencies

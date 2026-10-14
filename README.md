@@ -27,6 +27,26 @@ measurements, and export consolidated CSV results. [Toolbox Setup](docs/installa
 manages the required runtime packages. Supported input formats and prerequisites
 vary by tool; RAD files are projection radiographs, not calibrated CT volumes.
 
+## CPU And GPU Support
+
+The toolbox supports **CPU execution**, with optional **GPU acceleration** for
+selected tools and stages:
+
+| Workflow | Compute support |
+| --- | --- |
+| [U-Net contouring](docs/tools/deep-learning-segmentation.md), [Motion Scoring](docs/tools/motion-scoring.md) and [CT spine segmentation](docs/tools/spine-segmentation-ct.md) | PyTorch inference on **CPU**, **NVIDIA CUDA**, or **Apple MPS**, when supported by the installed runtime and hardware. |
+| [Microarchitecture](docs/tools/microarchitecture.md) and [Functional Bone](docs/tutorials/functional-bone.md) | CPU processing with automatic **Apple Metal** acceleration on macOS or **OpenCL GPU** acceleration on Windows/Linux when available; otherwise CPU fallback. Acceleration covers local sphere-diameter accumulation, not the entire analysis. |
+| [Individual trabecular segmentation](docs/tools/plate-rod-morphometry.md) | Compiled CPU backend, with optional **Apple Metal** acceleration for topology-preserving thinning. Other measurement stages remain CPU-based. |
+| [Standard contouring and tissue segmentation](docs/tools/segmentation-and-contours.md) | **CPU**, including Laplace–Hamming filtering. Selecting a GPU for U-Net inference does not move independent tissue segmentation or contour postprocessing onto that GPU. |
+
+**MPS** is PyTorch's Apple GPU backend; **Metal** and **OpenCL** are separate
+backends used by the measurement tools and do not require CUDA or PyTorch.
+MPS requires a compatible native Apple Silicon Python/PyTorch runtime, not an
+Intel/Rosetta worker. OpenCL requires a working GPU-vendor driver/runtime.
+Use **Auto** where offered to select an available device; an explicitly requested
+unsupported device can fail instead of falling back. See the linked tool guides
+for runtime requirements and acceleration scope.
+
 <details>
 <summary>Measured bone-structure parameters</summary>
 
