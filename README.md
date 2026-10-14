@@ -4,9 +4,71 @@
 
 # Bone Imaging Toolbox for 3D Slicer
 
-Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, deep-learning segmentation, longitudinal remodelling, microarchitecture, voidspace analysis, plate/rod morphometry, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
+Bone Imaging Toolbox is a 3D Slicer extension for bone-imaging workflows. It provides Slicer interfaces for Scanco image import/export, dataset normalization, batch processing, contouring, deep-learning segmentation, longitudinal remodelling, microarchitecture, voidspace analysis, individual trabecular segmentation, finite element analysis, mechanoregulation, motion grading, and CT spine segmentation.
 
 The toolbox appears in Slicer under the `Bone Imaging` category. Reusable scientific logic lives in focused Python packages, while this repository owns the Slicer UI, scene integration, batch orchestration, setup page, and user documentation.
+
+## What Can You Do With The Toolbox?
+
+| Area | Capabilities and tools |
+| --- | --- |
+| Data preparation | [Scanco I/O](docs/tools/scanco-io.md): import **AIM, ISQ, SCV, GOBJ and RAD**; export edited images and masks to **AIM**. [Dataset Naming Helper](docs/tools/dataset-naming-helper.md): organize subjects, sessions, sites and imported contours. [Mask and Label Algebra](docs/tools/mask-and-label-algebra.md): combine masks and prepare analysis ROIs and FEA material labels. |
+| Segmentation and quality control | [Motion Scoring](docs/tools/motion-scoring.md); [Contouring](docs/tools/segmentation-and-contours.md) with dual-threshold or geodesic outer contours, or [published U-Net compartments](docs/tools/deep-learning-segmentation.md). Independently generate bone-tissue segmentation with Gaussian, Laplace–Hamming or adaptive filtering. |
+| Bone structure | [Microarchitecture](docs/tools/microarchitecture.md): total, trabecular and cortical BMD; bone and compartment volumes; trabecular bone volume fraction, thickness, separation, number and spacing heterogeneity; cortical thickness, porosity, pore volume and pore diameter. Full parameter list below. |
+| Individual trabecular segmentation | [Plate/rod decomposition and morphometry](docs/tools/plate-rod-morphometry.md): label individual trabecular elements, recover full-thickness plate/rod maps, and quantify volumes, fractions, counts, number estimates, thickness, plate surface area, rod length, axial alignment and plate–plate/plate–rod/rod–rod junction densities. Listed as **Plate/Rod Morphometry** in Slicer. |
+| Voidspace and Functional Bone | [Voidspace](docs/tools/voidspace.md): native, registered and dynamic large-voidspace analysis. [Functional Bone](docs/tutorials/functional-bone.md): microarchitecture measurements excluding large voidspace, over either the native scan or registered common scan region. |
+| Longitudinal analysis | [Timelapsed Remodelling](docs/tools/timelapsed-hrpqct.md): register timepoints, support multistack workflows, generate common scan regions, and map and quantify bone formation and resorption. |
+| Mechanical analysis | [ParOsol-FEA](docs/tools/parosol-fea.md): finite-element modelling, stiffness, failure load, strain-energy-density fields and load-history workflows. [Mechanoregulation](docs/tools/mechanoregulation.md): relate bone formation and resorption to local mechanical stimulus. |
+| CT spine analysis | [Spine Segmentation](docs/tools/spine-segmentation-ct.md): vertebral identification and centroids, vertebral-level labels, body/process separation and cortical/trabecular compartments. |
+
+Explore individual scans in Slicer, or use the [Batch Processor](docs/tools/batch-processor.md)
+to process cohorts locally, reuse completed outputs, review maps and
+measurements, and export consolidated CSV results. [Toolbox Setup](docs/installation.md)
+manages the required runtime packages. Supported input formats and prerequisites
+vary by tool; RAD files are projection radiographs, not calibrated CT volumes.
+
+<details>
+<summary>Measured bone-structure parameters</summary>
+
+### Microarchitecture
+
+These are the 16 primary parameters reported by the Microarchitecture workflow;
+availability depends on the supplied image and compartment masks.
+
+| Measurement group | Parameters |
+| --- | --- |
+| Bone mineral density | Total **Tt.BMD**, trabecular **Tb.BMD**, cortical **Ct.BMD** (mg HA/cm³ for calibrated density images). |
+| Bone and compartment volumes | Trabecular **Tb.BV**, **Tb.TV**; cortical **Ct.BV**, **Ct.TV** (mm³). |
+| Trabecular structure | Bone volume fraction **Tb.BV/TV**; thickness **Tb.Th** (mm); separation **Tb.Sp** (mm); number **Tb.N** (1/mm); ridge-spacing heterogeneity **Tb.1/N.SD** (mm). |
+| Cortical structure and pores | Thickness **Ct.Th** (mm); porosity **Ct.Po** (fraction); pore volume **Ct.Po.V** (mm³); pore diameter **Ct.Po.Dm** (mm). |
+
+Density outputs include standard deviations. Thickness, separation, number and
+pore-diameter maps also support distribution summaries: median, SD, 5th/25th/75th/95th
+percentiles and minimum/maximum, where available. **Tb.N** is the reciprocal of
+mean ridge spacing; its distribution columns describe the local inverse-spacing
+map. See [Microarchitecture](docs/tools/microarchitecture.md) for method definitions.
+
+### Individual trabecular segmentation
+
+The toolbox's topology-based plate/rod workflow reports the following measurement
+families alongside skeleton, full-thickness and individual-element label maps.
+
+| Measurement group | Parameters |
+| --- | --- |
+| Volumes | Total compartment **TV**, bone **BV**, plate **pBV** and rod **rBV** volumes; measured element volumes are also recorded separately. |
+| Volume fractions and ratios | **BV/TV**, **pBV/TV**, **rBV/TV**, **pBV/BV**, **rBV/BV**, and plate-to-rod volume ratio **pBV/rBV**. |
+| Counts and number estimates | Plate, rod, junction and skeleton-graph element counts; **pTb.N**, **rTb.N** and plate-to-rod number ratio **PR.N**. |
+| Element geometry | Mean plate and rod thickness **pTb.Th**, **rTb.Th**; plate surface area **pTb.S**; rod length **rTb.l**. |
+| Orientation | Mean plate and rod axial alignment; alignment-weighted bone volume fraction **aBV/TV**. |
+| Junction density | Plate–plate **P-P Junc.D**, plate–rod **P-R Junc.D**, rod–rod **R-R Junc.D**. |
+
+Fractions are fractions, not percentages. Physical measurements require known
+voxel spacing. Outputs also retain voxel counts, connected-component checks and
+processing settings. This is the documented toolbox plate/rod method; the name
+does not imply equivalence to other individual trabecular segmentation implementations.
+See the [module guide](docs/tools/plate-rod-morphometry.md) for interpretation and citation.
+
+</details>
 
 ## Documentation
 
@@ -49,22 +111,6 @@ exec(open(script).read(), {"__name__": "__main__", "SCRIPT_PATH": script})
 
 Restart Slicer, then open `Bone Imaging > Setup > Toolbox Setup` to install or update runtime packages.
 Motion Scoring requires the `PyTorch` extension from Slicer's Extension Manager; Spine Segmentation may also use it depending on the selected runtime.
-
-## Included Workflows
-
-- Scanco I/O
-- Dataset Naming Helper
-- Batch Processor
-- Motion Scoring
-- Contouring (standard or published U-Net)
-- Mask and Label Algebra
-- Timelapsed Remodelling
-- Mechanoregulation
-- Microarchitecture
-- Voidspace
-- Plate/Rod Morphometry
-- ParOsol-FEA
-- Spine Segmentation
 
 ## Core Packages
 
