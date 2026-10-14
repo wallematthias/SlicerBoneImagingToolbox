@@ -61,6 +61,11 @@ has been folded into Contouring.
 
 Expert settings are grouped by algorithm. Gaussian settings appear for Gaussian segmentation, Laplace-Hamming settings appear for Laplace-Hamming segmentation, and geodesic settings appear only when the geodesic periosteal contour is selected.
 
+Laplace-Hamming tissue segmentation is CPU-only on all platforms; **Auto (CPU)**
+also uses the CPU. Its backend is independent of the U-Net inference device.
+Legacy scene profiles selecting the unsupported **Torch MPS** LH backend are
+migrated to CPU with a warning, without changing the U-Net device.
+
 Gaussian tissue segmentation defaults to **sigma 0.8 voxels**, **support 1 voxel**
 (a finite 3×3×3 sampled Gaussian with reflected boundaries), **trabecular
 threshold 320** and **cortical threshold 450 mg HA/cm³**. Sigma is scaled by the

@@ -6,6 +6,7 @@ All notable changes to this extension are documented in this file.
 
 ### Fixed
 
+- Remove the unsupported Laplace-Hamming Torch MPS option. Migrate legacy scene profiles and worker snapshots to CPU tissue segmentation without changing the independently selected U-Net device or contour outputs.
 - Install Microarchitecture GPU bindings through Toolbox Setup, including editable installs, and detect missing bindings even when the core package is current. Report GPU device/fallback diagnostics in Setup and Microarchitecture/Functional Bone runs; reject CPU-only OpenCL devices as GPU acceleration.
 - Resume cancelled Voidspace batches without deleting output folders: incomplete mask/measurement sets remain runnable, completed timepoints are reused, and a finished baseline no longer hides an unfinished follow-up. Apply the same completion checks to native, registered and dynamic Voidspace jobs.
 

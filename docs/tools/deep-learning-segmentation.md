@@ -48,6 +48,9 @@ initially hidden. Empty, overlapping or wrong-size masks are rejected. These are
 the chosen core algorithm within those same masks, in the worker; it does not
 rerun standard contouring or alter the predicted compartments. Laplace-Hamming
 requires native attenuation values recovered from Scanco I/O metadata/source.
+The Laplace-Hamming step is CPU-only, independently of whether U-Net inference
+uses CPU, CUDA, or Apple MPS. Legacy scene profiles selecting **Torch MPS** for
+Laplace-Hamming are migrated to CPU with a warning; the U-Net device is unchanged.
 Select **None** in Tissue segmentation for compartments only. No extra Toolbox peel or
 smoothing is applied; the published post-processing includes its own 8-voxel shell.
 

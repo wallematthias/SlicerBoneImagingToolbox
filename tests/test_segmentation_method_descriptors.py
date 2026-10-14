@@ -19,6 +19,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+@pytest.mark.parametrize('backend,expected', [('cpu', 'cpu'), ('auto', 'auto'), (' CPU ', 'cpu')])
+def test_lh_backend_normalization_preserves_supported_choices(backend, expected):
+    from SlicerBoneImagingToolboxLib.segmentation_methods import normalize_laplace_hamming_backend
+
+    assert normalize_laplace_hamming_backend(backend) == expected
+
+
+def test_lh_backend_normalization_rejects_unknown_choices():
+    from SlicerBoneImagingToolboxLib.segmentation_methods import normalize_laplace_hamming_backend
+
+    with pytest.raises(ValueError, match='CPU or Auto'):
+        normalize_laplace_hamming_backend('cuda')
+
+
 def test_segmentation_method_descriptors_define_xct2_choices() -> None:
     from SlicerBoneImagingToolboxLib.segmentation_methods import (
         BONE_SEGMENTATION_METHODS,

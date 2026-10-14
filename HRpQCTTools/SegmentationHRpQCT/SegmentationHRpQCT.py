@@ -982,6 +982,8 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
         params=None,
         debug_output_dir=None,
     ):
+        from SlicerBoneImagingToolboxLib.segmentation_methods import normalize_laplace_hamming_backend
+
         bone_contouring = self._import_bone_contouring()
         ContourParameters = bone_contouring.ContourParameters
         InnerContourParameters = bone_contouring.InnerContourParameters
@@ -1087,7 +1089,8 @@ class SegmentationHRpQCTLogic(ScriptedLoadableModuleLogic):
                 laplace_hamming_min_size_voxels=_int_param(
                     segmentation_params, "laplace_hamming_min_size_voxels", "laplace_hamming_min_size_voxels", 70
                 ),
-                laplace_hamming_backend=str(segmentation_params.get("laplace_hamming_backend", "cpu")),
+                laplace_hamming_backend=normalize_laplace_hamming_backend(
+                    segmentation_params.get("laplace_hamming_backend", "cpu")),
                 use_segmentation_aligned_contour_support=_bool_param(
                     segmentation_params, "use_segmentation_aligned_contour_support", False
                 ),
@@ -1610,10 +1613,10 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
 
         self.lhThresholdSpin = self._double_spin(0, 100000, 1, 15564.0)
         self.lhBackendCombo = qt.QComboBox()
-        for label, value in [("CPU", "cpu"), ("Auto", "auto"), ("Torch MPS", "torch_mps")]:
+        for label, value in [("CPU", "cpu"), ("Auto (CPU)", "auto")]:
             self.lhBackendCombo.addItem(label, value)
         self._tip(self.lhThresholdSpin, "Laplace-Hamming threshold in native Scanco attenuation units.")
-        self._tip(self.lhBackendCombo, "Execution backend for Laplace-Hamming support calculation when available.")
+        self._tip(self.lhBackendCombo, "Laplace-Hamming tissue segmentation runs on CPU. U-Net uses its separate device setting.")
         segmentation_form.addRow("LH threshold", self.lhThresholdSpin)
         self._remember_expert_row("laplace_hamming_threshold", self.lhThresholdSpin, form=segmentation_form, group="Bone segmentation")
         segmentation_form.addRow("LH backend", self.lhBackendCombo)
@@ -2337,7 +2340,9 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         if "laplace_hamming_min_size_voxels" in segmentation:
             self.lhMinSizeSpin.value = int(segmentation["laplace_hamming_min_size_voxels"])
         if "laplace_hamming_backend" in segmentation:
-            self._set_combo_by_data(self.lhBackendCombo, segmentation["laplace_hamming_backend"])
+            from SlicerBoneImagingToolboxLib.segmentation_methods import normalize_laplace_hamming_backend
+            self._set_combo_by_data(self.lhBackendCombo, normalize_laplace_hamming_backend(
+                segmentation["laplace_hamming_backend"]))
         if "periosteal_threshold" in outer:
             self.periostealThresholdSpin.value = float(outer["periosteal_threshold"])
         if "gaussian_sigma" in outer:

@@ -1,9 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 
 ALL_SITES = ("radius", "tibia", "knee")
+
+
+def normalize_laplace_hamming_backend(backend: str) -> str:
+    """Migrate the unsupported legacy UI choice without changing U-Net's device."""
+    value = str(backend).strip().lower()
+    if value == "torch_mps":
+        warnings.warn(
+            "The legacy Laplace-Hamming Torch MPS setting is unsupported; using CPU. "
+            "The U-Net device is unchanged.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return "cpu"
+    if value not in {"cpu", "auto"}:
+        raise ValueError("Laplace-Hamming backend must be CPU or Auto.")
+    return value
 
 
 @dataclass(frozen=True)

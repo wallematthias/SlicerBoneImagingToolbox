@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import SimpleITK as sitk
 
+from SlicerBoneImagingToolboxLib.segmentation_methods import normalize_laplace_hamming_backend
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -21,8 +23,11 @@ def main(argv=None):
     from bone_contouring import generate_bone_segmentation, resolve_preset, SegmentationParameters
 
     with np.load(args.input, allow_pickle=False) as snapshot:
-        masks = Segmenter(args.device).segment(snapshot["density"], progress=lambda text: print(text, flush=True))
         settings = json.loads(str(snapshot["segmentation"]))
+        if settings is not None and settings.get("method") == "laplace_hamming":
+            settings["laplace_hamming_backend"] = normalize_laplace_hamming_backend(
+                settings.get("laplace_hamming_backend", "cpu"))
+        masks = Segmenter(args.device).segment(snapshot["density"], progress=lambda text: print(text, flush=True))
         if settings is not None:
             print("Generating independent bone-tissue SEG...", flush=True)
             image = sitk.GetImageFromArray(snapshot["tissue_image"])

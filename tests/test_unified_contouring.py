@@ -37,6 +37,21 @@ def test_cleanup_detaches_and_cancels_worker():
     assert calls == ["detach", "cancel"] and widget._closed
 
 
+def test_loading_legacy_lh_profile_selects_cpu_without_changing_unet_device():
+    widget = SimpleNamespace(
+        periostealContourCombo=SimpleNamespace(currentData="none"),
+        endostealContourCombo=SimpleNamespace(currentData="none"),
+        lhBackendCombo=SimpleNamespace(currentData="auto"),
+        unetDeviceCombo=SimpleNamespace(currentData="cuda"),
+        _set_combo_by_data=lambda combo, value: setattr(combo, "currentData", value),
+    )
+    with pytest.warns(UserWarning, match="Laplace.Hamming.*CPU"):
+        widget_method("_apply_params_to_widgets")(
+            widget, {"segmentation": {"laplace_hamming_backend": "torch_mps"}})
+    assert widget.lhBackendCombo.currentData == "cpu"
+    assert widget.unetDeviceCombo.currentData == "cuda"
+
+
 def test_unet_worker_tissue_seg_matches_single_gaussian_of_original_image(tmp_path, monkeypatch):
     """Optional tissue SEG must not use the CNN's normalized/preprocessed input."""
     import SimpleITK as sitk
@@ -76,6 +91,52 @@ def test_unet_worker_tissue_seg_matches_single_gaussian_of_original_image(tmp_pa
         np.testing.assert_array_equal(data["seg"] > 0, expected)
         for role, mask in compartments.items():
             np.testing.assert_array_equal(data[role], mask)
+
+
+def test_unet_worker_legacy_lh_mps_profile_uses_cpu_tissue_seg_without_changing_unet_device(tmp_path, monkeypatch):
+    """A legacy LH selection must not discard successful GPU-generated contours."""
+    import SimpleITK as sitk
+    from dataclasses import replace
+    from bone_contouring import generate_bone_segmentation, resolve_preset, SegmentationParameters
+    from SlicerBoneImagingToolboxLib import unet_contouring_worker as worker
+
+    tissue = np.random.default_rng(7).uniform(5000, 20000, (3, 7, 9)).astype(np.float32)
+    full = np.ones_like(tissue, dtype=np.uint8)
+    trab = np.zeros_like(full)
+    trab[:, 2:5, 2:7] = 1
+    compartments = {"full": full, "trab": trab, "cort": full - trab}
+
+    class Segmenter:
+        def __init__(self, device):
+            assert device == "cuda"  # Independent of the CPU-only LH filter.
+
+        def segment(self, density, progress):
+            return compartments
+
+    monkeypatch.setitem(sys.modules, "bone_contouring.unet.inference", SimpleNamespace(Segmenter=Segmenter))
+    settings = {"method": "laplace_hamming", "laplace_hamming_backend": "torch_mps",
+                "laplace_hamming_threshold": 1000, "min_size_voxels": 0,
+                "laplace_hamming_min_size_voxels": 0}
+    snapshot, output = tmp_path / "input.npz", tmp_path / "output.npz"
+    np.savez(snapshot, density=tissue, tissue_image=tissue, spacing=np.array([.0607] * 3),
+             segmentation=json.dumps(settings))
+    image = sitk.GetImageFromArray(tissue)
+    image.SetSpacing((.0607,) * 3)
+    masks = {}
+    for role, array in compartments.items():
+        mask = sitk.GetImageFromArray(array)
+        mask.CopyInformation(image)
+        masks[role + "_mask"] = mask
+    cpu_settings = dict(settings, laplace_hamming_backend="cpu")
+    expected = sitk.GetArrayFromImage(generate_bone_segmentation(
+        image, replace(resolve_preset(), segmentation=SegmentationParameters(**cpu_settings)), **masks))
+    assert expected.any()
+    with pytest.warns(UserWarning, match="Laplace.Hamming.*CPU"):
+        assert worker.main([str(snapshot), str(output), "--device", "cuda"]) == 0
+    with np.load(output) as result:
+        np.testing.assert_array_equal(result["seg"], expected)
+        for role, array in compartments.items():
+            np.testing.assert_array_equal(result[role], array)
 
 
 @pytest.mark.parametrize("tissue_method", [None, "gauss", "adaptive", "laplace_hamming"])
