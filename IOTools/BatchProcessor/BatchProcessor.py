@@ -496,7 +496,7 @@ def main() -> int:
     analysis_path = Path(args.output_dir) / f"{case_stem}_desc-functional-bone-analysis_mask{analysis_extension}"
     _write_mask(analysis_path, functional_common, image)
     maps_dir = Path(args.maps_dir)
-    run_microarchitecture_batch(
+    native_records = run_microarchitecture_batch(
         Path(args.dataset_root),
         use_common_region=False,
         require_common_region=False,
@@ -523,7 +523,14 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{case_stem}_measurements.csv"
-    write_measurement_csv(output_path, measurements, measurement_maps)
+    native_backend_metadata = {
+        key: value for key, value in native_records[0].metadata.items()
+        if key.startswith("thickness_")
+    }
+    write_measurement_csv(
+        output_path, measurements, measurement_maps,
+        metadata={**native_backend_metadata, "reporting_region": "functional-bone-native-maps"},
+    )
     print(output_path)
     return 0
 

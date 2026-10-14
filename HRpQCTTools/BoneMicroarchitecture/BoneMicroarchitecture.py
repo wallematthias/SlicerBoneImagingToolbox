@@ -293,7 +293,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         if MICROARCHITECTURE_LOCAL_REPO.exists():
             slicer_pip_install(f"--no-deps -e {MICROARCHITECTURE_LOCAL_REPO}")
         else:
-            slicer_pip_install("--upgrade --prefer-binary bone-microarchitecture>=0.2.3")
+            slicer_pip_install("--upgrade --prefer-binary bone-microarchitecture[gpu]>=0.3.1")
         importlib.invalidate_caches()
         for name in list(sys.modules):
             if name == "bone_microarchitecture" or name.startswith("bone_microarchitecture."):
@@ -909,22 +909,23 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         thickness_backend="auto",
         progress_callback=None,
     ):
-        from bone_microarchitecture import compute_microarchitecture, default_thickness_backend
+        from bone_microarchitecture import compute_microarchitecture, thickness_backend_status
         from bone_microarchitecture.results import SUMMARY_COLUMNS, measurement_rows, write_measurement_csv
 
         root = self.registered_microarchitecture_root(dataset_root, output_root)
         self.write_registered_series_manifest(dataset_root, root, rows)
         requested_thickness_backend = str(thickness_backend or "auto").strip().lower()
-        resolved_thickness_backend = (
-            default_thickness_backend()
-            if requested_thickness_backend == "auto"
-            else requested_thickness_backend
-        )
         requested_thickness_method = str(thickness_method or "hildebrand").strip().lower()
+        backend_status = thickness_backend_status(
+            "cpu" if requested_thickness_method == "edt" else requested_thickness_backend
+        )
+        resolved_thickness_backend = backend_status["thickness_backend"]
         self._registered_progress(
             progress_callback,
             f"[registered] thickness: {requested_thickness_method} "
-            f"backend: {requested_thickness_backend} -> {resolved_thickness_backend}",
+            f"backend: {requested_thickness_backend} -> {resolved_thickness_backend}; "
+            f"device={backend_status['thickness_device']}; GPU={backend_status['thickness_gpu']}. "
+            f"{backend_status['thickness_backend_reason']}",
         )
         long_rows = []
         written = []
@@ -980,6 +981,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 thickness_method=requested_thickness_method,
                 thickness_backend=resolved_thickness_backend,
             )
+            result.metadata.update(backend_status)
             if scan_region is not None:
                 result = self._restrict_core_result(result, scan_region, bone_seg, full_mask, trab_mask, cort_mask, image)
             session_dir = self.registered_session_output_dir(root, row)
@@ -1513,6 +1515,12 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 spacing=tuple(reversed(tuple(trab_seg.GetSpacing()))),
                 thickness_method=str(thickness_method),
                 thickness_backend=str(thickness_backend),
+            )
+            print(
+                f"[microarchitecture] backend={core_result.metadata.get('thickness_backend')}; "
+                f"device={core_result.metadata.get('thickness_device', 'unknown')}; "
+                f"GPU={core_result.metadata.get('thickness_gpu', 'unknown')}. "
+                f"{core_result.metadata.get('thickness_backend_reason', '')}"
             )
             if common_region is not None:
                 core_result = self._restrict_core_result(

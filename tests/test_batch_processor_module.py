@@ -3242,6 +3242,10 @@ def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: 
         / directory
         / f"sub-001_ses-001_voi-{site}_measurements.csv"
     )
+    backend_metadata = json.loads(output.with_suffix(".json").read_text())
+    assert backend_metadata["thickness_backend"] == "cpu"
+    assert backend_metadata["thickness_gpu"] is False
+    assert backend_metadata["thickness_device"] == "CPU"
     with output.open(newline="", encoding="utf-8") as handle:
         rows = {row["Parameter"]: row for row in csv.DictReader(handle)}
     assert float(rows["Tt.BMD"]["Mean"]) == 100.0

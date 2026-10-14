@@ -48,6 +48,25 @@ Four profiles are exposed:
 
 Native maps are reusable. If native maps already exist, the registered profile can reuse them and only recompute the common-region-restricted measurement table.
 
+### GPU acceleration
+
+Microarchitecture and both Functional Bone profiles automatically use Apple
+Metal on macOS or an OpenCL GPU on Windows/Linux when usable. Toolbox Setup
+installs the platform-specific Python bindings, including for local editable
+installations. Windows/Linux also require the GPU manufacturer's working OpenCL
+driver/runtime. CUDA/PyTorch is not required for these measurements.
+
+Setup displays the detected backend, device and any CPU fallback reason. Batch
+logs report them before native map calculation, and Microarchitecture CSV JSON
+sidecars retain device provenance. Functional Bone copies this provenance to its
+own measurement sidecar: it is a restricted summary, not a separate GPU computation.
+Cached maps are reused without rerunning sphere fitting. CPU-only OpenCL devices
+are not labelled as GPU acceleration.
+
+GPU acceleration covers sphere-diameter accumulation only. Distance transforms,
+ridge extraction, statistics and file I/O remain CPU-based. A long total runtime
+does not by itself establish whether a GPU was used.
+
 ### IPL-aligned standard measurements
 
 The updated core uses `ipl-aligned-v1`: cortical porosity counts cleaned,

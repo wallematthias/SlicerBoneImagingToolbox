@@ -26,6 +26,7 @@ from SlicerBoneImagingToolboxLib.package_status import (  # noqa: E402
     package_status_rows,
 )
 from SlicerBoneImagingToolboxLib.registry import TOOLBOX_DISPLAY_NAME  # noqa: E402
+from SlicerBoneImagingToolboxLib.gpu_runtime import gpu_runtime_statuses  # noqa: E402
 from SlicerBoneImagingToolboxLib.slicer_pip import slicer_pip_install  # noqa: E402
 from SlicerBoneImagingToolboxLib.updater import (  # noqa: E402
     ToolboxUpdateCheck,
@@ -156,6 +157,11 @@ class BoneImagingToolboxSetupWidget(ScriptedLoadableModuleWidget):
         self.packageStatusLabel.wordWrap = True
         packages_layout.addWidget(self.packageStatusLabel)
 
+        self.gpuStatusLabel = qt.QLabel()
+        self.gpuStatusLabel.wordWrap = True
+        self.gpuStatusLabel.setTextFormat(qt.Qt.PlainText)
+        packages_layout.addWidget(self.gpuStatusLabel)
+
         self.packageTable = qt.QTableWidget()
         self.packageTable.setColumnCount(5)
         self.packageTable.setHorizontalHeaderLabels(["Package", "Installed", "Latest", "Status", "Action"])
@@ -267,6 +273,12 @@ class BoneImagingToolboxSetupWidget(ScriptedLoadableModuleWidget):
             self._log(f"[packages] status check failed: {exc}")
             return
         self._last_package_rows = rows
+        gpu_statuses = self._with_wait_cursor(gpu_runtime_statuses)
+        self.gpuStatusLabel.text = "GPU acceleration\n" + "\n".join(
+            f"{name}: {status}" for name, status in gpu_statuses.items()
+        )
+        for name, status in gpu_statuses.items():
+            self._log(f"[gpu] {name}: {status}")
         self._populate_package_table(rows)
         actions = [row for row in rows if row.action]
         self.installRecommendedButton.enabled = bool(actions)

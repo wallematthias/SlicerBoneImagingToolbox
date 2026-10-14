@@ -24,6 +24,7 @@ set(TOOLBOX_SHARED_PYTHON_SCRIPTS
   SlicerBoneImagingToolboxLib/unet_contouring_worker.py
   SlicerBoneImagingToolboxLib/fea_batch.py
   SlicerBoneImagingToolboxLib/fea_workflow_labels.py
+  SlicerBoneImagingToolboxLib/gpu_runtime.py
   SlicerBoneImagingToolboxLib/image_io.py
   SlicerBoneImagingToolboxLib/masks.py
   SlicerBoneImagingToolboxLib/measurement_export.py

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import sys
 from importlib import metadata
 from pathlib import Path
 from urllib import request as urllib_request
@@ -95,7 +96,8 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Bone Microarchitecture",
         package_name="bone-microarchitecture",
         import_name="bone_microarchitecture",
-        minimum_version="0.3.0",
+        minimum_version="0.3.1",
+        extras=("gpu",),
         constraints=("numpy>=2.0,<3.0", "scipy>=1.18,<2.0"),
         notes="Bone microarchitecture measurements from masks and calibrated grayscale images.",
     ),
@@ -222,6 +224,12 @@ def collect_validation_errors(specs: tuple[PackageSpec, ...] = DEFAULT_RUNTIME_P
             except Exception as exc:
                 errors[spec.package_name] = f"Required runtime module {import_name!r} is unavailable: {exc}"
                 break
+        if spec.package_name == "bone-microarchitecture" and spec.package_name not in errors:
+            import_name = "Metal" if sys.platform == "darwin" else "pyopencl"
+            try:
+                __import__(import_name)
+            except Exception as exc:
+                errors[spec.package_name] = f"GPU dependency {import_name!r} is unavailable: {exc}"
     return errors
 
 
@@ -300,12 +308,20 @@ def package_status_rows(
     )
 
 
+def runtime_constraints(spec: PackageSpec) -> tuple[str, ...]:
+    """Include GPU bindings even when editable packages are installed with --no-deps."""
+    if spec.package_name == "bone-microarchitecture":
+        gpu = "pyobjc-framework-Metal>=10" if sys.platform == "darwin" else "pyopencl>=2024.1"
+        return (*spec.constraints, gpu)
+    return spec.constraints
+
+
 def install_command(spec: PackageSpec, *, installed: bool) -> str:
     extras = f"[{','.join(spec.extras)}]" if spec.extras else ""
     requirement = f"{spec.package_name}{extras}>={spec.minimum_version}"
     args = ["--upgrade"] if installed else []
     args.extend(spec.install_options)
-    args.extend([requirement, *spec.constraints])
+    args.extend([requirement, *runtime_constraints(spec)])
     return " ".join(args)
 
 
@@ -371,8 +387,9 @@ def install_commands(spec: PackageSpec, *, installed: bool) -> tuple[str, ...]:
         if spec.package_name == "bone-imaging-derivatives":
             return (package_command,)
         commands = []
-        if spec.constraints:
-            commands.append(" ".join([*upgrade, "--prefer-binary", *spec.constraints]))
+        constraints = runtime_constraints(spec)
+        if constraints:
+            commands.append(" ".join([*upgrade, "--prefer-binary", *constraints]))
         commands.append(package_command)
         return tuple(commands)
     return (install_command(spec, installed=installed),)

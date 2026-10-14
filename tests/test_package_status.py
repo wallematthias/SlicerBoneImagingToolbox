@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -128,9 +130,44 @@ def test_microarchitecture_install_commands_use_local_logic_repo_when_available(
     specs = {spec.package_name: spec for spec in DEFAULT_RUNTIME_PACKAGES}
     commands = install_commands(specs["bone-microarchitecture"], installed=True)
 
-    assert commands[0] == "--upgrade --prefer-binary numpy>=2.0,<3.0 scipy>=1.18,<2.0"
+    assert "numpy>=2.0,<3.0 scipy>=1.18,<2.0" in commands[0]
+    assert ("pyobjc-framework-Metal>=10" if sys.platform == "darwin" else "pyopencl>=2024.1") in commands[0]
     assert commands[1].startswith("--upgrade --no-deps -e ")
-    assert commands[1].endswith("/bone-microarchitecture")
+    assert commands[1].endswith("/bone-microarchitecture[gpu]")
+
+
+@pytest.mark.parametrize("platform, requirement", [("win32", "pyopencl>=2024.1"), ("linux", "pyopencl>=2024.1"), ("darwin", "pyobjc-framework-Metal>=10")])
+@pytest.mark.parametrize("editable", [True, False])
+def test_microarchitecture_setup_installs_gpu_runtime_even_for_editable(monkeypatch, tmp_path, platform, requirement, editable):
+    from SlicerBoneImagingToolboxLib import package_status
+
+    monkeypatch.setattr(package_status.sys, "platform", platform)
+    monkeypatch.setattr(package_status, "resolve_local_editable_repo", lambda *args: tmp_path if editable else None)
+    spec = next(s for s in DEFAULT_RUNTIME_PACKAGES if s.package_name == "bone-microarchitecture")
+    commands = install_commands(spec, installed=True)
+    assert requirement in commands[0]
+    assert "[gpu]" in commands[-1]
+
+
+def test_microarchitecture_setup_detects_missing_gpu_dependency(monkeypatch):
+    from SlicerBoneImagingToolboxLib import package_status
+    import builtins
+
+    spec = next(s for s in DEFAULT_RUNTIME_PACKAGES if s.package_name == "bone-microarchitecture")
+    monkeypatch.setattr(package_status, "installed_package_version", lambda name: "0.3.1")
+    monkeypatch.setattr(package_status.sys, "platform", "win32")
+    original_import = builtins.__import__
+
+    def missing_pyopencl(name, *args, **kwargs):
+        if name == "pyopencl":
+            raise ImportError("pyopencl is missing")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_pyopencl)
+    errors = package_status.collect_validation_errors((spec,))
+    assert "pyopencl" in errors["bone-microarchitecture"]
+    row = package_status_row(spec, installed_versions={spec.package_name: "0.3.1"}, latest_versions={}, validation_errors=errors)
+    assert row.action == "update"
 
 
 def test_default_runtime_packages_include_public_tool_cores() -> None:
@@ -224,7 +261,7 @@ def test_plate_rod_install_commands_honor_wheel_only_with_sibling_checkout(monke
 
 def test_microarchitecture_minimum_includes_canonical_contour_discovery() -> None:
     spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "bone-microarchitecture")
-    assert spec.minimum_version == "0.3.0"
+    assert spec.minimum_version == "0.3.1"
 
 
 def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:

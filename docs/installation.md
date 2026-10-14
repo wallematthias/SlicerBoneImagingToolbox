@@ -1,5 +1,19 @@
 # Installation
 
+## GPU-capable workflows
+
+Toolbox Setup displays acceleration diagnostics after checking packages:
+
+- Microarchitecture/Functional Bone: Apple Metal on macOS, OpenCL GPU on Windows/Linux. Setup installs the Python bindings; the GPU manufacturer's driver/OpenCL runtime must also be available.
+- U-Net contouring and MotionScore: PyTorch automatically selects CUDA, then Apple MPS, then CPU. An installed CPU-only PyTorch build cannot use an NVIDIA GPU. Use the [official PyTorch installation selector](https://pytorch.org/get-started/locally/) for a CUDA-enabled build compatible with the Windows machine and its driver, using Slicer's Python runtime rather than system Python. Setup reports this condition; it does not replace an existing PyTorch build or install GPU drivers silently.
+- Spine Segmentation: uses its own automatic device selection and checks MPS Conv3D support. An external runtime is independent of Slicer's PyTorch; inspect the module's runtime status as well.
+- Plate/Rod Morphometry: the GPU implementation is Apple Metal only and requires `swiftc` (Xcode command-line tools). There is no Windows GPU implementation for this module; Windows uses the compiled CPU backend.
+
+Modules without a GPU implementation remain CPU-based. CPU fallback keeps the
+toolbox usable without supported hardware; diagnostics explain why acceleration
+is unavailable. Selecting GPU explicitly in a module is not a substitute for a
+working runtime.
+
 ## Extension Manager
 
 When the toolbox is listed for your Slicer version:
