@@ -81,9 +81,9 @@ DEFAULT_RUNTIME_PACKAGES = (
         display_name="Scanco I/O",
         package_name="aimio-py",
         import_name="py_aimio",
-        minimum_version="0.1.8",
+        minimum_version="0.4.1",
         constraints=("numpy>=1.26,<3.0",),
-        notes="Scanco AIM/ISQ/SCV/GOBJ reader-writer stack.",
+        notes="Scanco AIM/ISQ/SCV/GOBJ reader-writer stack with RAD scout viewing and corrected SCV/RSQ reading.",
     ),
     PackageSpec(
         display_name="Spine Segmentation",

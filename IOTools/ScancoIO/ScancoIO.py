@@ -33,7 +33,10 @@ AIM_SOURCE_ATTRIBUTE = "HRpQCT.AIMSourcePath"
 AIM_SCALING_ATTRIBUTE = "HRpQCT.AIMScaling"
 SCANCO_FORMAT_ATTRIBUTE = "BoneImaging.ScancoIO.Format"
 SCANCO_LOAD_AS_ATTRIBUTE = "BoneImaging.ScancoIO.LoadAs"
-VOLUME_READER_EXTENSIONS = (".aim", ".isq", ".scv")
+SCANCO_GEOMETRY_UNIT_ATTRIBUTE = "BoneImaging.ScancoIO.GeometryUnit"
+SCANCO_GEOMETRY_WARNING_ATTRIBUTE = "BoneImaging.ScancoIO.GeometryWarning"
+VOLUME_READER_EXTENSIONS = (".aim", ".isq", ".scv", ".rad")
+SCALED_VOLUME_READER_EXTENSIONS = (".aim", ".isq", ".scv")
 SEGMENTATION_READER_EXTENSIONS = (".aim", ".isq", ".gobj")
 ALL_READER_EXTENSIONS = tuple(sorted(set(VOLUME_READER_EXTENSIONS + SEGMENTATION_READER_EXTENSIONS)))
 
@@ -128,7 +131,7 @@ class ScancoIO(ScriptedLoadableModule):
         parent.dependencies = []
         parent.contributors = ["Matthias Walle"]
         parent.helpText = (
-            "Import Scanco AIM, ISQ, SCV, and GOBJ images into Slicer and export "
+            "Import Scanco AIM, ISQ, SCV, GOBJ, and RAD images into Slicer and export "
             f"edited grayscale or mask volumes back to AIM. Module version: {MODULE_VERSION}"
         )
         parent.acknowledgementText = """Author: Matthias Walle. Part of the Bone Imaging Toolbox for 3D Slicer.
@@ -176,6 +179,10 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
             load_as = aim_io.suggested_slicer_load_as(image_path)
         if load_as not in {"volume", "segmentation", "transform"}:
             raise ValueError("Load mode must be one of: volume, segmentation, transform.")
+        if aim_io.resolve_image_format(image_path) == "rad":
+            if load_as != "volume":
+                raise ValueError("RAD scout radiographs can only be loaded as native scalar volumes.")
+            scaling = "native"
         read_scaling = scaling if load_as == "volume" else "native"
         image, metadata = aim_io.read_image(image_path, scaling=read_scaling)
         name = volume_name.strip() if volume_name else image_path.stem
@@ -230,6 +237,12 @@ class ScancoIOLogic(ScriptedLoadableModuleLogic):
         node.SetAttribute(SCANCO_FORMAT_ATTRIBUTE, str((metadata or {}).get("format") or "").lower())
         node.SetAttribute(SCANCO_LOAD_AS_ATTRIBUTE, str(load_as))
         node.SetAttribute(AIM_METADATA_ATTRIBUTE, metadata_text)
+        node.SetAttribute(SCANCO_GEOMETRY_UNIT_ATTRIBUTE, str(metadata.get("geometry_unit") or "mm"))
+        node.SetAttribute(SCANCO_GEOMETRY_WARNING_ATTRIBUTE, str(metadata.get("geometry_warning") or ""))
+        if metadata.get("geometry_unit") == "pixel":
+            name = node.GetName() or "Scout"
+            if not name.endswith(" [pixel space]"):
+                node.SetName(name + " [pixel space]")
 
     def _transform_node_from_image(self, image, name):
         node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", name)
@@ -503,8 +516,8 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
         self._lastAutoVolumeName = ""
         browse = qt.QPushButton("Browse...")
         browse.clicked.connect(self._browse_import_path)
-        self._tip(self.importPathEdit, "Path to the Scanco AIM, ISQ, SCV, or GOBJ file to import. The volume name updates when this path changes.")
-        self._tip(browse, "Select a Scanco AIM, ISQ, SCV, or GOBJ file from disk.")
+        self._tip(self.importPathEdit, "Path to the Scanco AIM, ISQ, SCV, GOBJ, or RAD file to import. RAD loads as a native radiograph only. The volume name updates when this path changes.")
+        self._tip(browse, "Select a Scanco AIM, ISQ, SCV, GOBJ, or RAD file from disk.")
         row = qt.QHBoxLayout()
         row.addWidget(self.importPathEdit)
         row.addWidget(browse)
@@ -645,7 +658,7 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
             slicer.util.mainWindow(),
             "Select Scanco image file",
             "",
-            "AIM/ISQ/SCV/GOBJ files (*.AIM *.aim *.ISQ *.isq *.SCV *.scv *.GOBJ *.gobj);;All files (*)",
+            "AIM/ISQ/SCV/GOBJ/RAD files (*.AIM *.aim *.ISQ *.isq *.SCV *.scv *.GOBJ *.gobj *.RAD *.rad);;All files (*)",
         )
         if isinstance(path, (tuple, list)):
             path = path[0] if path else ""
@@ -782,10 +795,19 @@ class ScancoIOWidget(ScriptedLoadableModuleWidget):
 
     def _on_import_path_changed(self, path):
         self._update_volume_name_from_import_path(path)
+        self._on_import_as_changed()
 
     def _on_import_as_changed(self, _index=None):
+        try:
+            is_rad = _aim_io_module().resolve_image_format(str(self.importPathEdit.text)) == "rad"
+        except ValueError:
+            is_rad = False
+        self.importAsCombo.enabled = not is_rad
+        if is_rad:
+            self.importAsCombo.setCurrentIndex(self.importAsCombo.findData("volume"))
+            self.scalingCombo.setCurrentIndex(self.scalingCombo.findData("native"))
         import_kind = self.importAsCombo.currentData
-        self.scalingCombo.enabled = import_kind == "volume"
+        self.scalingCombo.enabled = import_kind == "volume" and not is_rad
 
     def _update_volume_name_from_import_path(self, path):
         path = str(path or "").strip()

@@ -13,8 +13,8 @@ import numpy as np
 import SimpleITK as sitk
 
 
-SUPPORTED_IMAGE_EXTENSIONS = (".aim", ".isq", ".scv", ".gobj")
-SUPPORTED_IMAGE_FORMATS = ("aim", "isq", "scv", "gobj")
+SUPPORTED_IMAGE_EXTENSIONS = (".aim", ".isq", ".scv", ".gobj", ".rad")
+SUPPORTED_IMAGE_FORMATS = ("aim", "isq", "scv", "gobj", "rad")
 SEGMENTATION_FILENAME_TOKENS = {
     "contour",
     "contours",
@@ -161,7 +161,7 @@ def resolve_image_format(path: Path | str, image_format: str = "auto") -> str:
     normalized = str(image_format or "auto").strip().lower()
     if normalized != "auto":
         if normalized not in SUPPORTED_IMAGE_FORMATS:
-            raise ValueError("image_format must be one of: auto, aim, isq, scv, or gobj.")
+            raise ValueError("image_format must be one of: auto, aim, isq, scv, gobj, or rad.")
         return normalized
 
     path_without_version = str(path).rsplit(";", 1)
@@ -169,12 +169,14 @@ def resolve_image_format(path: Path | str, image_format: str = "auto") -> str:
     suffix = Path(path_text).suffix.lower()
     if suffix in SUPPORTED_IMAGE_EXTENSIONS:
         return suffix.lstrip(".")
-    raise ValueError("Could not infer image format from extension; use AIM, ISQ, SCV, or GOBJ.")
+    raise ValueError("Could not infer image format from extension; use AIM, ISQ, SCV, GOBJ, or RAD.")
 
 
 def suggested_slicer_load_as(path: Path | str, metadata: dict[str, Any] | None = None) -> str:
     metadata_format = str((metadata or {}).get("format") or "").strip().lower()
     image_format = metadata_format or resolve_image_format(path)
+    if image_format == "rad":
+        return "volume"
     if image_format == "gobj":
         return "segmentation"
 
@@ -282,7 +284,7 @@ def _image_from_array_and_metadata(
     image_format = str(metadata.get("format") or "").upper()
     unit = str(metadata.get("unit") or "").strip()
     if not unit:
-        unit = "native" if image_format in {"SCV", "GOBJ"} else _normalize_image_scaling(scaling)
+        unit = "native" if image_format in {"SCV", "GOBJ", "RAD"} else _normalize_image_scaling(scaling)
     metadata.update(
         {
             "origin": origin,
@@ -437,10 +439,15 @@ def read_image(
     image_format = resolve_image_format(path, image_format)
     scaling = _normalize_image_scaling(scaling)
 
+    if image_format == "rad" and scaling not in {"native", "none"}:
+        raise ValueError("RAD is a projection radiograph; choose native values, not HU/density conversion.")
+
     if image_format == "aim":
         return read_aim(Path(path), scaling="density" if scaling == "density" else scaling)
 
     py_aimio = _load_py_aimio()
+    if image_format == "rad" and not hasattr(py_aimio, "read_rad"):
+        raise RuntimeError("The installed aimio-py does not support RAD. Update Scanco I/O through Toolbox Setup to a RAD-capable release.")
     read_kwargs = _image_scaling_kwargs(image_format, scaling)
     read_kwargs.update(kwargs)
     array, meta = py_aimio.read_image(str(path), format=image_format, **read_kwargs)

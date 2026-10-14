@@ -1,6 +1,6 @@
 from slicer.ScriptedLoadableModule import ScriptedLoadableModule
 
-from ScancoIO import ScancoIOVariantFileReader, VOLUME_READER_EXTENSIONS
+from ScancoIO import ScancoIOVariantFileReader, SCALED_VOLUME_READER_EXTENSIONS
 
 
 class ScancoDensity(ScriptedLoadableModule):
@@ -23,5 +23,5 @@ class ScancoDensityFileReader(ScancoIOVariantFileReader):
             file_type="ScancoDensity",
             scaling="density",
             load_as="volume",
-            extensions=VOLUME_READER_EXTENSIONS,
+            extensions=SCALED_VOLUME_READER_EXTENSIONS,
         )

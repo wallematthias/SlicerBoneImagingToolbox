@@ -1,8 +1,12 @@
 from pathlib import Path
+import ast
+import json
+import struct
 import sys
 
 import numpy as np
 import SimpleITK as sitk
+import pytest
 
 
 MODULE = Path(__file__).resolve().parents[1] / "IOTools" / "ScancoIO" / "ScancoIO.py"
@@ -11,6 +15,43 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from ScancoIOLib import aim_io  # noqa: E402
+
+
+def test_pixel_space_import_is_visibly_labelled_and_retains_warning():
+    tree = ast.parse(MODULE.read_text())
+    method = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef) and node.name == "_attach_import_metadata")
+    namespace = {"json": json, "_json_default": str}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id.endswith("_ATTRIBUTE")
+            for target in node.targets
+        ):
+            exec(compile(ast.Module(body=[node], type_ignores=[]), str(MODULE), "exec"), namespace)
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(MODULE), "exec"), namespace)
+
+    class Node:
+        def __init__(self):
+            self.attributes = {}
+            self.name = "scout"
+
+        def SetAttribute(self, key, value):
+            self.attributes[key] = value
+
+        def GetName(self):
+            return self.name
+
+        def SetName(self, name):
+            self.name = name
+
+    node = Node()
+    namespace["_attach_import_metadata"](None, node, image_path="scout.SCV",
+        scaling="native", load_as="volume", metadata={
+            "format": "SCV", "geometry_unit": "pixel", "geometry_warning": "No physical measurements"
+        })
+    assert node.name == "scout [pixel space]"
+    assert node.attributes["BoneImaging.ScancoIO.GeometryUnit"] == "pixel"
+    assert node.attributes["BoneImaging.ScancoIO.GeometryWarning"] == "No physical measurements"
 
 
 def test_scanco_io_can_import_aim_as_segmentation_node() -> None:
@@ -86,7 +127,7 @@ def test_scanco_io_builds_four_explicit_drag_drop_reader_modules() -> None:
 def test_explicit_drag_drop_readers_limit_extensions_by_use() -> None:
     scanco_source = MODULE.read_text(encoding="utf-8")
 
-    assert 'VOLUME_READER_EXTENSIONS = (".aim", ".isq", ".scv")' in scanco_source
+    assert 'VOLUME_READER_EXTENSIONS = (".aim", ".isq", ".scv", ".rad")' in scanco_source
     assert 'SEGMENTATION_READER_EXTENSIONS = (".aim", ".isq", ".gobj")' in scanco_source
 
 
@@ -103,7 +144,7 @@ def test_scanco_import_ui_supports_new_formats_without_mu_scaling() -> None:
     source = MODULE.read_text(encoding="utf-8")
 
     assert "Import Scanco image" in source
-    assert "AIM/ISQ/SCV/GOBJ files" in source
+    assert "AIM/ISQ/SCV/GOBJ/RAD files" in source
     assert '("Density", "density")' in source
     assert '("Native", "native")' in source
     assert '("HU", "hu")' in source
@@ -123,11 +164,91 @@ def test_scanco_io_separates_import_and_export_into_tabs() -> None:
 
 
 def test_aimio_image_dispatcher_supports_all_scanco_extensions() -> None:
-    assert aim_io.supported_image_extensions() == (".aim", ".isq", ".scv", ".gobj")
+    assert aim_io.supported_image_extensions() == (".aim", ".isq", ".scv", ".gobj", ".rad")
     assert aim_io.resolve_image_format("radius.AIM") == "aim"
     assert aim_io.resolve_image_format("radius.ISQ") == "isq"
     assert aim_io.resolve_image_format("scout.SCV") == "scv"
     assert aim_io.resolve_image_format("contour.GOBJ") == "gobj"
+    assert aim_io.resolve_image_format("scout.RAD;1") == "rad"
+
+
+def test_rad_adapter_loads_native_single_plane_with_physical_spacing(tmp_path):
+    path = tmp_path / "scout.RAD;1"
+    header = bytearray(512)
+    header[:16] = b"CTDATA-HEADER_V1"
+    struct.pack_into("<i", header, 16, 9)
+    struct.pack_into("<3i", header, 44, 3, 2, 1)
+    struct.pack_into("<3i", header, 56, 180000, 160000, 0)
+    path.write_bytes(header + struct.pack("<6h", -1, 0, 1, 256, 9186, 32767))
+
+    image, metadata = aim_io.read_image(path, scaling="native")
+
+    assert image.GetSize() == (3, 2, 1)
+    assert image.GetSpacing() == pytest.approx((0.06, 0.08, 1.0))
+    assert image.GetOrigin() == (0.0, 0.0, 0.0)
+    assert sitk.GetArrayFromImage(image).tolist() == [[[-1, 0, 1], [256, 9186, 32767]]]
+    assert metadata["unit"] == "native"
+    assert metadata["format"] == "RAD"
+    assert aim_io.suggested_slicer_load_as("scout_mask.RAD") == "volume"
+    for scaling in ("hu", "density"):
+        with pytest.raises(ValueError, match="RAD.*native"):
+            aim_io.read_image(path, scaling=scaling)
+
+
+def test_only_native_drag_drop_reader_accepts_rad():
+    """Evaluate real registrations without importing the GUI-only Slicer modules."""
+    tree = ast.parse(MODULE.read_text())
+    namespace = {"Path": Path}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id.endswith("READER_EXTENSIONS")
+            for target in node.targets
+        ) or isinstance(node, ast.ClassDef) and node.name == "ScancoIOVariantFileReader":
+            exec(compile(ast.Module(body=[node], type_ignores=[]), str(MODULE), "exec"), namespace)
+    for module_name, expected in (("ScancoVolume", 0.95), ("ScancoHU", 0.0),
+                                  ("ScancoDensity", 0.0), ("ScancoSegmentation", 0.0)):
+        module_tree = ast.parse((MODULE.parent / f"{module_name}.py").read_text())
+        reader_class = next(node for node in module_tree.body
+                            if isinstance(node, ast.ClassDef) and node.name.endswith("FileReader"))
+        exec(compile(ast.Module(body=[reader_class], type_ignores=[]), str(MODULE), "exec"), namespace)
+        reader = namespace[f"{module_name}FileReader"](object())
+        assert reader.canLoadFileConfidence("scout.RAD;1") == expected
+
+
+def test_rad_import_ui_selects_native_volume_and_restores_controls_for_ct():
+    tree = ast.parse(MODULE.read_text())
+    method = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef) and node.name == "_on_import_as_changed")
+    namespace = {"_aim_io_module": lambda: aim_io}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(MODULE), "exec"), namespace)
+
+    class Combo:
+        def __init__(self, items, selected):
+            self.items = items
+            self.currentData = selected
+            self.enabled = True
+
+        def findData(self, data):
+            return self.items.index(data)
+
+        def setCurrentIndex(self, index):
+            self.currentData = self.items[index]
+
+    class Widget:
+        importPathEdit = type("PathEdit", (), {"text": "scout.RAD;1"})()
+        importAsCombo = Combo(["volume", "segmentation", "transform"], "segmentation")
+        scalingCombo = Combo(["density", "native", "hu"], "density")
+
+    widget = Widget()
+    namespace["_on_import_as_changed"](widget)
+    assert widget.importAsCombo.currentData == "volume"
+    assert widget.scalingCombo.currentData == "native"
+    assert not widget.importAsCombo.enabled
+    assert not widget.scalingCombo.enabled
+    widget.importPathEdit.text = "scan.ISQ"
+    namespace["_on_import_as_changed"](widget)
+    assert widget.importAsCombo.enabled
+    assert widget.scalingCombo.enabled
 
 
 def test_drag_drop_auto_load_target_detects_segmentation_inputs() -> None:

@@ -1,6 +1,6 @@
 from slicer.ScriptedLoadableModule import ScriptedLoadableModule
 
-from ScancoIO import ScancoIOVariantFileReader, VOLUME_READER_EXTENSIONS
+from ScancoIO import ScancoIOVariantFileReader, SCALED_VOLUME_READER_EXTENSIONS
 
 
 class ScancoHU(ScriptedLoadableModule):
@@ -23,5 +23,5 @@ class ScancoHUFileReader(ScancoIOVariantFileReader):
             file_type="ScancoHU",
             scaling="hu",
             load_as="volume",
-            extensions=VOLUME_READER_EXTENSIONS,
+            extensions=SCALED_VOLUME_READER_EXTENSIONS,
         )

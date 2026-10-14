@@ -89,6 +89,21 @@ def test_package_status_row_handles_unavailable_pypi_version() -> None:
     assert row.action is None
 
 
+@pytest.mark.parametrize("version,status,action", [
+    ("0.1.8", "update_available", "update"),
+    ("0.4.0", "update_available", "update"),
+    ("0.4.1", "current_unknown_latest", None),
+    ("0.4.2", "current_unknown_latest", None),
+])
+def test_scanco_setup_requires_rad_capable_runtime_without_pypi_access(version, status, action):
+    spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "aimio-py")
+    row = package_status_row(
+        spec, installed_versions={"aimio-py": version}, latest_versions={}, validation_errors={})
+
+    assert row.status == status
+    assert row.action == action
+
+
 def test_package_status_row_marks_installed_version_below_minimum_as_update_needed() -> None:
     spec = PackageSpec(
         display_name="Timelapsed HR-pQCT",
