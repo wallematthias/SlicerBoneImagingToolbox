@@ -92,24 +92,55 @@ recorded root and dataset-relative paths, including Windows paths. The normalize
 raw images must still be discoverable in the dataset. Missing/unreadable manifests,
 missing matches and ambiguous mappings leave the affected filename cells blank
 and produce warnings in the batch log; they do **not** omit measurements or
-guess a filename. Existing measurement columns and `source_files` are unchanged.
+guess a filename. `source_files` links back to the detailed per-case results.
 
 Supported exports:
 
 | Tool | Measurement columns |
 | --- | --- |
-| Microarchitecture / Functional Bone | Parameter and statistic, e.g. `Tb.Th.Mean`, `Tb.Th.SD`, `Tb.Th.Units` |
-| Voidspace | Large-void summary, e.g. `Large.VS.V`; dynamic profiles preserve change columns such as `expanded.VS.V` |
-| Timelapsed Remodelling | Compartment, threshold and cluster size, e.g. `trab.threshold-225.cluster-1.formation_vox` |
-| Plate/Rod Morphometry | Existing scalar summary columns; individual element tables are excluded |
+| Microarchitecture / Functional Bone | 16 primary values, e.g. `Tb.Th.Mean`; distribution statistics and repeated unit columns are excluded |
+| Voidspace | Large-void summary, e.g. `Large.VS.V`; dynamic profiles retain quiescent, expanded, contracted and net volumes, without the duplicate `stable.VS.V` alias |
+| Timelapsed Remodelling | Four volume fractions per compartment/threshold/cluster variant: formation, resorption, net change and active remodelling |
+| Individual Trabecular Segmentation (Plate/Rod) | Volume fractions, physical volumes, biological element counts, morphology, junction densities and alignment; settings, diagnostic voxel counts and duplicate ratio aliases are excluded |
 | ParOsol-FEA | Existing scalar mechanics summaries and numbered load components; detailed curves are excluded |
-| Mechanoregulation | ROI-prefixed summary columns, e.g. `full.OR_F`; classification, threshold and cluster prefixes distinguish multiple remodelling variants |
+| Mechanoregulation | 11 primary values per ROI/variant: CCR, binned/logistic lazy-zone limits, formation/resorption odds increases and confidence limits; classification, threshold and cluster prefixes distinguish multiple remodelling variants |
+
+All exports include 12 identifier/provenance columns. Typical complete tables
+therefore contain 28 columns for Microarchitecture/Functional Bone, 17 for native
+Voidspace, 16 for dynamic Voidspace, 41 for Individual Trabecular Segmentation,
+14 for standard FEA, and 23 for one-ROI Mechanoregulation (45 for three ROIs).
+Missing source fields can reduce these counts; additional variants or FEA load
+components add columns. The ITS export retains both full label-map volumes and
+distinct element-derived `measured_*` volumes.
+
+Timelapse exports contain `formation_volume_fraction` (FV/D),
+`resorption_volume_fraction` (RV/D), `net_change_volume_fraction` ((FV−RV)/D) and
+`active_volume_fraction` ((FV+RV)/D), prefixed by compartment, threshold and
+cluster size, for example `trab.threshold-225.cluster-12.formation_volume_fraction`.
+These are fractions, not percentages or annualized rates. The source profile's
+denominator is preserved: `fraction_denominator=baseline_bone` means D=BV₀,
+not total tissue volume. Other profile denominators are not relabelled as BV₀.
+The denominator name, follow-up days and scan dates are stored once per pair
+when present in the source. With all three compartments, one threshold/cluster
+variant and these four context fields, the export has **28 columns** rather than
+the previous 219. Conflicting shared context is reported, not silently combined.
+
+Microarchitecture values retain their source units (see
+[Microarchitecture](microarchitecture.md)); the `.Mean` suffix identifies the
+primary value, including the distinct `Tb.1/N.SD` parameter. Mechanoregulation
+`OR_F`/`OR_R` and their confidence limits retain the source's **percent odds
+increase per SED percent increase/decrease**, not raw odds-ratio units.
 
 Native, registered and Functional Bone profiles use their own measurement
 outputs. Missing values and non-finite numbers become blank cells; zero remains
 zero. Missing/unreadable summaries and conflicting measurements are reported in
 the Batch Processor log, with affected cases omitted. The completion dialog
-reports the number of exported rows and any issues. Source files are not changed.
+reports the number of exported rows and any issues. Source files are not changed:
+full distributions, units, settings, diagnostic counts and quality-control results
+remain available in the per-case CSV/JSON outputs. Only the cohort export is
+compact; no scientific analysis is rerun or averaged. Net and active timelapse
+fractions are derived by subtracting/adding the existing formation/resorption
+fractions, preserving missing values.
 If a source table explicitly identifies a different profile, it is reported and
 omitted rather than silently relabelled as the selected profile.
 

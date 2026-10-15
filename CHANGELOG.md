@@ -13,6 +13,10 @@ All notable changes to this extension are documented in this file.
 
 - Require aimio-py 0.4.1 for RAD support and repaired SCV/RSQ readers, including when Toolbox Setup cannot reach PyPI.
 
+### Changed
+
+- Make Batch Processor cohort CSVs compact while leaving detailed per-case results unchanged: export 16 primary Microarchitecture/Functional Bone values; four Timelapse fractions (formation, resorption, net and active) per compartment/variant with shared denominator/date context; distinct ITS outcomes without settings/diagnostic voxel counts; and 11 Mechanoregulation values per ROI/variant without aliases/sample counts. Deduplicate Voidspace's stable/quiescent volume, retain standard FEA summaries, original filenames and case/pair provenance, and report conflicting shared context rather than mixing denominators.
+
 ### Fixed
 
 - Label pixel-space SCV scouts visibly and retain geometry warnings, distinguishing display pixels from calibrated physical measurements.

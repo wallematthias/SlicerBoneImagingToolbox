@@ -1,12 +1,14 @@
-"""Lossless, workflow-aware reshaping of case summaries into cohort CSVs.
+"""Compact, workflow-aware reshaping of case summaries into cohort CSVs.
 
-This module does not compute scientific measurements or discover arbitrary CSVs.
-The Batch Processor supplies the selected profile's known case outputs.
+The Batch Processor supplies the selected profile's known case outputs. Detailed
+source results remain unchanged; net/active remodelling fractions are derived
+from their existing formation/resorption fractions without rerunning analysis.
 """
 from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -24,6 +26,47 @@ IDENTITY_COLUMNS = (
 )
 _MISSING = {"", "nan", "none", "null", "na", "n/a", "inf", "+inf", "-inf"}
 _LOAD_COMPONENTS = {"Scale factors", "Input load amplitudes", "Estimated loads"}
+_MICROARCH_PARAMETERS = frozenset({
+    "Tt.BMD", "Tb.BMD", "Tb.BV/TV", "Tb.Th", "Tb.Sp", "Tb.N", "Tb.1/N.SD",
+    "Tb.BV", "Tb.TV", "Ct.BMD", "Ct.Th", "Ct.Po", "Ct.Po.V", "Ct.Po.Dm", "Ct.BV", "Ct.TV",
+})
+_ITS_MEASUREMENTS = frozenset({
+    "BV/TV", "pBV/TV", "rBV/TV", "pBV/BV", "rBV/BV", "pBV/rBV",
+    "TV_mm3", "BV_mm3", "pBV_mm3", "rBV_mm3",
+    "plate_count", "rod_count", "junction_count", "pTb.N", "rTb.N", "PR.N",
+    "pTb.Th_mm", "rTb.Th_mm", "pTb.S_mm2", "rTb.l_mm",
+    "P-P Junc.D", "P-R Junc.D", "R-R Junc.D", "aBV/TV",
+    "mean_plate_axial_alignment", "mean_rod_axial_alignment",
+    # Element-derived volumes differ from the full propagated-label volumes.
+    "measured_BV_mm3", "measured_pBV_mm3", "measured_rBV_mm3",
+})
+_MECHANOREG_MEASUREMENTS = frozenset({
+    "CCR", "binned_lazy_zone_low", "binned_lazy_zone_high",
+    "logistic_lazy_zone_low", "logistic_lazy_zone_high", "OR_F", "OR_R",
+    "OR_F_CI_low", "OR_F_CI_high", "OR_R_CI_low", "OR_R_CI_high",
+})
+_TIMELAPSE_CONTEXT = ("fraction_denominator", "followup_days", "scan_date_t0", "scan_date_t1")
+
+
+def _remodelling_fractions(data, prefix, row):
+    formation = _value(row.get("formation_frac_bv0"))
+    resorption = _value(row.get("resorption_frac_bv0"))
+    net = active = ""
+    if formation and resorption:
+        try:
+            fv, rv = Decimal(formation), Decimal(resorption)
+        except InvalidOperation as exc:
+            raise ValueError("invalid formation/resorption fraction") from exc
+        if not fv.is_finite() or not rv.is_finite():
+            raise ValueError("non-finite formation/resorption fraction")
+        net, active = format(fv - rv, "f"), format(fv + rv, "f")
+    for name, value in (("formation_volume_fraction", formation),
+                        ("resorption_volume_fraction", resorption),
+                        ("net_change_volume_fraction", net), ("active_volume_fraction", active)):
+        _put(data, prefix + name, value)
+    for name in _TIMELAPSE_CONTEXT:
+        if name in row:
+            _put(data, name, row[name])
 
 
 @dataclass(frozen=True)
@@ -144,13 +187,23 @@ def _flatten(path, tool, identity):
             parameter = row.get("Parameter", "").strip()
             if not parameter or "Mean" not in row:
                 raise ValueError("microarchitecture table needs Parameter and Mean columns")
-            for name, value in row.items():
-                if name != "Parameter":
-                    _put(data, f"{parameter}.{name}", value)
+            if parameter in _MICROARCH_PARAMETERS:
+                _put(data, f"{parameter}.Mean", row["Mean"])
+            continue
+        if tool == "timelapse":
+            _remodelling_fractions(data, prefix, row)
             continue
         for name, value in row.items():
             if name in ignored or (tool == "fea" and name in {"Sample", "Profile"}):
                 continue
+            if tool == "plate_rod" and name not in _ITS_MEASUREMENTS:
+                continue
+            if tool == "mechanoregulation" and name not in _MECHANOREG_MEASUREMENTS:
+                continue
+            if tool == "voidspace" and name == "stable.VS.V":
+                # Old summaries called the same quiescent volume "stable".
+                # _put also detects disagreement when both aliases are present.
+                name = "quiescent.VS.V"
             if tool == "fea" and name in _LOAD_COMPONENTS:
                 # The existing FEA summary encodes components as semicolon lists.
                 if _value(value):
@@ -255,8 +308,9 @@ def export_measurements(destination, *, dataset_root, tool, profile, cases, forc
     """Export wide summaries and report omitted missing, malformed or conflicting cases.
 
     Existing destination files require explicit overwrite permission. Source CSVs
-    are never overwritten. No averaging, unit conversion or new measurements are
-    performed. Missing/non-finite values are emitted as empty cells. Original scan
+    are never overwritten. No averaging or unit conversion is performed; net and
+    active remodelling fractions are formation minus/plus resorption. Other
+    values are copied. Missing/non-finite values are emitted as empty cells. Original scan
     names come from the dataset-root rename manifest; unresolved provenance warns
     without omitting measurements. ``provenance_root`` retains local naming
     provenance when summaries are exported from a temporary download snapshot.

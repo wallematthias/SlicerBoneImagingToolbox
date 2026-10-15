@@ -169,7 +169,7 @@ def test_multiple_raw_images_for_same_case_do_not_choose_the_only_known_original
     assert any("ambiguous" in warning for warning in report.warnings)
 
 
-def test_microarchitecture_pivots_statistics_and_preserves_missing_values(tmp_path):
+def test_microarchitecture_exports_primary_values_without_distribution_columns(tmp_path):
     path = _csv(tmp_path, "case_measurements.csv",
                 "Parameter,Mean,Median,SD,Units\nTb.Th,0.12,0.11,0.03,mm\nCt.Th,0.8,,nan,mm\n")
     second = _csv(tmp_path, "other_measurements.csv", "Parameter,Mean,Units\nTb.Th,0,mm\n")
@@ -179,9 +179,9 @@ def test_microarchitecture_pivots_statistics_and_preserves_missing_values(tmp_pa
     assert report.row_count == 2 and not report.issues
     assert rows[0]["subject_id"] == "001"
     assert rows[0]["Tb.Th.Mean"] == "0.12"
-    assert rows[0]["Tb.Th.SD"] == "0.03"
-    assert rows[0]["Tb.Th.Units"] == "mm"
-    assert rows[0]["Ct.Th.SD"] == ""
+    assert "Tb.Th.SD" not in rows[0]
+    assert "Tb.Th.Units" not in rows[0]
+    assert "Ct.Th.Median" not in rows[0]
     assert rows[1]["Tb.Th.Mean"] == "0" and rows[1]["Ct.Th.Mean"] == ""
     assert json.loads(rows[0]["source_files"]) == ["case_measurements.csv"]
 
@@ -208,16 +208,18 @@ def test_dynamic_voidspace_keeps_pair_and_change_columns(tmp_path):
 
 def test_timelapse_flattens_compartments_and_thresholds_without_averaging(tmp_path):
     path = _csv(tmp_path, "sub-001_voi-radiusleft_pairwise_remodelling.csv",
-                "subject_id,compartment,t0,t1,threshold,cluster_min_size,formation_vox,resorption_vox\n"
-                "001,trab,01,02,225,1,10,4\n001,cort,01,02,225,1,3,2\n"
-                "001,trab,01,02,300,1,7,4\n001,trab,02,03,225,1,11,5\n")
+                "subject_id,compartment,t0,t1,threshold,cluster_min_size,formation_frac_bv0,resorption_frac_bv0\n"
+                "001,trab,01,02,225,1,0.10,0.04\n001,cort,01,02,225,1,0.03,0.02\n"
+                "001,trab,01,02,300,1,0.07,0.04\n001,trab,02,03,225,1,0.11,0.05\n")
     report, rows = _export(tmp_path, "timelapse", [_case([path, path]), _case([path])])
     assert report.row_count == 2 and report.source_count == 1
     assert rows[0]["baseline_session_id"] == "01" and rows[0]["followup_session_id"] == "02"
-    assert rows[0]["trab.threshold-225.cluster-1.formation_vox"] == "10"
-    assert rows[0]["cort.threshold-225.cluster-1.formation_vox"] == "3"
-    assert rows[0]["trab.threshold-300.cluster-1.formation_vox"] == "7"
-    assert rows[1]["cort.threshold-225.cluster-1.formation_vox"] == ""
+    assert rows[0]["trab.threshold-225.cluster-1.formation_volume_fraction"] == "0.10"
+    assert rows[0]["cort.threshold-225.cluster-1.formation_volume_fraction"] == "0.03"
+    assert rows[0]["trab.threshold-300.cluster-1.formation_volume_fraction"] == "0.07"
+    assert rows[1]["cort.threshold-225.cluster-1.formation_volume_fraction"] == ""
+    assert rows[0]["trab.threshold-225.cluster-1.net_change_volume_fraction"] == "0.06"
+    assert rows[0]["trab.threshold-225.cluster-1.active_volume_fraction"] == "0.14"
 
 
 def test_mechanoregulation_combines_roi_summaries_but_not_curves(tmp_path):
@@ -318,3 +320,126 @@ def test_mechanoregulation_profiles_and_threshold_variants_are_not_collapsed(tmp
     report = module.export_measurements(tmp_path / "other.csv", dataset_root=tmp_path,
                                         tool="mechanoregulation", profile="load_history_3", cases=cases)
     assert report.row_count == 0 and all("profile" in issue for issue in report.issues)
+
+
+@pytest.mark.parametrize("profile", ["xtremectii", "functional-bone", "functional-bone-native"])
+def test_complete_microarchitecture_summary_has_28_columns(tmp_path, profile):
+    parameters = [
+        "Tt.BMD", "Tb.BMD", "Tb.BV/TV", "Tb.Th", "Tb.Sp", "Tb.N", "Tb.1/N.SD",
+        "Tb.BV", "Tb.TV", "Ct.BMD", "Ct.Th", "Ct.Po", "Ct.Po.V", "Ct.Po.Dm", "Ct.BV", "Ct.TV",
+    ]
+    path = _csv(tmp_path, "case_measurements.csv", "Parameter,Mean,Median,SD,Units\n" +
+                "".join(f"{name},0.12,0.11,0.03,mm\n" for name in parameters))
+    original = Path(path).read_bytes()
+    report, rows = _export(tmp_path, "microarchitecture", [_case([path])], profile)
+    assert not report.issues and len(rows[0]) == 28
+    assert rows[0]["Tb.1/N.SD.Mean"] == "0.12"  # Primary heterogeneity parameter, not an extra statistic.
+    assert Path(path).read_bytes() == original
+
+
+def test_timelapse_summary_keeps_four_outcomes_and_shared_context_once(tmp_path):
+    path = _csv(tmp_path, "case_pairwise_remodelling.csv",
+                "subject_id,compartment,t0,t1,threshold,cluster_min_size,formation_frac_bv0,resorption_frac_bv0,"
+                "fraction_denominator,followup_days,scan_date_t0,scan_date_t1,formation_vox,profile,ring_artifact_suppression_enabled\n" +
+                "".join(f"001,{part},01,02,225,12,0.10,0.04,baseline_bone,365,2025-01-01,2026-01-01,10,standard,True\n"
+                        for part in ("full", "cort", "trab")))
+    original = Path(path).read_bytes()
+    report, rows = _export(tmp_path, "timelapse", [_case([path])])
+    assert not report.issues and len(rows[0]) == 28
+    assert rows[0]["fraction_denominator"] == "baseline_bone"
+    assert rows[0]["followup_days"] == "365"
+    assert rows[0]["scan_date_t0"] == "2025-01-01"
+    assert rows[0]["full.threshold-225.cluster-12.active_volume_fraction"] == "0.14"
+    assert not any("formation_vox" in column or "ring_artifact" in column for column in rows[0])
+    assert Path(path).read_bytes() == original
+
+
+@pytest.mark.parametrize("formation,resorption,net,active", [
+    ("0.1", "0.2", "-0.1", "0.3"), ("0", "0", "0", "0"),
+    ("nan", "0.2", "", ""), ("0.1", "", "", ""),
+])
+def test_timelapse_derived_fractions_preserve_sign_zero_and_missing(tmp_path, formation, resorption, net, active):
+    path = _csv(tmp_path, "case_pairwise_remodelling.csv",
+                "compartment,t0,t1,threshold,cluster_min_size,formation_frac_bv0,resorption_frac_bv0,fraction_denominator\n"
+                f"trab,01,02,225,12,{formation},{resorption},bone_union\n")
+    _, rows = _export(tmp_path, "timelapse", [_case([path])])
+    assert rows[0]["trab.threshold-225.cluster-12.net_change_volume_fraction"] == net
+    assert rows[0]["trab.threshold-225.cluster-12.active_volume_fraction"] == active
+    assert rows[0]["fraction_denominator"] == "bone_union"  # Never relabel other profile denominators as BV0.
+
+
+def test_mechanoregulation_omits_aliases_and_sample_counts_but_keeps_cis(tmp_path):
+    path = _csv(tmp_path, "case_roi-full_mechanoregulation_summary.csv",
+                "CCR,CCR_low_threshold,CCR_high_threshold,binned_lazy_zone_low,binned_lazy_zone_high,"
+                "logistic_lazy_zone_low,logistic_lazy_zone_high,OR_F,OR_R,OR_F_CI_low,OR_F_CI_high,"
+                "OR_R_CI_low,OR_R_CI_high,OR_F_ratio,n_surface_voxels,formation_odds_increase_percent_per_sed_percent\n"
+                "0.6,0.2,0.8,0.2,0.8,0.3,0.7,20,30,10,40,15,45,1.2,100,20\n")
+    Path(path).with_suffix(".json").write_text(json.dumps({"profile": "standard"}))
+    report, rows = _export(tmp_path, "mechanoregulation", [_case([path])])
+    assert not report.issues and len(rows[0]) == 23
+    assert rows[0]["full.OR_F"] == "20" and rows[0]["full.OR_F_CI_low"] == "10"
+    assert rows[0]["full.logistic_lazy_zone_low"] == "0.3"
+    assert "full.CCR_low_threshold" not in rows[0]
+    assert "full.OR_F_ratio" not in rows[0] and "full.n_surface_voxels" not in rows[0]
+
+
+def test_plate_rod_keeps_morphometry_not_settings_counts_or_ratio_alias(tmp_path):
+    path = _csv(tmp_path, "case_desc-plate-rod-measurements.csv",
+                "subject_id,site,session_id,pBV/TV,rBV/TV,pBV/rBV,PR_volume_ratio,pTb.Th_mm,"
+                "plate_count,bone_voxels,classifier,max_iterations\n"
+                "001,radiusleft,01,0.2,0.1,2,2,0.15,8,100,saha_topology,1000\n")
+    _, rows = _export(tmp_path, "plate_rod", [_case([path])])
+    assert rows[0]["pBV/rBV"] == "2" and rows[0]["pTb.Th_mm"] == "0.15"
+    assert rows[0]["plate_count"] == "8"  # Biological element count, not implementation voxel count.
+    assert "PR_volume_ratio" not in rows[0] and "bone_voxels" not in rows[0]
+    assert "classifier" not in rows[0] and "max_iterations" not in rows[0]
+
+
+def test_dynamic_voidspace_exports_quiescent_once(tmp_path):
+    path = _csv(tmp_path, "voidspace_change_measurements.csv",
+                "stable.VS.V,quiescent.VS.V,expanded.VS.V,contracted.VS.V,net.VS.V\n8,8,5,3,2\n")
+    _, rows = _export(tmp_path, "voidspace", [_case([path])], "dynamic")
+    assert len(rows[0]) == 16 and rows[0]["quiescent.VS.V"] == "8"
+    assert "stable.VS.V" not in rows[0]
+
+
+def test_legacy_dynamic_voidspace_stable_alias_is_still_exported(tmp_path):
+    path = _csv(tmp_path, "voidspace_change_measurements.csv", "stable.VS.V,net.VS.V\n8,2\n")
+    _, rows = _export(tmp_path, "voidspace", [_case([path])], "dynamic")
+    assert rows[0]["quiescent.VS.V"] == "8" and "stable.VS.V" not in rows[0]
+
+
+def test_conflicting_voidspace_aliases_are_reported_not_discarded(tmp_path):
+    path = _csv(tmp_path, "voidspace_change_measurements.csv",
+                "stable.VS.V,quiescent.VS.V\n8,9\n")
+    report, rows = _export(tmp_path, "voidspace", [_case([path])], "dynamic")
+    assert not rows and len(report.issues) == 1
+    assert "conflicting measurement: quiescent.VS.V" in report.issues[0]
+
+
+def test_timelapse_conflicting_denominators_are_not_silently_combined(tmp_path):
+    path = _csv(tmp_path, "case_pairwise_remodelling.csv",
+                "compartment,t0,t1,threshold,cluster_min_size,formation_frac_bv0,resorption_frac_bv0,fraction_denominator\n"
+                "trab,01,02,225,12,0.1,0.2,baseline_bone\n"
+                "cort,01,02,225,12,0.1,0.2,bone_union\n")
+    report, rows = _export(tmp_path, "timelapse", [_case([path])])
+    assert not rows and len(report.issues) == 1
+    assert "conflicting measurement: fraction_denominator" in report.issues[0]
+
+
+def test_its_preserves_element_volumes_distinct_from_label_volumes(tmp_path):
+    fields = [
+        "BV/TV", "pBV/TV", "rBV/TV", "pBV/BV", "rBV/BV", "pBV/rBV",
+        "TV_mm3", "BV_mm3", "pBV_mm3", "rBV_mm3", "plate_count", "rod_count", "junction_count",
+        "pTb.N", "rTb.N", "PR.N", "pTb.Th_mm", "rTb.Th_mm", "pTb.S_mm2", "rTb.l_mm",
+        "P-P Junc.D", "P-R Junc.D", "R-R Junc.D", "aBV/TV",
+        "mean_plate_axial_alignment", "mean_rod_axial_alignment",
+        "measured_BV_mm3", "measured_pBV_mm3", "measured_rBV_mm3",
+    ]
+    path = _csv(tmp_path, "case_desc-plate-rod-measurements.csv",
+                "subject_id,site,session_id," + ",".join(fields) + "\n001,radiusleft,01," +
+                ",".join(str(index) for index in range(len(fields))) + "\n")
+    report, rows = _export(tmp_path, "plate_rod", [_case([path])])
+    assert not report.issues and len(rows[0]) == 41
+    assert rows[0]["BV_mm3"] == "7" and rows[0]["measured_BV_mm3"] == "26"
+    assert rows[0]["BV/TV"] == "0"
