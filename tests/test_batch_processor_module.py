@@ -2154,6 +2154,53 @@ def test_microarchitecture_existing_outputs_are_profile_mode_specific(tmp_path: 
     assert logic._existing_outputs_for_profile("timelapse", True, (native, registered)) == (native, registered)
 
 
+def test_microarchitecture_maps_stay_with_their_own_analysis_region(tmp_path, monkeypatch):
+    module = _import_batch_processor_module(monkeypatch)
+    outputs = []
+    for label, common, functional in [('native', False, False), ('common', True, False),
+                                     ('functional', False, True), ('functional-common', True, True)]:
+        outputs.append(module.BatchArtifact(tmp_path/f'{label}.nii.gz',
+            module.CaseKey('001', '001', 'radiusleft', None), 'microarchitecture_map',
+            'Microarchitecture', metadata={**METHOD_METADATA, 'use_common_region': common,
+                                           'functional_bone': functional}))
+    logic = module.BatchProcessorLogic()
+    for index, registered, profile in [(0, False, 'standard'), (1, True, 'standard'),
+                                       (2, False, 'functional-bone-native'), (3, True, 'functional-bone')]:
+        assert logic._existing_outputs_for_profile('microarchitecture', registered, outputs, profile) == (outputs[index],)
+
+
+def test_microarchitecture_changed_inputs_are_not_marked_complete(tmp_path, monkeypatch):
+    from bone_microarchitecture.cache import input_fingerprints, output_file_states
+    module = _import_batch_processor_module(monkeypatch)
+    source = tmp_path/'input.npy'
+    source.write_bytes(b'original input')
+    output = tmp_path/'measurements.csv'
+    output.write_text('completed')
+    artifact = module.BatchArtifact(output, module.CaseKey('001', '001', 'radiusleft', None),
+        'measurements_table', 'Microarchitecture', metadata={**METHOD_METADATA,
+            'input_fingerprints': input_fingerprints([source]),
+            'output_file_states': output_file_states([output])})
+    logic = module.BatchProcessorLogic()
+    assert logic._existing_outputs_for_profile('microarchitecture', False, [artifact]) == (artifact,)
+    source.write_bytes(b'edited input')
+    assert logic._existing_outputs_for_profile('microarchitecture', False, [artifact]) == ()
+
+
+def test_microarchitecture_replaced_input_selection_invalidates_completion(tmp_path, monkeypatch):
+    module = _import_batch_processor_module(monkeypatch)
+    image = types.SimpleNamespace(path=tmp_path/'image.nii.gz')
+    old = tmp_path/'old-seg.nii.gz'
+    replacement = tmp_path/'new-seg.nii.gz'
+    contours = {'segmentation': types.SimpleNamespace(path=replacement)}
+    artifact = module.BatchArtifact(tmp_path/'measurements.csv', module.CaseKey('001', '001', 'radiusleft', None),
+        'measurements_table', 'Microarchitecture', metadata={**METHOD_METADATA,
+            'input_paths': {'transformed_image': str(image.path.resolve()), 'bone_segmentation': str(old.resolve())}})
+    logic = module.BatchProcessorLogic()
+    assert logic._microarchitecture_outputs_for_inputs([artifact], image, contours, [], {}) == []
+    artifact.metadata['input_paths']['bone_segmentation'] = str(replacement.resolve())
+    assert logic._microarchitecture_outputs_for_inputs([artifact], image, contours, [], {}) == [artifact]
+
+
 def test_native_microarchitecture_outputs_do_not_make_registered_profile_loadable(tmp_path: Path, monkeypatch) -> None:
     module = _import_batch_processor_module(monkeypatch)
     contour_records = []
@@ -2992,17 +3039,16 @@ def test_functional_bone_profile_uses_common_region_minus_voidspace(tmp_path: Pa
     assert all(row["registered"] for row in rows)
     command = logic.command_for_row(tmp_path, tool="microarchitecture", profile="functional-bone", row=rows[0])
     assert command[0] == "-c"
-    assert "functional_common = common & ~voidspace" in command[1]
+    assert "run_microarchitecture_case(" in command[1]
     assert command[command.index("--segmentation") + 1].endswith("_desc-seg_mask.AIM")
     assert command[command.index("--full-mask") + 1].endswith("_desc-full_mask.AIM")
     assert command[command.index("--trab-mask") + 1].endswith("_desc-trab_mask.AIM")
     assert command[command.index("--cort-mask") + 1].endswith("_desc-cort_mask.AIM")
     assert command[command.index("--common-region") + 1].endswith("native-common_mask.nii.gz")
     assert command[command.index("--voidspace-mask") + 1].endswith("voidspace_large_mask.nii.gz")
-    assert command[command.index("--dataset-root") + 1] == str(tmp_path)
+    assert "--dataset-root" not in command
     assert command[command.index("--output-dir") + 1].endswith("/functional_bone_measurements")
-    assert "_desc-functional-bone-analysis_mask{analysis_extension}" in command[1]
-    assert "_mask_on_reference_grid" in command[1]
+    assert "voidspace_mask_path=args.voidspace_mask" in command[1]
     row_without_cort = dict(rows[0])
     row_without_cort.pop("cort_mask_path")
     with pytest.raises(ValueError, match="cortical mask"):
@@ -3174,7 +3220,7 @@ def test_functional_bone_existing_outputs_include_analysis_mask(tmp_path: Path, 
 ])
 @pytest.mark.parametrize("cropped_voidspace", [False, True])
 @pytest.mark.parametrize("site", ["radiusleft", "tibialeft"])
-def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: Path, monkeypatch, cropped_voidspace, profile, directory, expected_count, site) -> None:
+def test_functional_bone_command_runs_with_its_own_region_maps(tmp_path: Path, monkeypatch, cropped_voidspace, profile, directory, expected_count, site) -> None:
     pytest.importorskip("scipy")
     sitk = pytest.importorskip("SimpleITK")
     module = _import_batch_processor_module(monkeypatch)
@@ -3265,7 +3311,18 @@ def test_functional_bone_command_runs_with_core_native_map_generation(tmp_path: 
     analysis_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(analysis_path)))
     assert np.count_nonzero(analysis_mask) == expected_count
     assert not (maps_dir / f"sub-001_ses-001_voi-{site}_map-functional-bone.npy").exists()
-    assert any(maps_dir.glob(f"sub-001_ses-001_voi-{site}_map-*.nii.gz"))
+    assert not maps_dir.exists()  # functional workflow must not generate native results
+    own_maps = output.parent / "maps"
+    assert len(list(own_maps.glob(f"sub-001_ses-001_voi-{site}_map-*.nii.gz"))) == 9
+    discovered = module.BatchProcessorLogic._functional_bone_output_paths_for_row(tmp_path, dict(row, profile=profile))
+    assert len([path for path in discovered if '_map-' in path.name]) == 9
+    assert all(output.parent in path.parents for path in discovered)
+    timestamp = output.stat().st_mtime_ns
+    subprocess.run([sys.executable, *command, "--thickness-method", "edt", "--thickness-backend", "cpu"],
+                   check=True, env={**os.environ, "PYTHONPATH": os.pathsep.join([
+                       str(ROOT.parent / "bone-microarchitecture" / "src"),
+                       str(ROOT.parent / "bone-imaging-derivatives" / "src")])})
+    assert output.stat().st_mtime_ns == timestamp
 
 
 @pytest.mark.parametrize("voidspace_profile", ["native", "registered"])

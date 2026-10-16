@@ -23,7 +23,7 @@ creating scientific inputs in another tool's namespace.
 - `Segmentation`: other model-generated segmentations, such as CT vertebral labels.
 - `Registration`: pairwise and composed transforms for longitudinal scans.
 - `CommonRegion`: scan/FOV common-region masks derived from registered scan support.
-- `Microarchitecture`: native maps, native measurements, and common-region-restricted measurements.
+- `Microarchitecture`: separate native, common-region and Functional Bone maps and measurements.
 - `PlateRodMorphometry`: native plate/rod maps and native or common-region-restricted summaries.
 - `Voidspace`: native and registered voidspace masks, measurements, dynamic expansion/contraction/quiescent masks, and change tables.
 - `Timelapse`: remodelling maps, longitudinal change tables, and remodelling review outputs.

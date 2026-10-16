@@ -6,7 +6,7 @@ import pytest
 
 from test_batch_processor_module import (
     _import_batch_processor_module,
-    test_functional_bone_command_runs_with_core_native_map_generation as _run_functional_case,
+    test_functional_bone_command_runs_with_its_own_region_maps as _run_functional_case,
 )
 
 

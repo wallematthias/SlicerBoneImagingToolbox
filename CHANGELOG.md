@@ -11,6 +11,7 @@ All notable changes to this extension are documented in this file.
 
 ### Dependencies
 
+- Require bone-microarchitecture 0.3.2 for region-specific sphere fitting and final-map cache validation.
 - Require aimio-py 0.4.1 for RAD support and repaired SCV/RSQ readers, including when Toolbox Setup cannot reach PyPI.
 
 ### Changed
@@ -19,6 +20,7 @@ All notable changes to this extension are documented in this file.
 
 ### Fixed
 
+- Calculate common-region and Functional Bone sphere maps within their actual analysis region, preserving native distance/ridge context and pore selection. Save/load each profile's maps in its own folder, reuse only unchanged complete results, and invalidate older native-map summaries (`ipl-aligned-region-v3`). Apply the same centre restriction in scene mode. Follow documented IPL `suppress_boundary=2` without extra whole-sphere image-edge rejection; leave epsilon settings unchanged.
 - Label pixel-space SCV scouts visibly and retain geometry warnings, distinguishing display pixels from calibrated physical measurements.
 - Remove the unsupported Laplace-Hamming Torch MPS option. Migrate legacy scene profiles and worker snapshots to CPU tissue segmentation without changing the independently selected U-Net device or contour outputs.
 - Install Microarchitecture GPU bindings through Toolbox Setup, including editable installs, and detect missing bindings even when the core package is current. Report GPU device/fallback diagnostics in Setup and Microarchitecture/Functional Bone runs; reject CPU-only OpenCL devices as GPU acceleration.

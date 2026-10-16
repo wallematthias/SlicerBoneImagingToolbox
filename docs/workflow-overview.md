@@ -41,7 +41,7 @@ Batch Processor rows should report missing prerequisites before a job is launche
 The toolbox is designed so downstream tools reuse upstream derivatives:
 
 - Timelapsed Remodelling can consume `ImportedContours`, `BoneContours`, or scene-loaded masks prepared by either Contouring backend.
-- Microarchitecture and Plate/Rod Morphometry can reuse native maps and apply common regions only during measurement.
+- Microarchitecture computes region-specific sphere maps for native, common-region and Functional Bone analyses; unchanged analyses reuse their own final maps. Plate/Rod Morphometry can reuse native maps and apply common regions during measurement.
 - Voidspace consumes existing segmentations and masks. Registered voidspace uses native segmentations with Timelapsed native common regions; dynamic voidspace uses Timelapsed registered segmentations for voxelwise pair comparison. Voidspace does not create registrations.
 - Mechanoregulation consumes Timelapsed remodelling maps and ParOsol-FEA SED fields.
 

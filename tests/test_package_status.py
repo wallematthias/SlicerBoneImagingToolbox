@@ -274,9 +274,10 @@ def test_plate_rod_install_commands_honor_wheel_only_with_sibling_checkout(monke
     assert " -e " not in commands[0]
 
 
-def test_microarchitecture_minimum_includes_canonical_contour_discovery() -> None:
+def test_microarchitecture_minimum_includes_region_specific_sphere_fitting() -> None:
     spec = next(spec for spec in DEFAULT_RUNTIME_PACKAGES if spec.package_name == "bone-microarchitecture")
-    assert spec.minimum_version == "0.3.1"
+    assert spec.minimum_version == "0.3.2"
+    assert {"bone_microarchitecture.case", "bone_microarchitecture.cache"} <= set(spec.required_imports)
 
 
 def test_fea_and_mechanoregulation_runtime_packages_have_public_setup_names() -> None:

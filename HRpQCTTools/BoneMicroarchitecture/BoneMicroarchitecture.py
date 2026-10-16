@@ -980,10 +980,9 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 spacing=tuple(reversed(tuple(trab_mask.GetSpacing()))),
                 thickness_method=requested_thickness_method,
                 thickness_backend=resolved_thickness_backend,
+                analysis_mask=None if scan_region is None else sitk.GetArrayFromImage(scan_region),
             )
             result.metadata.update(backend_status)
-            if scan_region is not None:
-                result = self._restrict_core_result(result, scan_region, bone_seg, full_mask, trab_mask, cort_mask, image)
             session_dir = self.registered_session_output_dir(root, row)
             maps_dir = session_dir / "maps"
             maps_dir.mkdir(parents=True, exist_ok=True)
@@ -1357,22 +1356,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
         table_node.Modified()
         return table_node
 
-    @staticmethod
-    def _restrict_core_result(result, region, bone, peri, trab, cort=None, grayscale=None):
-        from bone_microarchitecture.batch import restrict_measurements
-
-        masks = {
-            "bone_segmentation": sitk.GetArrayFromImage(bone),
-            "periosteal_mask": sitk.GetArrayFromImage(peri),
-            "trabecular_mask": sitk.GetArrayFromImage(trab),
-        }
-        if cort is not None:
-            masks["cortical_mask"] = sitk.GetArrayFromImage(cort)
-        return restrict_measurements(
-            result, masks, sitk.GetArrayFromImage(region), tuple(reversed(trab.GetSpacing())),
-            grayscale=None if grayscale is None else sitk.GetArrayFromImage(grayscale),
-        )
-
     def compute_trabecular_microarchitecture(
         self,
         trabecular_segmentation_node,
@@ -1515,6 +1498,7 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 spacing=tuple(reversed(tuple(trab_seg.GetSpacing()))),
                 thickness_method=str(thickness_method),
                 thickness_backend=str(thickness_backend),
+                analysis_mask=None if common_region is None else sitk.GetArrayFromImage(common_region),
             )
             print(
                 f"[microarchitecture] backend={core_result.metadata.get('thickness_backend')}; "
@@ -1522,10 +1506,6 @@ class BoneMicroarchitectureLogic(ScriptedLoadableModuleLogic):
                 f"GPU={core_result.metadata.get('thickness_gpu', 'unknown')}. "
                 f"{core_result.metadata.get('thickness_backend_reason', '')}"
             )
-            if common_region is not None:
-                core_result = self._restrict_core_result(
-                    core_result, common_region, bone_seg, peri_mask, trab_seg, cort_mask, bmd_image
-                )
 
             metrics = dict(core_result.measurements)
             prefix = (str(output_prefix).strip() or trabecular_segmentation_node.GetName() or "HRpQCT").strip()

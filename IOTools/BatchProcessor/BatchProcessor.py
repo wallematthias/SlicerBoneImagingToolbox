@@ -404,51 +404,8 @@ _FUNCTIONAL_BONE_SCRIPT = r"""
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
-import numpy as np
-
 from bone_imaging_derivatives.layout import voi_token
-from bone_microarchitecture.batch import (
-    _load_map,
-    _load_volume,
-    _mask_on_reference_grid,
-    _masked_maps_for_measurements,
-    _summarize_measurements,
-    run_microarchitecture_batch,
-)
-from bone_microarchitecture.results import write_measurement_csv
-
-
-def _map_filename(subject: str, session: str, site: str, map_name: str, extension: str) -> str:
-    token = map_name.lower().replace(".", "-")
-    return f"sub-{subject}_ses-{session}_voi-{voi_token(site)}_map-{token}{extension}"
-
-
-def _existing_native_maps(map_dir: Path, subject: str, session: str, site: str, *, has_cortical: bool):
-    required = {"Tb.Th", "Tb.Sp", "Tb.N", "Tt.BMD", "Tb.BMD"}
-    if has_cortical:
-        required.update({"Ct.Th", "Ct.Po.Dm", "Ct.Po.Mask", "Ct.BMD"})
-    maps = {}
-    for map_name in required:
-        for extension in (".nii.gz", ".npy"):
-            path = map_dir / _map_filename(subject, session, site, map_name, extension)
-            if path.exists():
-                maps[map_name] = _load_map(path)
-                break
-    return maps if required <= set(maps) else None
-
-
-def _write_mask(path: Path, mask, reference) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if reference.sitk_image is None:
-        np.save(path, np.asarray(mask, dtype=np.uint8))
-        return
-    import SimpleITK as sitk
-
-    image = sitk.GetImageFromArray(np.asarray(mask, dtype=np.uint8))
-    image.CopyInformation(reference.sitk_image)
-    sitk.WriteImage(image, str(path))
+from bone_microarchitecture.case import run_microarchitecture_case
 
 
 def main() -> int:
@@ -460,9 +417,7 @@ def main() -> int:
     parser.add_argument("--cort-mask", required=True)
     parser.add_argument("--common-region")
     parser.add_argument("--voidspace-mask", required=True)
-    parser.add_argument("--dataset-root", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--maps-dir", required=True)
     parser.add_argument("--subject", required=True)
     parser.add_argument("--session", required=True)
     parser.add_argument("--site", required=True)
@@ -471,65 +426,13 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    image = _load_volume(Path(args.image), scaling="bmd")
-    case_spacing = image.spacing
-    if case_spacing is None:
-        raise ValueError("functional bone analysis needs image geometry or spacing")
-    volumes = {
-        "bone_segmentation": _load_volume(Path(args.segmentation), scaling="native"),
-        "periosteal_mask": _load_volume(Path(args.full_mask), scaling="native"),
-        "trabecular_mask": _load_volume(Path(args.trab_mask), scaling="native"),
-        "voidspace_mask": _load_volume(Path(args.voidspace_mask), scaling="native"),
-    }
-    volumes["cortical_mask"] = _load_volume(Path(args.cort_mask), scaling="native")
-    masks = {name: _mask_on_reference_grid(volumes[name], image) for name in (
-        "bone_segmentation", "periosteal_mask", "trabecular_mask", "cortical_mask",
-    )}
-    common = masks["periosteal_mask"]
-    if args.common_region:
-        common = common & _mask_on_reference_grid(_load_volume(Path(args.common_region), scaling="native"), image)
-    voidspace = _mask_on_reference_grid(volumes["voidspace_mask"], image)
-
-    functional_common = common & ~voidspace
-    analysis_extension = ".nii.gz" if image.sitk_image is not None else ".npy"
     case_stem = f"sub-{args.subject}_ses-{args.session}_voi-{voi_token(args.site)}"
-    analysis_path = Path(args.output_dir) / f"{case_stem}_desc-functional-bone-analysis_mask{analysis_extension}"
-    _write_mask(analysis_path, functional_common, image)
-    maps_dir = Path(args.maps_dir)
-    native_records = run_microarchitecture_batch(
-        Path(args.dataset_root),
-        use_common_region=False,
-        require_common_region=False,
-        force=args.force,
-        subject_id=args.subject,
-        site=args.site,
-        session_id=args.session,
-        thickness_method=args.thickness_method,
-        thickness_backend=args.thickness_backend,
-    )
-    native_maps = _existing_native_maps(
-        maps_dir,
-        args.subject,
-        args.session,
-        args.site,
-        has_cortical=True,
-    )
-    if native_maps is None:
-        raise ValueError("compatible native microarchitecture maps were not found after running native microarchitecture")
-
-    measurement_masks = {role: (np.asarray(mask) > 0) & functional_common for role, mask in masks.items()}
-    measurements = _summarize_measurements(image.array, measurement_masks, native_maps, case_spacing)
-    measurement_maps = _masked_maps_for_measurements(native_maps, measurement_masks)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{case_stem}_measurements.csv"
-    native_backend_metadata = {
-        key: value for key, value in native_records[0].metadata.items()
-        if key.startswith("thickness_")
-    }
-    write_measurement_csv(
-        output_path, measurements, measurement_maps,
-        metadata={**native_backend_metadata, "reporting_region": "functional-bone-native-maps"},
+    output_path = run_microarchitecture_case(
+        image_path=args.image, bone_mask_path=args.segmentation,
+        periosteal_mask_path=args.full_mask, trabecular_mask_path=args.trab_mask,
+        cortical_mask_path=args.cort_mask, common_region_path=args.common_region,
+        voidspace_mask_path=args.voidspace_mask, output_dir=args.output_dir, prefix=case_stem,
+        thickness_method=args.thickness_method, thickness_backend=args.thickness_backend, force=args.force,
     )
     print(output_path)
     return 0
@@ -1375,6 +1278,9 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 )
         map_patterns = (
             "sub-*/ses-*/xct/maps/*_map-*.nii.gz",
+            "sub-*/ses-*/xct/registered_measurements/maps/*_map-*.nii.gz",
+            "sub-*/ses-*/xct/functional_bone_measurements/maps/*_map-*.nii.gz",
+            "sub-*/ses-*/xct/functional_bone_native_measurements/maps/*_map-*.nii.gz",
         )
         for pattern in map_patterns:
             for path in sorted(micro_root.glob(pattern)):
@@ -1394,7 +1300,15 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         ),
                         "microarchitecture_map",
                         "Microarchitecture",
-                        metadata={"use_common_region": False},
+                        metadata={
+                            **BatchProcessorLogic._microarchitecture_csv_metadata(
+                                path.parent.parent / (path.name.split("_map-", 1)[0] + "_measurements.csv")
+                            ),
+                            "use_common_region": "/registered_measurements/" in path_text
+                            or "/functional_bone_measurements/" in path_text,
+                            "functional_bone": "/functional_bone_measurements/" in path_text
+                            or "/functional_bone_native_measurements/" in path_text,
+                        },
                     )
                 )
         return tuple(outputs)
@@ -1419,7 +1333,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 METHOD_ID = None  # An older/missing core cannot certify current results.
         filtered = []
         for artifact in existing_outputs:
-            if BatchProcessorLogic._is_map_output_for_tool(tool, artifact):
+            is_map = BatchProcessorLogic._is_map_output_for_tool(tool, artifact)
+            if is_map and tool == "plate_rod":
                 filtered.append(artifact)
                 continue
             path_text = str(artifact.path).replace("\\", "/").lower()
@@ -1429,8 +1344,13 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             )
             path_registered = "/registered_measurements/" in path_text
             if str(tool or "") == "microarchitecture":
-                if METHOD_ID is None or artifact.metadata.get("measurement_method") != METHOD_ID:
+                if not is_map and (METHOD_ID is None or artifact.metadata.get("measurement_method") != METHOD_ID):
                     continue
+                if not is_map and "input_fingerprints" in artifact.metadata:
+                    from bone_microarchitecture.cache import cache_is_current
+
+                    if not cache_is_current(artifact.metadata):
+                        continue
                 if BatchProcessorLogic.is_functional_bone_profile(profile_value):
                     functional_registered = common_region or "/functional_bone_measurements/" in path_text
                     if functional_bone and functional_registered == (profile_value == "functional-bone"):
@@ -1447,6 +1367,26 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
     @staticmethod
     def is_functional_bone_profile(profile: str) -> bool:
         return str(profile or "").strip() in {"functional-bone", "functional-bone-native"}
+
+    @staticmethod
+    def _microarchitecture_outputs_for_inputs(outputs, image, contours, common_regions, row):
+        """Reject a completed table if discovery now selects different inputs."""
+        current = {"transformed_image": str(Path(image.path).resolve())}
+        for selected, role in (("segmentation", "bone_segmentation"), ("full", "periosteal_mask"),
+                               ("trab", "trabecular_mask"), ("cort", "cortical_mask")):
+            if selected in contours:
+                current[role] = str(Path(contours[selected].path).resolve())
+        if common_regions:
+            current["scan_region_native_common"] = str(Path(common_regions[0].path).resolve())
+        if row.get("voidspace_mask_path"):
+            current["voidspace_mask"] = str(Path(row["voidspace_mask_path"]).resolve())
+        for artifact in outputs:
+            if artifact.role != "measurements_table":
+                continue
+            selected = artifact.metadata.get("input_paths", {})
+            if any(current.get(role) != path for role, path in selected.items()):
+                return []
+        return list(outputs)
 
     @staticmethod
     def _is_microarchitecture_map_output(artifact) -> bool:
@@ -1994,7 +1934,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         session = str(row.get("session_value", row.get("session")) or "").strip()
         base = root / "derivatives" / "Microarchitecture" / f"sub-{subject}" / f"ses-{session}" / "xct"
         folder = "functional_bone_native_measurements" if row.get("profile") == "functional-bone-native" else "functional_bone_measurements"
-        return base / "maps", base / folder
+        return base / folder / "maps", base / folder
 
     @staticmethod
     def _functional_bone_output_paths_for_row(root: Path, row: dict) -> list[Path]:
@@ -2034,7 +1974,7 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
         missing = [label for key, label in required.items() if not str(row.get(key) or "").strip()]
         if missing:
             raise ValueError(f"Functional bone rows require {', '.join(missing)}.")
-        maps_dir, output_dir = BatchProcessorLogic._microarchitecture_case_dirs(root, row)
+        _, output_dir = BatchProcessorLogic._microarchitecture_case_dirs(root, row)
         args = [
             "-c",
             _FUNCTIONAL_BONE_SCRIPT,
@@ -2048,10 +1988,6 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
             str(row["trab_mask_path"]),
             "--voidspace-mask",
             str(row["voidspace_mask_path"]),
-            "--dataset-root",
-            str(root),
-            "--maps-dir",
-            str(maps_dir),
             "--output-dir",
             str(output_dir),
             "--subject",
@@ -2359,6 +2295,9 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         group["action"] = "Missing"
                         row["status"] = "Missing voidspace: run native or registered Voidspace"
                 row_outputs = outputs_by_key.get(record.key, [])
+                if tool == "microarchitecture":
+                    row_outputs = self._microarchitecture_outputs_for_inputs(
+                        row_outputs, record, contours, common_regions, row)
                 has_measurements_output = any(
                     self._is_measurement_output_for_tool(tool, artifact)
                     for artifact in row_outputs
@@ -2439,6 +2378,8 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                         group["action"] = "Load"
                         if group_rows:
                             group_rows[0]["output_paths"] = group_output_paths
+                    elif group["action"] == "Load":
+                        group["action"] = "Run"
                 elif tool == "timelapse":
                     group_output_paths = sorted(
                         {
@@ -2523,7 +2464,12 @@ class BatchProcessorLogic(ScriptedLoadableModuleLogic):
                 if tool == "bone_contouring"
                 else outputs_by_key.get(record.key, [])
             )
+            if tool == "microarchitecture":
+                row_outputs = self._microarchitecture_outputs_for_inputs(
+                    row_outputs, record, contours, common_regions, row)
             has_measurements_output = any(self._is_measurement_output_for_tool(tool, artifact) for artifact in row_outputs)
+            if tool == "microarchitecture" and not has_measurements_output and row["action"] == "Load":
+                row.update(action="Run", status="Ready")
             output_paths = [str(artifact.path) for artifact in row_outputs]
             if tool == "microarchitecture" and self.is_functional_bone_profile(profile) and has_measurements_output:
                 output_paths = [str(path) for path in self._functional_bone_output_paths_for_row(root, row)]

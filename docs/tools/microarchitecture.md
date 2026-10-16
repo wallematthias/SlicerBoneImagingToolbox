@@ -46,7 +46,10 @@ Four profiles are exposed:
 | Native Functional Bone | measures each session's full scan after excluding large voidspace; no common region required |
 | Registered Functional Bone | restricts each session to its native common region, then excludes large voidspace |
 
-Native maps are reusable. If native maps already exist, the registered profile can reuse them and only recompute the common-region-restricted measurement table.
+Each profile computes sphere maps with centres constrained to its own analysis
+region. Unchanged analyses reuse their own final maps, not another profile's
+native maps. Changed input contents, geometry, region or settings invalidate
+reuse, as do missing/rewritten maps. Distance fields are not cached.
 
 ### GPU acceleration
 
@@ -57,9 +60,8 @@ installations. Windows/Linux also require the GPU manufacturer's working OpenCL
 driver/runtime. CUDA/PyTorch is not required for these measurements.
 
 Setup displays the detected backend, device and any CPU fallback reason. Batch
-logs report them before native map calculation, and Microarchitecture CSV JSON
-sidecars retain device provenance. Functional Bone copies this provenance to its
-own measurement sidecar: it is a restricted summary, not a separate GPU computation.
+logs report them during map calculation, and Microarchitecture/Functional Bone
+CSV JSON sidecars retain device provenance for their own calculation.
 Cached maps are reused without rerunning sphere fitting. CPU-only OpenCL devices
 are not labelled as GPU acceleration.
 
@@ -69,15 +71,20 @@ does not by itself establish whether a GPU was used.
 
 ### IPL-aligned standard measurements
 
-The updated core uses `ipl-aligned-v1`: cortical porosity counts cleaned,
+The updated core uses `ipl-aligned-region-v3`: cortical porosity counts cleaned,
 slice-seeded intracortical pores rather than all cortical non-bone voxels;
 cortical thickness is measured on the cortical compartment including its pores;
 and trabecular number is **inverse mean ridge spacing**, not mean inverse spacing.
-Spacing calculations retain native bone-phase context. Incomplete image-boundary
-spheres are excluded without deleting a fixed number of end slices.
+Spacing calculations retain native bone-phase context. Sphere fitting follows
+the documented IPL `suppress_boundary=2` policy: full-phase distance/ridge
+extraction, then centres restricted to the reporting region. Spheres reaching an
+image face are retained; output is clipped to the acquired grid and reporting
+phase, without deleting a fixed number of end slices. Epsilon settings are
+unchanged and their exact correspondence to IPL remains unverified.
 
-Scene analysis also computes native maps before applying an optional analysis
-mask. The saved `Ct.Po.Mask` retains pore selection independently of the diameter
+Scene analysis applies its optional analysis mask to sphere-centre eligibility
+before fitting, while preserving native distance/ridge context. The saved
+`Ct.Po.Mask` retains pore selection independently of the diameter
 map, so reporting restrictions do not rerun the five-voxel cleanup. CSV JSON
 sidecars and manifests identify the scientific method. Older method tables no
 longer mark a batch row complete: rerun analysis to regenerate current results.
@@ -92,7 +99,11 @@ assignment still require identical-input IPL map comparisons. See the
 
 ### Functional Bone reporting regions
 
-Both Functional Bone profiles follow the same map reuse model: they do not create functional-bone maps or recompute thickness on clipped regions. They reuse or create native maps, then summarize over `full mask AND NOT large voidspace` (native) or `full mask AND common region AND NOT large voidspace` (registered), intersected with each reporting compartment.
+Both Functional Bone profiles calculate and save their own region-constrained
+maps over `full mask AND NOT large voidspace` (native) or `full mask AND common
+region AND NOT large voidspace` (registered), intersected with each compartment.
+Full native phase context is retained for distance/ridge extraction, so the ROI
+does not become a new anatomical wall. Native pore selection precedes restriction.
 For review/debugging, both profiles also write and load their effective analysis-region masks with distinct mode names.
 
 Native Functional Bone requires the full-domain **Voidspace** large-void map for that session. It does not accept a Registered voidspace map because that map may exclude voids outside the common region. It runs one row per session.
@@ -122,8 +133,11 @@ derivatives/
           maps/
           measurements/
           registered_measurements/
+            maps/
           functional_bone_measurements/
+            maps/
           functional_bone_native_measurements/
+            maps/
 ```
 
 The Slicer load action should load:

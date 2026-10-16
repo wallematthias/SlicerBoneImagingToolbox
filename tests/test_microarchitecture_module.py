@@ -4,6 +4,8 @@ from pathlib import Path
 import importlib.util
 import sys
 import types
+import numpy as np
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +44,41 @@ def _load_microarchitecture_module(monkeypatch, name: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_registered_scene_calculates_spheres_with_common_region(tmp_path, monkeypatch):
+    sitk = pytest.importorskip('SimpleITK')
+    import bone_microarchitecture
+    module = _load_microarchitecture_module(monkeypatch, 'microarchitecture_region_test')
+    logic = module.BoneMicroarchitectureLogic()
+    full = np.ones((7, 7, 7), dtype=np.uint8)
+    common = full.copy()
+    common[4:] = 0
+    arrays = dict(image=full*100, seg=full, full=full, trab=full, cort=full*0,
+                  native_common_scan_region=common)
+    row = dict(subject_id='001', session_id='001', site='radiusleft', status='Ready')
+    for role, array in arrays.items():
+        path = tmp_path/f'{role}.nii.gz'
+        sitk.WriteImage(sitk.GetImageFromArray(array), str(path))
+        row[f'{role}_path'] = str(path)
+    calls = []
+    original = bone_microarchitecture.compute_microarchitecture
+    def counted(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+    monkeypatch.setattr(bone_microarchitecture, 'compute_microarchitecture', counted)
+    monkeypatch.setattr(logic, '_read_registered_series_image', lambda path, **kw: sitk.ReadImage(str(path)))
+    outputs = logic.run_registered_series_microarchitecture(tmp_path, tmp_path/'results', [row],
+        thickness_method='hildebrand', thickness_backend='cpu')
+    assert len(calls) == 1
+    np.testing.assert_array_equal(calls[0]['analysis_mask'], common)
+    assert np.all(calls[0]['periosteal_mask'])  # native context was not clipped
+    csv_path = Path(outputs['session_csvs'][0])
+    maps = list((csv_path.parent/'maps').glob('*.nii.gz'))
+    assert len(maps) == 9
+    for path in maps:
+        array = sitk.GetArrayFromImage(sitk.ReadImage(str(path)))
+        assert not np.any(array[~common.astype(bool)])
 
 
 def test_microarchitecture_module_is_registered_with_toolbox_manifest_and_cmake() -> None:

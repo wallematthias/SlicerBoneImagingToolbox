@@ -96,8 +96,12 @@ prerequisite for either Functional Bone profile.
 
 Native Functional Bone reports within `full mask AND NOT large voidspace`;
 Registered Functional Bone additionally intersects the native common region.
-Each reporting compartment is intersected with that analysis region. Both reuse
-or create native maps rather than recomputing thickness on a void-clipped domain.
+Each reporting compartment is intersected with that analysis region. Sphere
+centres are restricted to the resulting compartment before fitting, while distance
+fields retain full native bone/marrow context. The void/common boundary is not
+an artificial anatomical wall. Each profile saves its own final maps and reuses
+them only while its inputs, geometry and settings remain unchanged. Distance
+fields are recomputed rather than cached; native maps are not substituted.
 The registered profile prefers native Large voidspace but can fall back to a
 matching Registered voidspace map.
 
@@ -106,6 +110,10 @@ Measurements are saved below
 
 - Native: `functional_bone_native_measurements/`
 - Registered: `functional_bone_measurements/`
+
+Each directory contains its measurement table, case-specific analysis mask and
+`maps/` subdirectory. Older native-map-based summaries must be recalculated;
+current method checks no longer mark them complete.
 
 Do not compare native and registered measurements as if their reporting regions
 were identical. Older saved `functional-bone` jobs retain registered semantics.
