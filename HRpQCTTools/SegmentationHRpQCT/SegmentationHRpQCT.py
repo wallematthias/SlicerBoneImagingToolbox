@@ -1507,8 +1507,8 @@ class SegmentationHRpQCTWidget(ScriptedLoadableModuleWidget):
         form.addRow(self.presetDetectionLabel)
 
         self.contourBackendCombo = qt.QComboBox()
-        for label, value in (("Dual threshold (standard)", "standard"),
-                             ("Geodesic + standard inner contour", "geodesic"),
+        for label, value in (("Dual threshold", "standard"),
+                             ("Geodesic + Dual threshold inner contour", "geodesic"),
                              ("U-Net (Neeteson et al.)", "unet"), ("None", "none")):
             self.contourBackendCombo.addItem(label, value)
         form.addRow("Contouring", self.contourBackendCombo)

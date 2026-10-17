@@ -4,6 +4,12 @@ All notable changes to this extension are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-10-17
+
+### Contour naming
+
+- Display the current method as **Dual threshold** and require bone-contouring 0.5.0. Retired Buie, IPL match and Stable 3D profiles need explicit replacement; the old `standard` input name remains compatible.
+
 ### Added
 
 - Include original scan filenames from the dataset-root rename manifest in all Batch Processor measurement CSV exports, with separate baseline/follow-up filenames for longitudinal rows. Match subject/session/site/stack, support moved datasets and Windows paths, and warn without dropping measurements when provenance is unavailable or ambiguous.

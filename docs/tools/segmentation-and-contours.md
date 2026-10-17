@@ -32,7 +32,7 @@ Use this tool when you need to:
 
 1. Select the input image.
 2. Choose **Profile**: XCTI, XCTII, Custom, or a saved profile. There is no separate scanner selector and no resolution-based scanner detection. Leave **Site preset** on Auto (AIM header), or choose the site explicitly.
-3. Choose **Contouring**: dual threshold (standard), geodesic with standard inner contour, published U-Net (Neeteson et al.), or None.
+3. Choose **Contouring**: Dual threshold, geodesic with Dual threshold inner contour, published U-Net (Neeteson et al.), or None.
 4. Independently choose **Tissue segmentation**: Gaussian, Laplace-Hamming, adaptive, or None. Selecting XCTI initializes Laplace-Hamming; selecting XCTII initializes Gaussian. You can override the method afterward. Custom profiles retain the current method, and saved profiles restore their saved method.
 5. Adjust **Contouring advanced settings** directly below Contouring, or **Tissue segmentation advanced settings** directly below Tissue segmentation. Load/save named profiles under **Custom profiles**.
 6. Click `Generate`.
@@ -108,14 +108,15 @@ without peeling Z end slices. It is not measured cortical thickness or an
 original Buie requirement; explicit Peel 0 disables it. Effective endosteal
 threshold, Gaussian sigma, Peel and final closing controls remain available in
 advanced settings and saved custom profiles. Ignored legacy controls stay hidden.
-The core's explicit `stable_3d` inner stage retains the older development method;
-it is no longer an alias for standard.
+The core method is named `dual_threshold`; `standard` remains an input alias.
+Buie, IPL match and Stable 3D are retired public methods. Saved profiles choosing
+them require an explicit replacement with Dual threshold; results may differ.
 
 This is an IPL-style translation, not verified native IPL equivalence. The
 supplied script documents XCTII radius/tibia only; XCTI transfer and knee's
 36-voxel close/tibia corner rule need further validation. Largest-component
 selection assumes one target bone, not multi-bone knee segmentation.
-Algorithm revision `shared_ipl_standard_v1`, effective parameters and advisory
+Algorithm revision `dual_threshold_v1`, effective parameters and advisory
 QA are saved on the generated segmentation node. Existing saved masks are not
 automatically changed. Inspect each result:
 the method cannot guarantee anatomical correctness or voxel-identical Scanco
